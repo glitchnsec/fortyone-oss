@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     queue_name: str = "jobs"
     response_channel: str = "job_completed"
 
+    # Slack (optional — leave blank to run without Slack support)
+    slack_bot_token: str = ""       # xoxb-...  (Bot User OAuth Token)
+    slack_signing_secret: str = ""  # from App Credentials page
+
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
     environment: str = "development"

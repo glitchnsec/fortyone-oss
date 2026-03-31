@@ -1,75 +1,75 @@
 """
-Message pipeline — orchestrates the state machine for every inbound SMS.
+Message pipeline — orchestrates the state machine for every inbound message.
 
 State flow:  RECEIVED → ACK → THINK → ACT → CONFIRM → LEARN
 
-New users are intercepted by OnboardingHandler (name → timezone) before
-the normal pipeline opens up.
+Channel-agnostic: the pipeline depends only on the Channel ABC.
+SMS, Slack, or any future channel plugs in without touching this file.
 
 MessagePipeline  : fast path (runs inside FastAPI background task)
-ResponseListener : listens for worker results and sends the final SMS
+ResponseListener : listens for worker results and delivers the final reply
 """
 import json
 import logging
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from app.core.ack import get_smart_ack
 from app.core.intent import IntentType, classify_intent, intent_label
 from app.core.onboarding import OnboardingHandler, is_complete
 from app.memory.store import MemoryStore
 from app.queue.client import QueueClient
-from app.sms.client import SMSClient
+
+if TYPE_CHECKING:
+    from app.channels.base import Channel
 
 logger = logging.getLogger(__name__)
 
 
 class MessageState(str, Enum):
     RECEIVED = "received"
-    ACK = "ack"
-    THINK = "think"
-    ACT = "act"
-    CONFIRM = "confirm"
-    LEARN = "learn"
-    DONE = "done"
+    ACK      = "ack"
+    THINK    = "think"
+    ACT      = "act"
+    CONFIRM  = "confirm"
+    LEARN    = "learn"
+    DONE     = "done"
 
 
 class MessagePipeline:
     def __init__(
         self,
-        sms: SMSClient,
+        channel: "Channel",
         queue: QueueClient,
         store: MemoryStore,
     ) -> None:
-        self.sms = sms
+        self.channel = channel
         self.queue = queue
         self.store = store
 
-    async def handle(self, phone: str, body: str) -> None:
+    async def handle(self, address: str, body: str) -> None:
         """
         Entry point.  Runs in a FastAPI BackgroundTask so the HTTP 200 to
-        Twilio has already been returned before this executes.
+        the channel webhook has already been returned before this executes.
+
+        `address` is the channel-specific user identifier:
+          SMS   → E.164 phone number, e.g. "+15551234567"
+          Slack → Slack User ID,       e.g. "U01ABC123"
         """
         # ── RECEIVED ─────────────────────────────────────────────────────────
-        user = self.store.get_or_create_user(phone)
-
-        self.store.store_message(
-            user_id=user.id,
-            direction="inbound",
-            body=body,
-            state=MessageState.RECEIVED.value,
-        )
+        user = self.store.get_or_create_user(address)
 
         # ── ONBOARDING GATE ───────────────────────────────────────────────────
-        # New users go through name → timezone collection before the normal
-        # pipeline opens up.  OnboardingHandler returns the reply text, or
-        # None when it just marked onboarding complete (pass-through).
         if not is_complete(self.store, user.id):
-            logger.info("ONBOARDING phone=%s body=%r", phone, body[:60])
+            logger.info(
+                "ONBOARDING  channel=%s  address=%s  body=%r",
+                self.channel.name, address, body[:60],
+            )
             handler = OnboardingHandler(self.store)
-            reply = await handler.handle(user.id, phone, body)
+            reply = await handler.handle(user.id, address, body)
 
             if reply:
-                await self.sms.send(phone, reply)
+                await self.channel.send(address, reply)
                 self.store.store_message(
                     user_id=user.id,
                     direction="outbound",
@@ -77,20 +77,16 @@ class MessagePipeline:
                     state=MessageState.CONFIRM.value,
                 )
                 return
-            # reply is None only when the final step just completed and the
-            # user's original message should now be processed normally — fall
-            # through to the main pipeline below.
 
-        # ── Normal pipeline ───────────────────────────────────────────────────
+        # ── CLASSIFY ─────────────────────────────────────────────────────────
         intent = classify_intent(body)
 
         logger.info(
-            "RECEIVED from=%s intent=%s body=%r",
-            phone,
-            intent_label(intent.type),
-            body[:60],
+            "RECEIVED  channel=%s  address=%s  intent=%s  body=%r",
+            self.channel.name, address, intent_label(intent.type), body[:60],
         )
 
+        # Single write per inbound message — includes intent once classified
         self.store.store_message(
             user_id=user.id,
             direction="inbound",
@@ -100,10 +96,9 @@ class MessagePipeline:
         )
 
         # ── ACK ──────────────────────────────────────────────────────────────
-        # Try LLM-generated ACK within 450ms; falls back to static pool.
-        user_name = user.name  # may be None for users who skipped onboarding
+        user_name = user.name
         ack_text = await get_smart_ack(intent.type, body, user_name=user_name)
-        await self.sms.send(phone, ack_text)
+        await self.channel.send(address, ack_text)
 
         self.store.store_message(
             user_id=user.id,
@@ -112,25 +107,26 @@ class MessagePipeline:
             state=MessageState.ACK.value,
         )
 
-        # Standalone greetings after onboarding: ACK is the full response
+        # Standalone greetings: ACK is the full response
         if intent.type == IntentType.GREETING:
             return
 
-        # ── THINK ─────────────────────────────────────────────────────────────
+        # ── THINK / ACT ───────────────────────────────────────────────────────
         context = self.store.get_context(user.id)
 
-        # ── ACT ───────────────────────────────────────────────────────────────
         job_id = await self.queue.push_job({
-            "phone": phone,
-            "body": body,
-            "intent": intent.type.value,
-            "context": context,
-            "user_id": user.id,
+            "channel":  self.channel.name,   # used by ResponseListener to route reply
+            "address":  address,
+            "phone":    address,             # backward-compat alias for worker tasks
+            "body":     body,
+            "intent":   intent.type.value,
+            "context":  context,
+            "user_id":  user.id,
         })
 
         logger.info(
-            "QUEUED job_id=%s intent=%s phone=%s",
-            job_id, intent.type.value, phone,
+            "QUEUED  job_id=%s  channel=%s  intent=%s",
+            job_id, self.channel.name, intent.type.value,
         )
 
 
@@ -140,16 +136,20 @@ class ResponseListener:
     """
     Runs as a long-lived asyncio task inside the FastAPI process.
 
-    Subscribes to the Redis pub/sub channel where workers publish job IDs.
-    For each completed job it:
+    Subscribes to the Redis pub/sub channel where workers publish completed
+    job IDs.  For each job it:
       1. Reads the result payload from Redis
-      2. Sends the final SMS via Twilio
-      3. Stores the outbound message
-      4. Runs the LEARN step (infer + persist patterns)
+      2. Looks up the right Channel by name from the registry
+      3. Delivers the final reply to the user
+      4. Stores the outbound message + runs LEARN
     """
 
-    def __init__(self, sms: SMSClient) -> None:
-        self.sms = sms
+    def __init__(self, channels: dict[str, "Channel"]) -> None:
+        """
+        channels — mapping of channel name → Channel instance,
+                   e.g. {"sms": SMSChannel(), "slack": SlackChannel()}
+        """
+        self.channels = channels
 
     async def start(self, redis) -> None:
         from app.config import get_settings
@@ -157,7 +157,10 @@ class ResponseListener:
 
         pubsub = redis.pubsub()
         await pubsub.subscribe(settings.response_channel)
-        logger.info("ResponseListener subscribed to channel=%s", settings.response_channel)
+        logger.info(
+            "ResponseListener subscribed  channel=%s  registered=%s",
+            settings.response_channel, list(self.channels),
+        )
 
         async for message in pubsub.listen():
             if message["type"] != "message":
@@ -166,7 +169,10 @@ class ResponseListener:
             try:
                 await self._deliver(redis, job_id)
             except Exception as exc:
-                logger.error("ResponseListener error job_id=%s: %s", job_id, exc, exc_info=True)
+                logger.error(
+                    "ResponseListener error  job_id=%s: %s",
+                    job_id, exc, exc_info=True,
+                )
 
     async def _deliver(self, redis, job_id: str) -> None:
         raw = await redis.get(f"result:{job_id}")
@@ -175,23 +181,33 @@ class ResponseListener:
             return
 
         result: dict = json.loads(raw)
-        phone: str = result.get("phone", "")
-        response_text: str = result.get("response", "")
 
-        if not phone or not response_text:
-            logger.error("Malformed result for job_id=%s: %s", job_id, result)
+        # Support both new "address" and legacy "phone" fields
+        address: str   = result.get("address") or result.get("phone", "")
+        channel_name   = result.get("channel", "sms")   # default to sms for old jobs
+        response_text  = result.get("response", "")
+
+        if not address or not response_text:
+            logger.error("Malformed result  job_id=%s: %s", job_id, result)
+            return
+
+        channel = self.channels.get(channel_name)
+        if channel is None:
+            logger.error(
+                "Unknown channel %r for job_id=%s — dropping", channel_name, job_id
+            )
             return
 
         # ── CONFIRM ───────────────────────────────────────────────────────────
-        await self.sms.send(phone, response_text)
-        logger.info("CONFIRM job_id=%s phone=%s", job_id, phone)
+        await channel.send(address, response_text)
+        logger.info("CONFIRM  job_id=%s  channel=%s  address=%s", job_id, channel_name, address)
 
-        # Store outbound message + run LEARN
+        # ── LEARN ─────────────────────────────────────────────────────────────
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             store = MemoryStore(db)
-            user = store.get_or_create_user(phone)
+            user = store.get_or_create_user(address)
 
             store.store_message(
                 user_id=user.id,
@@ -201,27 +217,22 @@ class ResponseListener:
                 job_id=job_id,
             )
 
-            # ── LEARN ─────────────────────────────────────────────────────────
             learn_signals: dict = result.get("learn", {})
             if learn_signals:
                 await self._learn(store, user.id, learn_signals)
-                logger.info("LEARN user_id=%s signals=%s", user.id, learn_signals)
+                logger.info("LEARN  user_id=%s  signals=%s", user.id, learn_signals)
         finally:
             db.close()
 
     @staticmethod
     async def _learn(store: MemoryStore, user_id: str, signals: dict) -> None:
-        """
-        Persist inferred facts and update behavioral counters.
-        Intentionally simple — no LLM in the learn step.
-        """
         signal_type = signals.get("type")
 
         if signal_type == "reminder_created":
             _increment_counter(store, user_id, "reminder_count")
 
         elif signal_type == "preference_stored":
-            key = signals.get("key")
+            key   = signals.get("key")
             value = signals.get("value")
             if key and value:
                 store.store_memory(user_id, "long_term", key, value)
@@ -229,7 +240,6 @@ class ResponseListener:
         elif signal_type == "scheduling_request":
             _increment_counter(store, user_id, "scheduling_requests")
 
-        # Infer morning/afternoon preference from reminder due times
         due_at_str = signals.get("due_at")
         if due_at_str:
             try:

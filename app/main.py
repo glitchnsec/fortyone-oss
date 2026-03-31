@@ -4,11 +4,17 @@ FastAPI application entry point.
 Startup:
   1. Init SQLite database (create tables)
   2. Connect Redis queue client
-  3. Start ResponseListener background task (pub/sub → SMS delivery)
+  3. Build channel registry (SMS + Slack)
+  4. Start ResponseListener background task (pub/sub → delivery)
 
 Shutdown:
   1. Cancel listener
   2. Disconnect Redis
+
+Adding a new channel:
+  1. Implement app/channels/<name>.py
+  2. Add it to the CHANNELS dict below
+  3. Add its inbound route under app/routes/<name>.py
 """
 import asyncio
 import logging
@@ -19,11 +25,12 @@ import redis.asyncio as aioredis
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 
+from app.channels.sms import SMSChannel
+from app.channels.slack import SlackChannel
 from app.config import get_settings
 from app.core.pipeline import ResponseListener
 from app.database import init_db
 from app.queue.client import queue_client
-from app.sms.client import SMSClient
 
 logging.basicConfig(
     level=logging.INFO,
@@ -42,6 +49,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
     await queue_client.connect()
     logger.info("Queue client connected")
 
+    # ── Channel registry ──────────────────────────────────────────────────────
+    # Map channel name → Channel instance.  ResponseListener uses this to
+    # route completed worker jobs back to the right delivery channel.
+    channels = {
+        "sms":   SMSChannel(),
+        "slack": SlackChannel(),
+    }
+    logger.info("Channels registered: %s", list(channels))
+
     # Separate Redis connection for pub/sub (pub/sub clients can't issue other commands)
     listener_redis = await aioredis.from_url(
         settings.redis_url,
@@ -49,8 +65,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
         decode_responses=True,
     )
 
-    sms_client = SMSClient()
-    listener = ResponseListener(sms=sms_client)
+    listener = ResponseListener(channels=channels)
     listener_task = asyncio.create_task(listener.start(listener_redis))
     logger.info("ResponseListener started")
 
@@ -72,22 +87,66 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
 
 app = FastAPI(
-    title="SMS Personal Assistant",
-    description="Hybrid always-on + async-worker personal assistant over SMS.",
-    version="0.1.0",
+    title="Personal Assistant",
+    description="Hybrid always-on + async-worker personal assistant. Supports SMS and Slack.",
+    version="0.2.0",
     lifespan=lifespan,
 )
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-from app.routes.sms import router as sms_router  # noqa: E402
+from app.routes.sms import router as sms_router        # noqa: E402
+from app.routes.slack import router as slack_router    # noqa: E402
 
-app.include_router(sms_router, prefix="/sms", tags=["SMS"])
+app.include_router(sms_router,   prefix="/sms",   tags=["SMS"])
+app.include_router(slack_router, prefix="/slack", tags=["Slack"])
 
 
 @app.get("/health", tags=["Meta"])
 async def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
+
+
+@app.delete("/debug/users/{phone}/onboarding", tags=["Debug"])
+async def reset_onboarding(phone: str) -> JSONResponse:
+    """
+    Reset onboarding state for a user so they go through the name/timezone
+    flow again on their next message.  Also clears name + timezone.
+
+    phone must be URL-encoded, e.g. %2B15551234567 for +15551234567
+    """
+    from urllib.parse import unquote
+    from app.database import SessionLocal
+    from app.memory.models import Memory, User
+
+    phone = unquote(phone)
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.phone == phone).first()
+        if not user:
+            return JSONResponse(status_code=404, content={"error": f"No user found for {phone}"})
+
+        keys_to_clear = {"onboarding_step", "name", "first_seen"}
+        deleted = []
+        for key in keys_to_clear:
+            mem = db.query(Memory).filter(Memory.user_id == user.id, Memory.key == key).first()
+            if mem:
+                db.delete(mem)
+                deleted.append(key)
+
+        # Reset name + timezone on the User row itself
+        user.name = None
+        user.timezone = "America/New_York"
+        db.commit()
+
+        return JSONResponse(content={
+            "phone": phone,
+            "reset": True,
+            "memories_cleared": deleted,
+            "message": "Onboarding reset — next message will restart the flow.",
+        })
+    finally:
+        db.close()
 
 
 @app.get("/debug/users", tags=["Debug"])

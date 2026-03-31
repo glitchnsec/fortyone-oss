@@ -1,45 +1,40 @@
 """
-SMS webhook routes.
+Twilio SMS webhook.
 
-POST /sms/inbound  — Twilio calls this for every inbound SMS.
+POST /sms/inbound — Twilio calls this for every inbound SMS.
 
-The handler returns an empty TwiML 200 response to Twilio immediately
-(Twilio requires a fast response or it retries).  All real work
-(ACK send, intent classification, queue push) happens in a BackgroundTask
-so it runs AFTER the HTTP response is committed.
+Returns an empty TwiML 200 immediately (Twilio retries on slow responses).
+All real work runs in a BackgroundTask after the HTTP response is committed.
 """
 import logging
 
-from fastapi import APIRouter, BackgroundTasks, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Form
 from fastapi.responses import Response
 
+from app.channels.sms import SMSChannel
 from app.database import SessionLocal
 from app.memory.store import MemoryStore
 from app.queue.client import queue_client
-from app.sms.client import SMSClient
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_sms_client = SMSClient()
-
+_channel = SMSChannel()
 _EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 
 
-async def _process_inbound(phone: str, body: str) -> None:
-    """Runs in a background task after Twilio has received our 200."""
+async def _process_inbound(address: str, body: str) -> None:
     from app.core.pipeline import MessagePipeline
 
     db = SessionLocal()
     try:
         store = MemoryStore(db)
-        pipeline = MessagePipeline(sms=_sms_client, queue=queue_client, store=store)
-        await pipeline.handle(phone=phone, body=body)
+        pipeline = MessagePipeline(channel=_channel, queue=queue_client, store=store)
+        await pipeline.handle(address=address, body=body)
     except Exception as exc:
-        logger.error("Pipeline error phone=%s: %s", phone, exc, exc_info=True)
-        # Best-effort error reply so the user isn't left hanging
+        logger.error("Pipeline error address=%s: %s", address, exc, exc_info=True)
         try:
-            await _sms_client.send(phone, "Something went wrong on my end — try again in a moment.")
+            await _channel.send(address, _channel.error_reply)
         except Exception:
             pass
     finally:
@@ -52,16 +47,6 @@ async def inbound_sms(
     From: str = Form(...),
     Body: str = Form(...),
 ) -> Response:
-    """
-    Twilio SMS webhook.
-
-    Required Twilio form fields:
-      From — sender's phone number (e.g. +15551234567)
-      Body — message text
-    """
-    logger.info("INBOUND sms from=%s body=%r", From, Body[:80])
-
-    # Schedule the real work to run AFTER we return 200 to Twilio
+    logger.info("INBOUND  channel=sms  from=%s  body=%r", From, Body[:80])
     background_tasks.add_task(_process_inbound, From, Body.strip())
-
     return Response(content=_EMPTY_TWIML, media_type="text/xml")
