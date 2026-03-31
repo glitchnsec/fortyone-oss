@@ -13,7 +13,7 @@ import json
 import logging
 from enum import Enum
 
-from app.core.ack import get_ack
+from app.core.ack import get_smart_ack
 from app.core.intent import IntentType, classify_intent, intent_label
 from app.core.onboarding import OnboardingHandler, is_complete
 from app.memory.store import MemoryStore
@@ -100,7 +100,9 @@ class MessagePipeline:
         )
 
         # ── ACK ──────────────────────────────────────────────────────────────
-        ack_text = get_ack(intent.type)
+        # Try LLM-generated ACK within 450ms; falls back to static pool.
+        user_name = user.name  # may be None for users who skipped onboarding
+        ack_text = await get_smart_ack(intent.type, body, user_name=user_name)
         await self.sms.send(phone, ack_text)
 
         self.store.store_message(
