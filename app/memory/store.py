@@ -33,6 +33,12 @@ class MemoryStore:
             user.name = name
             self.db.commit()
 
+    def update_user_timezone(self, user_id: str, timezone: str) -> None:
+        user = self.db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.timezone = timezone
+            self.db.commit()
+
     # ─── Memory ──────────────────────────────────────────────────────────────
 
     def store_memory(

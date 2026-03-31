@@ -15,8 +15,8 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 from app.core.ack import get_smart_ack
+from app.core.greeter import first_greeting
 from app.core.intent import IntentType, classify_intent, intent_label
-from app.core.onboarding import OnboardingHandler, is_complete
 from app.memory.store import MemoryStore
 from app.queue.client import QueueClient
 
@@ -59,25 +59,6 @@ class MessagePipeline:
         # ── RECEIVED ─────────────────────────────────────────────────────────
         user = self.store.get_or_create_user(address)
 
-        # ── ONBOARDING GATE ───────────────────────────────────────────────────
-        if not is_complete(self.store, user.id):
-            logger.info(
-                "ONBOARDING  channel=%s  address=%s  body=%r",
-                self.channel.name, address, body[:60],
-            )
-            handler = OnboardingHandler(self.store)
-            reply = await handler.handle(user.id, address, body)
-
-            if reply:
-                await self.channel.send(address, reply)
-                self.store.store_message(
-                    user_id=user.id,
-                    direction="outbound",
-                    body=reply,
-                    state=MessageState.CONFIRM.value,
-                )
-                return
-
         # ── CLASSIFY ─────────────────────────────────────────────────────────
         intent = classify_intent(body)
 
@@ -96,8 +77,14 @@ class MessagePipeline:
         )
 
         # ── ACK ──────────────────────────────────────────────────────────────
-        user_name = user.name
-        ack_text = await get_smart_ack(intent.type, body, user_name=user_name)
+        # First message ever → warm intro that also acknowledges their request.
+        # All subsequent messages → fast smart ACK (LLM or static fallback).
+        is_first = self.store.message_count(user.id) == 1
+        if is_first:
+            ack_text = await first_greeting(self.channel.name, body)
+            logger.info("FIRST_MESSAGE  channel=%s  address=%s", self.channel.name, address)
+        else:
+            ack_text = await get_smart_ack(intent.type, body, user_name=user.name)
         await self.channel.send(address, ack_text)
 
         self.store.store_message(
@@ -239,6 +226,20 @@ class ResponseListener:
 
         elif signal_type == "scheduling_request":
             _increment_counter(store, user_id, "scheduling_requests")
+
+        elif signal_type == "profile_update":
+            # Passive profile fields extracted by handle_general from conversation
+            fields: dict = signals.get("fields", {})
+            for key, value in fields.items():
+                if not (key and value):
+                    continue
+                store.store_memory(user_id, "long_term", key, str(value))
+                if key == "name":
+                    store.update_user_name(user_id, str(value))
+                elif key == "timezone":
+                    store.update_user_timezone(user_id, str(value))
+            if fields:
+                logger.info("PROFILE_UPDATED  user=%s  fields=%s", user_id[:8], list(fields))
 
         due_at_str = signals.get("due_at")
         if due_at_str:
