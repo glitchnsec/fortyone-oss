@@ -3,6 +3,9 @@ Message pipeline — orchestrates the state machine for every inbound SMS.
 
 State flow:  RECEIVED → ACK → THINK → ACT → CONFIRM → LEARN
 
+New users are intercepted by OnboardingHandler (name → timezone) before
+the normal pipeline opens up.
+
 MessagePipeline  : fast path (runs inside FastAPI background task)
 ResponseListener : listens for worker results and sends the final SMS
 """
@@ -12,6 +15,7 @@ from enum import Enum
 
 from app.core.ack import get_ack
 from app.core.intent import IntentType, classify_intent, intent_label
+from app.core.onboarding import OnboardingHandler, is_complete
 from app.memory.store import MemoryStore
 from app.queue.client import QueueClient
 from app.sms.client import SMSClient
@@ -47,14 +51,43 @@ class MessagePipeline:
         """
         # ── RECEIVED ─────────────────────────────────────────────────────────
         user = self.store.get_or_create_user(phone)
-        is_first = self.store.message_count(user.id) == 0
+
+        self.store.store_message(
+            user_id=user.id,
+            direction="inbound",
+            body=body,
+            state=MessageState.RECEIVED.value,
+        )
+
+        # ── ONBOARDING GATE ───────────────────────────────────────────────────
+        # New users go through name → timezone collection before the normal
+        # pipeline opens up.  OnboardingHandler returns the reply text, or
+        # None when it just marked onboarding complete (pass-through).
+        if not is_complete(self.store, user.id):
+            logger.info("ONBOARDING phone=%s body=%r", phone, body[:60])
+            handler = OnboardingHandler(self.store)
+            reply = await handler.handle(user.id, phone, body)
+
+            if reply:
+                await self.sms.send(phone, reply)
+                self.store.store_message(
+                    user_id=user.id,
+                    direction="outbound",
+                    body=reply,
+                    state=MessageState.CONFIRM.value,
+                )
+                return
+            # reply is None only when the final step just completed and the
+            # user's original message should now be processed normally — fall
+            # through to the main pipeline below.
+
+        # ── Normal pipeline ───────────────────────────────────────────────────
         intent = classify_intent(body)
 
         logger.info(
-            "RECEIVED from=%s intent=%s first=%s body=%r",
+            "RECEIVED from=%s intent=%s body=%r",
             phone,
             intent_label(intent.type),
-            is_first,
             body[:60],
         )
 
@@ -63,11 +96,11 @@ class MessagePipeline:
             direction="inbound",
             body=body,
             intent=intent.type.value,
-            state=MessageState.RECEIVED.value,
+            state=MessageState.THINK.value,
         )
 
         # ── ACK ──────────────────────────────────────────────────────────────
-        ack_text = get_ack(intent.type, is_first_message=is_first)
+        ack_text = get_ack(intent.type)
         await self.sms.send(phone, ack_text)
 
         self.store.store_message(
@@ -77,12 +110,8 @@ class MessagePipeline:
             state=MessageState.ACK.value,
         )
 
-        # Greetings / first interaction: ACK *is* the full response
-        if intent.type == IntentType.GREETING or is_first:
-            if is_first:
-                self.store.store_memory(user_id=user.id, memory_type="long_term",
-                                        key="first_seen",
-                                        value=user.created_at.isoformat())
+        # Standalone greetings after onboarding: ACK is the full response
+        if intent.type == IntentType.GREETING:
             return
 
         # ── THINK ─────────────────────────────────────────────────────────────

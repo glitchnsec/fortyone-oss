@@ -44,11 +44,6 @@ _ACK_POOL: dict[IntentType, list[str]] = {
     ],
 }
 
-_FIRST_TIME = (
-    "Hey! I'm your personal assistant. I'm here to help you manage tasks, "
-    "set reminders, and keep things on track. What do you need?"
-)
-
 _GREETING_RESPONSES = [
     "Hey! What can I help you with today?",
     "Hi there! I'm here — what do you need?",
@@ -56,9 +51,7 @@ _GREETING_RESPONSES = [
 ]
 
 
-def get_ack(intent_type: IntentType, is_first_message: bool = False) -> str:
-    if is_first_message:
-        return _FIRST_TIME
+def get_ack(intent_type: IntentType) -> str:
     if intent_type == IntentType.GREETING:
         return random.choice(_GREETING_RESPONSES)
     pool = _ACK_POOL.get(intent_type, _ACK_POOL[IntentType.GENERAL])
