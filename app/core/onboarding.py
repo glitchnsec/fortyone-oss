@@ -230,14 +230,13 @@ class OnboardingHandler:
 
         if step == "new":
             return await self._step1_ask_name(user_id)
-
         if step == "awaiting_name":
             return await self._step2_save_name_ask_tz(user_id, body)
-
         if step == "awaiting_tz":
-            return await self._step3_save_tz_finish(user_id, body)
+            return await self._step3_save_tz_ask_assistant_name(user_id, body)
+        if step == "awaiting_assistant_name":
+            return await self._step4_save_assistant_name_and_intro(user_id, body)
 
-        # Already complete — shouldn't normally reach here
         return None
 
     async def _step1_ask_name(self, user_id: str) -> str:
@@ -252,42 +251,52 @@ class OnboardingHandler:
         self.store.store_memory(user_id, "long_term", "name", name)
         self.store.update_user_name(user_id, name)
         _set_step(self.store, user_id, "awaiting_tz")
-
         return (
             f"Nice to meet you, {name}! 👋\n\n"
             "What timezone are you in?\n"
             "Anything works — 'EST', 'Pacific', 'London', 'east coast', etc."
         )
 
-    async def _step3_save_tz_finish(self, user_id: str, body: str) -> str:
+    async def _step3_save_tz_ask_assistant_name(self, user_id: str, body: str) -> str:
         iana_tz = await _resolve_timezone(body)
-        name_memories = self.store.get_memories(user_id, "long_term")
-        name = next((m.value for m in name_memories if m.key == "name"), "there")
+        memories = self.store.get_memories(user_id, "long_term")
+        name = next((m.value for m in memories if m.key == "name"), "there")
 
-        if iana_tz:
-            tz_label = _TZ_LABELS.get(iana_tz, iana_tz)
-            self.store.store_memory(user_id, "long_term", "timezone", iana_tz)
-            db_session = self.store.db
-            from app.memory.models import User
-            user = db_session.query(User).filter(User.id == user_id).first()
-            if user:
-                user.timezone = iana_tz
-                db_session.commit()
-
-            _set_step(self.store, user_id, "complete")
+        if not iana_tz:
             return (
-                f"All set, {name}! I'll keep everything in {tz_label}.\n\n"
-                "You can now:\n"
-                "  • \"Remind me to call John tomorrow at 3pm\"\n"
-                "  • \"What reminders do I have?\"\n"
-                "  • \"When should I schedule a meeting?\"\n\n"
-                "What do you need?"
-            )
-        else:
-            return (
-                f"Hmm, I couldn't figure out that timezone.\n"
+                "Hmm, I couldn't figure out that timezone.\n"
                 "Try something like: EST, Pacific, London, or America/Chicago"
             )
+
+        tz_label = _TZ_LABELS.get(iana_tz, iana_tz)
+        self.store.store_memory(user_id, "long_term", "timezone", iana_tz)
+        from app.memory.models import User
+        user = self.store.db.query(User).filter(User.id == user_id).first()
+        if user:
+            user.timezone = iana_tz
+            self.store.db.commit()
+
+        _set_step(self.store, user_id, "awaiting_assistant_name")
+        return (
+            f"Got it — {tz_label} it is.\n\n"
+            f"One last thing, {name}: what would you like to call me?\n"
+            "Give me a name — Aria, Jay, Max, Nova... anything you like.\n"
+            "(Or reply 'skip' to keep it simple.)"
+        )
+
+    async def _step4_save_assistant_name_and_intro(self, user_id: str, body: str) -> str:
+        memories = self.store.get_memories(user_id, "long_term")
+        mem = {m.key: m.value for m in memories}
+        user_name = mem.get("name", "there")
+        tz_label = _TZ_LABELS.get(mem.get("timezone", ""), mem.get("timezone", "your timezone"))
+
+        # Extract assistant name — treat "skip" as no preference
+        assistant_name = _extract_assistant_name(body)
+        self.store.store_memory(user_id, "long_term", "assistant_name", assistant_name)
+
+        _set_step(self.store, user_id, "complete")
+
+        return await _generate_intro(user_name, assistant_name, tz_label)
 
 
 # ─── Name extraction (rule-based fallback) ───────────────────────────────────
@@ -313,3 +322,84 @@ def _extract_name_rules(raw: str) -> str:
         if w[0].isupper() and w.isalpha():
             return w
     return text.title()
+
+
+# ─── Assistant name + intro ───────────────────────────────────────────────────
+
+_DEFAULT_ASSISTANT_NAME = "your assistant"
+
+_SKIP_WORDS = {"skip", "no", "nope", "none", "idc", "whatever", "default",
+               "anything", "doesn't matter", "dont care", "don't care"}
+
+
+def _extract_assistant_name(raw: str) -> str:
+    """
+    Pull a name for the assistant out of the user's reply.
+    Falls back to the default when the user skips or is indifferent.
+    """
+    clean = raw.strip().lower().rstrip("!.,")
+    if clean in _SKIP_WORDS or not clean:
+        return _DEFAULT_ASSISTANT_NAME
+
+    # Strip lead-ins: "call yourself Jay", "name yourself Aria", "you are Max"
+    for prefix in ("call yourself ", "name yourself ", "you are ", "your name is ",
+                   "call you ", "i'll call you ", "let's call you "):
+        if clean.startswith(prefix):
+            raw = raw[len(prefix):]
+            break
+
+    words = raw.strip().split()
+    if words:
+        return words[0].strip(".,!?").capitalize()
+    return _DEFAULT_ASSISTANT_NAME
+
+
+_STATIC_INTRO_TEMPLATE = (
+    "I'm {assistant}, your personal assistant. "
+    "Here's what I can do for you, {user_name}:\n\n"
+    "  • Set reminders — \"Remind me to call John tomorrow at 3pm\"\n"
+    "  • Manage tasks — \"What do I have today?\"\n"
+    "  • Help with scheduling — \"When should I meet with the team?\"\n"
+    "  • Remember things — \"I prefer morning meetings\"\n\n"
+    "I remember everything you tell me and get smarter over time. "
+    "What's the first thing on your mind?"
+)
+
+
+async def _generate_intro(user_name: str, assistant_name: str, tz_label: str) -> str:
+    """
+    Generate a warm, personalised introduction message.
+    Uses the LLM when available; falls back to a static template.
+    """
+    from app.config import get_settings
+    if not get_settings().has_llm:
+        name_part = assistant_name if assistant_name != _DEFAULT_ASSISTANT_NAME else "your assistant"
+        return _STATIC_INTRO_TEMPLATE.format(assistant=name_part, user_name=user_name)
+
+    from app.tasks._llm import llm_text
+
+    system = (
+        "You are a personal SMS assistant being introduced to a new user for the first time. "
+        "Write a warm, confident, and concise introduction. "
+        "You must stay under 320 characters total (SMS-friendly). "
+        "Do NOT use bullet lists. Be conversational — like a real person, not a product page. "
+        "End with an open invitation, not a question."
+    )
+
+    user_msg = (
+        f"My name is {assistant_name if assistant_name != _DEFAULT_ASSISTANT_NAME else 'not set yet'}.\n"
+        f"The user's name is {user_name}.\n"
+        f"Their timezone is {tz_label}.\n\n"
+        "Write the intro message now."
+    )
+
+    static_fallback = _STATIC_INTRO_TEMPLATE.format(
+        assistant=assistant_name if assistant_name != _DEFAULT_ASSISTANT_NAME else "I",
+        user_name=user_name,
+    )
+
+    return await llm_text(
+        system=system,
+        messages=[{"role": "user", "content": user_msg}],
+        mock_text=static_fallback,
+    )
