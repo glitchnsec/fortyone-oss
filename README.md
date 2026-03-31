@@ -63,7 +63,8 @@ pip install -r requirements.txt
 ### 2. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set OPENAI_API_KEY if you want real LLM responses.
+# Edit .env — at minimum set NVIDIA_API_KEY for real LLM responses.
+# Get a free key at https://build.nvidia.com/ (click any model → "Get API Key").
 # MOCK_SMS=true means SMS is just printed to logs (no Twilio needed locally).
 ```
 
@@ -189,3 +190,5 @@ scripts/
 - Deploy workers on AWS Lambda (triggered by SQS) or keep as always-on process
 - Add Twilio signature validation in `routes/sms.py`
 - Set `MOCK_SMS=false` and fill in Twilio credentials
+- For on-prem / private NIM deployments set `NIM_BASE_URL` to your endpoint
+- Swap `NIM_MODEL_FAST` / `NIM_MODEL_CAPABLE` for any NIM-hosted model

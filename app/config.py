@@ -10,9 +10,14 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
-    # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o-mini"
+    # NVIDIA NIM  (OpenAI-compatible)
+    # Get a free key at: https://build.nvidia.com/
+    nvidia_api_key: str = ""
+    nim_base_url: str = "https://integrate.api.nvidia.com/v1"
+    # Fast model used for structured extraction (JSON tasks)
+    nim_model_fast: str = "meta/llama-3.1-8b-instruct"
+    # Capable model used for free-form text (scheduling, general chat)
+    nim_model_capable: str = "meta/llama-3.3-70b-instruct"
 
     # Database
     database_url: str = "sqlite:///./assistant.db"
@@ -35,7 +40,8 @@ class Settings(BaseSettings):
 
     @property
     def has_llm(self) -> bool:
-        return bool(self.openai_api_key)
+        # Real NVIDIA API keys are "nvapi-" + ~80 chars.  Reject short placeholders.
+        return len(self.nvidia_api_key) > 20
 
 
 @lru_cache
