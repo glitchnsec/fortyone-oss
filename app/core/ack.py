@@ -86,19 +86,14 @@ _ACK_SYSTEM = (
 async def _llm_ack(body: str, user_name: Optional[str]) -> str:
     """Raw LLM call — no timeout, no fallback. Callers handle that."""
     from app.config import get_settings
-    from openai import AsyncOpenAI
+    from app.tasks._llm import _client
 
     settings = get_settings()
-    client = AsyncOpenAI(
-        api_key=settings.nvidia_api_key,
-        base_url=settings.nim_base_url,
-    )
-
     name_hint = f" The user's name is {user_name}." if user_name else ""
     user_prompt = f'User just texted: "{body}"{name_hint}'
 
-    resp = await client.chat.completions.create(
-        model=settings.nim_model_fast,
+    resp = await _client(settings).chat.completions.create(
+        model=settings.llm_model_fast,
         messages=[
             {"role": "system", "content": _ACK_SYSTEM},
             {"role": "user",   "content": user_prompt},
@@ -114,7 +109,7 @@ async def get_smart_ack(
     intent_type: IntentType,
     body: str,
     user_name: Optional[str] = None,
-    timeout_s: float = 0.45,    # leaves 50ms headroom inside the 500ms SLA
+    timeout_s: float = 0.90,    # leaves 100ms headroom inside the 1s SLA
 ) -> str:
     """
     Try an LLM-generated ACK within `timeout_s` seconds.
@@ -124,7 +119,8 @@ async def get_smart_ack(
     how often the fallback fires in production.
     """
     from app.config import get_settings
-    if not get_settings().has_llm:
+    settings = get_settings()
+    if not settings.has_llm:
         return get_ack(intent_type)
 
     static_fallback = get_ack(intent_type)

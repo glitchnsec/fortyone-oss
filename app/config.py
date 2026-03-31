@@ -10,14 +10,18 @@ class Settings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
-    # NVIDIA NIM  (OpenAI-compatible)
-    # Get a free key at: https://build.nvidia.com/
-    nvidia_api_key: str = ""
-    nim_base_url: str = "https://integrate.api.nvidia.com/v1"
-    # Fast model used for structured extraction (JSON tasks)
-    nim_model_fast: str = "meta/llama-3.1-8b-instruct"
-    # Capable model used for free-form text (scheduling, general chat)
-    nim_model_capable: str = "meta/llama-3.3-70b-instruct"
+    # OpenRouter — model-agnostic LLM gateway (OpenAI-compatible)
+    # Get a free key at: https://openrouter.ai/keys
+    openrouter_api_key: str = ""
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Fast model: structured extraction, ACKs, classification
+    # Any OpenRouter model ID works — e.g. openai/gpt-4o-mini, google/gemini-flash-1.5
+    llm_model_fast: str = "meta-llama/llama-3.1-8b-instruct:free"
+    # Capable model: free-form responses, scheduling, general chat
+    llm_model_capable: str = "meta-llama/llama-3.3-70b-instruct:free"
+    # Optional: shown on openrouter.ai dashboard for usage tracking
+    openrouter_site_url: str = ""
+    openrouter_site_name: str = "Personal Assistant"
 
     # Database
     database_url: str = "sqlite:///./assistant.db"
@@ -44,8 +48,8 @@ class Settings(BaseSettings):
 
     @property
     def has_llm(self) -> bool:
-        # Real NVIDIA API keys are "nvapi-" + ~80 chars.  Reject short placeholders.
-        return len(self.nvidia_api_key) > 20
+        # OpenRouter keys start with "sk-or-" and are ~50+ chars
+        return len(self.openrouter_api_key) > 20
 
 
 @lru_cache
