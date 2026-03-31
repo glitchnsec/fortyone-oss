@@ -33,7 +33,10 @@ class SMSClient:
                 from_=self.settings.twilio_phone_number,
                 to=to,
             )
-            logger.info("SMS sent sid=%s to=%s", msg.sid, to)
+            logger.info(
+                "SMS sent  sid=%s  to=%s  body=%r",
+                msg.sid, to, body[:120],
+            )
             return True
         except Exception as exc:
             logger.error("SMS failed to=%s: %s", to, exc)

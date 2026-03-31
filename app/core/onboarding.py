@@ -12,6 +12,7 @@ States (stored as memory key "onboarding_step"):
 """
 import logging
 import re
+import time
 from typing import Optional
 
 from app.memory.store import MemoryStore
@@ -137,10 +138,12 @@ async def _resolve_timezone(raw: str) -> Optional[str]:
     """
     result = _resolve_timezone_static(raw)
     if result:
+        logger.info("TZ_RESOLVE  source=static  raw=%r  iana=%s", raw[:40], result)
         return result
 
     from app.config import get_settings
     if not get_settings().has_llm:
+        logger.info("TZ_RESOLVE  source=none  raw=%r  result=null", raw[:40])
         return None
 
     from app.tasks._llm import llm_json
@@ -157,7 +160,9 @@ async def _resolve_timezone(raw: str) -> Optional[str]:
 
     iana = data.get("iana")
     if iana and isinstance(iana, str) and "/" in iana:
+        logger.info("TZ_RESOLVE  source=llm  raw=%r  iana=%s", raw[:40], iana)
         return iana
+    logger.info("TZ_RESOLVE  source=llm  raw=%r  result=null", raw[:40])
     return None
 
 
@@ -183,6 +188,7 @@ async def _extract_name(raw: str) -> str:
             mock_payload={"name": _extract_name_rules(raw)},
         )
         name = data.get("name", "").strip()
+        logger.info("NAME_EXTRACT  source=llm  raw=%r  name=%r", raw[:40], name)
         if name:
             return name
 
@@ -227,17 +233,32 @@ class OnboardingHandler:
         Returns the reply string to send, or None once onboarding is marked complete.
         """
         step = get_step(self.store, user_id)
+        t0 = time.monotonic()
+
+        logger.info(
+            "ONBOARDING_STEP  user=%s  step=%s  body=%r",
+            user_id[:8], step, body[:60],
+        )
 
         if step == "new":
-            return await self._step1_ask_name(user_id)
-        if step == "awaiting_name":
-            return await self._step2_save_name_ask_tz(user_id, body)
-        if step == "awaiting_tz":
-            return await self._step3_save_tz_ask_assistant_name(user_id, body)
-        if step == "awaiting_assistant_name":
-            return await self._step4_save_assistant_name_and_intro(user_id, body)
+            reply = await self._step1_ask_name(user_id)
+        elif step == "awaiting_name":
+            reply = await self._step2_save_name_ask_tz(user_id, body)
+        elif step == "awaiting_tz":
+            reply = await self._step3_save_tz_ask_assistant_name(user_id, body)
+        elif step == "awaiting_assistant_name":
+            reply = await self._step4_save_assistant_name_and_intro(user_id, body)
+        else:
+            return None
 
-        return None
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        new_step = get_step(self.store, user_id)
+        logger.info(
+            "ONBOARDING_REPLY  user=%s  step=%s→%s  latency_ms=%d  reply=%r",
+            user_id[:8], step, new_step, latency_ms,
+            (reply or "")[:100],
+        )
+        return reply
 
     async def _step1_ask_name(self, user_id: str) -> str:
         _set_step(self.store, user_id, "awaiting_name")
@@ -278,10 +299,10 @@ class OnboardingHandler:
 
         _set_step(self.store, user_id, "awaiting_assistant_name")
         return (
-            f"Got it — {tz_label} it is.\n\n"
-            f"One last thing, {name}: what would you like to call me?\n"
-            "Give me a name — Aria, Jay, Max, Nova... anything you like.\n"
-            "(Or reply 'skip' to keep it simple.)"
+            f"Got it — {tz_label} locked in.\n\n"
+            f"Last thing, {name}: what would you like to call me? "
+            "Aria, Jay, Max, Nova — anything works. "
+            "Reply 'skip' if you don't mind."
         )
 
     async def _step4_save_assistant_name_and_intro(self, user_id: str, body: str) -> str:
@@ -290,10 +311,22 @@ class OnboardingHandler:
         user_name = mem.get("name", "there")
         tz_label = _TZ_LABELS.get(mem.get("timezone", ""), mem.get("timezone", "your timezone"))
 
-        # Extract assistant name — treat "skip" as no preference
-        assistant_name = _extract_assistant_name(body)
-        self.store.store_memory(user_id, "long_term", "assistant_name", assistant_name)
+        classification = await _classify_name_reply(body, user_name)
+        intent = classification.get("intent")   # "name" | "skip" | "confused"
+        assistant_name = classification.get("name")
 
+        if intent == "confused":
+            # User likely didn't see the previous question — re-send it with context
+            return (
+                f"Hey {user_name}! Quick setup question I still need: "
+                "what would you like to call me?\n"
+                "Give me a name — Aria, Jay, Max, Nova — or just say 'skip'."
+            )
+
+        if intent == "skip" or not assistant_name:
+            assistant_name = _DEFAULT_ASSISTANT_NAME
+
+        self.store.store_memory(user_id, "long_term", "assistant_name", assistant_name)
         _set_step(self.store, user_id, "complete")
 
         return await _generate_intro(user_name, assistant_name, tz_label)
@@ -328,41 +361,87 @@ def _extract_name_rules(raw: str) -> str:
 
 _DEFAULT_ASSISTANT_NAME = "your assistant"
 
-_SKIP_WORDS = {"skip", "no", "nope", "none", "idc", "whatever", "default",
-               "anything", "doesn't matter", "dont care", "don't care"}
-
-
-def _extract_assistant_name(raw: str) -> str:
+async def _classify_name_reply(body: str, user_name: str) -> dict:
     """
-    Pull a name for the assistant out of the user's reply.
-    Falls back to the default when the user skips or is indifferent.
-    """
-    clean = raw.strip().lower().rstrip("!.,")
-    if clean in _SKIP_WORDS or not clean:
-        return _DEFAULT_ASSISTANT_NAME
+    Use the LLM to classify whether the user's reply to "what should I call you?"
+    is an actual name, a skip, or confusion (they likely didn't see the question).
 
-    # Strip lead-ins: "call yourself Jay", "name yourself Aria", "you are Max"
-    for prefix in ("call yourself ", "name yourself ", "you are ", "your name is ",
-                   "call you ", "i'll call you ", "let's call you "):
+    Returns: {"intent": "name"|"skip"|"confused", "name": str|None}
+
+    5-second hard timeout — falls back to rule-based classifier on any
+    slowness so the user never waits more than ~5s for a classification.
+    """
+    from app.config import get_settings
+    if not get_settings().has_llm:
+        result = _classify_name_rules(body)
+        logger.info("NAME_CLASSIFY  source=rules  body=%r  result=%s", body[:40], result)
+        return result
+
+    from app.tasks._llm import llm_json
+    data = await llm_json(
+        prompt=(
+            f'The user {user_name} was asked: "What would you like to call your AI assistant?"\n'
+            f'They replied: "{body}"\n\n'
+            'Classify the reply and return JSON:\n'
+            '{\n'
+            '  "intent": "name" | "skip" | "confused",\n'
+            '  "name": "ProperCasedName or null"\n'
+            '}\n\n'
+            '"name"     — they gave an actual name (e.g. Aria, Jay, "call yourself Max")\n'
+            '"skip"     — they want a default (e.g. skip, whatever, doesn\'t matter, surprise me)\n'
+            '"confused" — looks like a greeting, reaction, or off-topic reply that suggests\n'
+            '             they did not see the question (e.g. hey, heyy, ok, lol, cool, hi)\n\n'
+            'For "name", extract just the name in proper case. For anything else set name to null.'
+        ),
+        mock_payload=_classify_name_rules(body),
+        timeout_s=5.0,   # never wait more than 5s for a classification
+    )
+
+    if data.get("intent") in ("name", "skip", "confused"):
+        logger.info("NAME_CLASSIFY  source=llm  body=%r  result=%s", body[:40], data)
+        return data
+
+    # LLM returned something unexpected — fall back to rules
+    fallback = _classify_name_rules(body)
+    logger.warning("NAME_CLASSIFY  source=rules_fallback  body=%r  result=%s", body[:40], fallback)
+    return fallback
+
+
+def _classify_name_rules(body: str) -> dict:
+    """Rule-based fallback for name classification (no LLM)."""
+    clean = re.sub(r"(.)\1{2,}", r"\1\1", body.strip().lower().rstrip("!?.,"))
+
+    greetings = {"hey", "hi", "hello", "sup", "yo", "heyy", "hii", "howdy"}
+    reactions = {"ok", "okay", "k", "sure", "yeah", "yep", "lol", "haha",
+                 "nice", "great", "cool", "awesome", "wow", "omg", "idk",
+                 "hmm", "ugh", "hm", "got it", "alright", "fine"}
+    skips = {"skip", "no", "nope", "none", "whatever", "default", "anything",
+             "doesn't matter", "dont care", "don't care", "up to you",
+             "your choice", "surprise me", "no preference"}
+
+    if clean in greetings or clean in reactions:
+        return {"intent": "confused", "name": None}
+    if clean in skips or not clean:
+        return {"intent": "skip", "name": None}
+
+    # Strip lead-ins
+    for prefix in ("call yourself ", "name yourself ", "you are ",
+                   "your name is ", "call you ", "i'll call you "):
         if clean.startswith(prefix):
-            raw = raw[len(prefix):]
+            body = body[len(prefix):]
             break
 
-    words = raw.strip().split()
-    if words:
-        return words[0].strip(".,!?").capitalize()
-    return _DEFAULT_ASSISTANT_NAME
+    name = body.strip().split()[0].strip(".,!?").capitalize() if body.strip() else None
+    return {"intent": "name" if name else "skip", "name": name}
+
+
 
 
 _STATIC_INTRO_TEMPLATE = (
-    "I'm {assistant}, your personal assistant. "
-    "Here's what I can do for you, {user_name}:\n\n"
-    "  • Set reminders — \"Remind me to call John tomorrow at 3pm\"\n"
-    "  • Manage tasks — \"What do I have today?\"\n"
-    "  • Help with scheduling — \"When should I meet with the team?\"\n"
-    "  • Remember things — \"I prefer morning meetings\"\n\n"
-    "I remember everything you tell me and get smarter over time. "
-    "What's the first thing on your mind?"
+    "Hey {user_name}! I'm {assistant} — I'll handle your reminders, "
+    "scheduling, and follow-ups so nothing slips through the cracks. "
+    "I remember what you tell me and get more useful over time.\n\n"
+    "What's the most important thing on your plate right now?"
 )
 
 
@@ -378,18 +457,22 @@ async def _generate_intro(user_name: str, assistant_name: str, tz_label: str) ->
 
     from app.tasks._llm import llm_text
 
+    has_name = assistant_name != _DEFAULT_ASSISTANT_NAME
     system = (
         "You are a personal SMS assistant being introduced to a new user for the first time. "
-        "Write a warm, confident, and concise introduction. "
-        "You must stay under 320 characters total (SMS-friendly). "
-        "Do NOT use bullet lists. Be conversational — like a real person, not a product page. "
-        "End with an open invitation, not a question."
+        "Write a warm, confident, 2-sentence introduction followed by one specific open question. "
+        "Stay under 320 characters total (SMS-friendly). "
+        "Do NOT use bullet lists. Sound like a real person — warm and direct, not a product pitch. "
+        "The final sentence MUST be a question that invites the user to share something "
+        "about themselves or their life — NOT 'What can I help you with?' or 'Let's get started'. "
+        "Example ending: 'What's the most important thing on your plate right now?'"
     )
 
+    asst_label = assistant_name if has_name else "(no name chosen — refer to yourself as just 'I')"
     user_msg = (
-        f"My name is {assistant_name if assistant_name != _DEFAULT_ASSISTANT_NAME else 'not set yet'}.\n"
-        f"The user's name is {user_name}.\n"
-        f"Their timezone is {tz_label}.\n\n"
+        f"Assistant name: {asst_label}\n"
+        f"User's name: {user_name}\n"
+        f"User's timezone: {tz_label}\n\n"
         "Write the intro message now."
     )
 
