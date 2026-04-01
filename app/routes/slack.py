@@ -103,16 +103,19 @@ async def slack_events(
     raw_body = await request.body()
     payload: dict = await request.json()
 
-    # ── Signature check ───────────────────────────────────────────────────────
-    signing_secret = getattr(settings, "slack_signing_secret", "")
-    if signing_secret:
-        if not _verify_slack_signature(
-            raw_body,
-            x_slack_request_timestamp,
-            x_slack_signature,
-            signing_secret,
-        ):
-            raise HTTPException(status_code=403, detail="Invalid Slack signature")
+    # ── Signature check (mandatory — D-09) ───────────────────────────────────
+    signing_secret = settings.slack_signing_secret
+    if not signing_secret:
+        # Router is disabled in app/main.py when secret is not configured.
+        # If we somehow receive a request here without a secret, reject it.
+        raise HTTPException(status_code=403, detail="Slack integration not configured")
+    if not _verify_slack_signature(
+        raw_body,
+        x_slack_request_timestamp,
+        x_slack_signature,
+        signing_secret,
+    ):
+        raise HTTPException(status_code=403, detail="Invalid Slack signature")
 
     # ── URL verification (one-time setup handshake) ───────────────────────────
     if payload.get("type") == "url_verification":
