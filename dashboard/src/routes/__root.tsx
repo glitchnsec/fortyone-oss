@@ -1,7 +1,8 @@
-import { createRootRouteWithContext, Outlet, redirect } from "@tanstack/react-router";
+import { createRootRouteWithContext, Outlet, redirect, useRouterState } from "@tanstack/react-router";
 import { type QueryClient } from "@tanstack/react-query";
 import { type AuthContext } from "../lib/auth.tsx";
 import { Toaster } from "../components/ui/sonner";
+import { AppShell } from "../components/layout/AppShell";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient; auth: AuthContext }>()({
   beforeLoad({ context, location }) {
@@ -18,10 +19,27 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient; auth
       throw redirect({ to: "/auth/login" });
     }
   },
-  component: () => (
-    <>
+  component: RootLayout,
+});
+
+function RootLayout() {
+  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const isAuth = pathname.startsWith("/auth");
+  const isOnboarding = pathname.startsWith("/onboarding");
+
+  if (isAuth || isOnboarding) {
+    return (
+      <>
+        <Outlet />
+        <Toaster />
+      </>
+    );
+  }
+
+  return (
+    <AppShell>
       <Outlet />
       <Toaster />
-    </>
-  ),
-});
+    </AppShell>
+  );
+}
