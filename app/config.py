@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
     encryption_key: str = ""
 
+    # Public URL — set when behind a reverse proxy (ngrok, nginx, etc.)
+    # Twilio signs requests against this URL; must match exactly.
+    # Example: https://abcd-1234.ngrok-free.app
+    base_url: str = ""
+
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
     environment: str = "development"

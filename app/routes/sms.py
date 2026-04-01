@@ -49,8 +49,12 @@ async def _validate_twilio_signature(
     if settings.is_mock_sms:
         return  # Skip validation in mock/dev mode (no real Twilio creds)
     validator = RequestValidator(settings.twilio_auth_token)
-    # Reconstruct the URL Twilio signed — use full URL including scheme and host
-    url = str(request.url)
+    # Reconstruct the URL Twilio signed — behind a reverse proxy (ngrok, nginx),
+    # request.url is http://localhost but Twilio signed against the public https URL.
+    if settings.base_url:
+        url = settings.base_url.rstrip("/") + request.url.path
+    else:
+        url = str(request.url)
     # For form-encoded bodies, pass the form params dict (Twilio signs these)
     form = await request.form()
     params = dict(form)
@@ -68,10 +72,12 @@ async def _process_inbound(address: str, body: str) -> None:
     async with AsyncSessionLocal() as db:
         try:
             store = MemoryStore(db)
-            pipeline = MessagePipeline(channel=_channel, queue=queue_client, store=store)
+            pipeline = MessagePipeline(
+                channel=_channel, queue=queue_client, store=store)
             await pipeline.handle(address=address, body=body)
         except Exception as exc:
-            logger.error("Pipeline error address=%s: %s", address, exc, exc_info=True)
+            logger.error("Pipeline error address=%s: %s",
+                         address, exc, exc_info=True)
             try:
                 await _channel.send(address, _channel.error_reply)
             except Exception:
