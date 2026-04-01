@@ -8,6 +8,7 @@ from alembic import context
 # Import models so autogenerate sees the metadata
 from app.database import Base
 from app.memory import models  # noqa: F401
+from app.models.auth import UserSession  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

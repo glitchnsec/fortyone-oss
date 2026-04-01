@@ -25,9 +25,16 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     last_seen_at = Column(DateTime(timezone=True), default=_utcnow)
 
+    # Auth columns (nullable for backward compat — SMS-only users have no email)
+    email = Column(String, unique=True, nullable=True, index=True)
+    password_hash = Column(String, nullable=True)
+    phone_verified = Column(Boolean, default=False)
+    assistant_name = Column(String, nullable=True)  # Onboarding step 3 (DASH-02 / D-12)
+
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
+    sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
