@@ -10,9 +10,25 @@ from datetime import datetime, timezone
 
 from app.database import AsyncSessionLocal
 from app.memory.store import MemoryStore
-from app.tasks._llm import llm_json
+from app.tasks._llm import llm_messages_json
 
 logger = logging.getLogger(__name__)
+
+REMINDER_SYSTEM = (
+    "You are a reminder extraction assistant. "
+    "Extract structured reminder data from the user's message and return JSON with these fields: "
+    "task (string), due_at (ISO 8601 UTC string or null), recurrence ('none'|'daily'|'weekly'|'monthly'), "
+    "contact (string or null), confirmation (one casual friendly sentence confirming the reminder). "
+    "Return valid JSON only. If time is relative (e.g. 'tomorrow at 3pm'), convert to absolute UTC. "
+    "If time is ambiguous, pick the most sensible interpretation and mention it."
+)
+
+PREFERENCE_SYSTEM = (
+    "You are a preference extraction assistant. "
+    "Extract a user preference from the message and return JSON with: "
+    "key (snake_case, e.g. 'preferred_meeting_time'), value (descriptive string), "
+    "confirmation (one casual sentence confirming you noted it). Return valid JSON only."
+)
 
 
 async def handle_reminder(payload: dict) -> dict:
@@ -24,29 +40,24 @@ async def handle_reminder(payload: dict) -> dict:
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     tz = context.get("memories", {}).get("timezone", "America/New_York")
 
-    prompt = f"""Extract reminder details from the user message and return JSON.
-
-User message: "{body}"
-Current UTC time: {now_str}
-User timezone: {tz}
-
-Return JSON with these fields:
-- task: string — what to remind about
-- due_at: ISO 8601 UTC string — when, or null if unclear
-- recurrence: "none" | "daily" | "weekly" | "monthly"
-- contact: string or null — person involved
-- confirmation: string — one casual, friendly sentence confirming the reminder
-
-If time is relative (e.g. "tomorrow at 3pm"), convert to absolute UTC.
-If time is ambiguous, pick the most sensible interpretation and mention it."""
-
+    # Separate system instructions from user content — no f-string interpolation (D-10)
+    messages = [
+        {
+            "role": "system",
+            "content": REMINDER_SYSTEM + f"\nCurrent UTC time: {now_str}\nUser timezone: {tz}",
+        },
+        {
+            "role": "user",
+            "content": body,   # user content ONLY here — no wrapping or interpolation
+        },
+    ]
     mock_due = datetime.now(timezone.utc).replace(hour=15, minute=0, second=0, microsecond=0)
-    data = await llm_json(prompt, mock_payload={
+    data = await llm_messages_json(messages, mock_payload={
         "task": body,
         "due_at": mock_due.isoformat(),
         "recurrence": "none",
         "contact": None,
-        "confirmation": f"Got it! I'll remind you: {body}.",
+        "confirmation": f"Got it! I'll remind you about that.",
     })
 
     async with AsyncSessionLocal() as db:
@@ -95,16 +106,12 @@ async def handle_preference(payload: dict) -> dict:
     phone: str = payload["phone"]
     body: str = payload["body"]
 
-    prompt = f"""Extract a user preference from this message and return JSON.
-
-User message: "{body}"
-
-Return JSON with:
-- key: snake_case key (e.g. "preferred_meeting_time", "communication_style", "wake_up_time")
-- value: descriptive string for the preference value
-- confirmation: one casual sentence confirming you noted it"""
-
-    data = await llm_json(prompt, mock_payload={
+    # Separate system instructions from user content — no f-string interpolation (D-10)
+    messages = [
+        {"role": "system", "content": PREFERENCE_SYSTEM},
+        {"role": "user", "content": body},
+    ]
+    data = await llm_messages_json(messages, mock_payload={
         "key": "preference",
         "value": body,
         "confirmation": "Got it — I'll keep that in mind.",

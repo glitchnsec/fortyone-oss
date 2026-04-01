@@ -7,9 +7,17 @@ import re
 
 from app.database import AsyncSessionLocal
 from app.memory.store import MemoryStore
-from app.tasks._llm import llm_json, llm_text
+from app.tasks._llm import llm_json, llm_messages_json, llm_text
 
 logger = logging.getLogger(__name__)
+
+GENERAL_SYSTEM = (
+    "You are a personal assistant communicating via SMS/chat. "
+    "Be concise, warm, and human. Keep your reply under 3 sentences — no bullet points. "
+    "Return JSON: {\"response\": \"your reply\", \"profile\": {\"name\": null or string, "
+    "\"timezone\": null or IANA string, \"email\": null or string, \"assistant_name\": null or string}}. "
+    "Only populate a profile field if the user explicitly mentioned it in THIS message."
+)
 
 
 async def handle_recall(payload: dict) -> dict:
@@ -132,36 +140,23 @@ async def handle_general(payload: dict) -> dict:
         for m in recent_msgs[-6:]
     ])
 
-    prompt = f"""You are a personal assistant (SMS/chat). Be concise, warm, and human.
-Keep your reply under 3 sentences — no bullet points.
-{name_line}
-What I know about this user:
-{memory_lines}
+    # Build context block (safe — no user body in system message)
+    context_lines = []
+    if name_line:
+        context_lines.append(name_line)
+    context_lines.append(f"What I know about this user:\n{memory_lines}")
+    context_lines.append(f"Recent conversation:\n{history_json}")
+    system_with_context = GENERAL_SYSTEM + "\n\n" + "\n\n".join(context_lines)
 
-Recent conversation:
-{history_json}
-
-User says: "{body}"
-
-Return JSON:
-{{
-  "response": "your reply",
-  "profile": {{
-    "name": "how they want to be addressed, or null",
-    "timezone": "IANA string if they mentioned one, or null",
-    "email": "if they shared their email, or null",
-    "assistant_name": "if they suggested a name for you, or null"
-  }}
-}}
-
-Only populate a profile field if the user explicitly mentioned it in THIS message.
-For everything else use null."""
-
+    messages = [
+        {"role": "system", "content": system_with_context},
+        {"role": "user", "content": body},   # body ONLY in user role
+    ]
     mock_response = (
         "I'm here to help with reminders, scheduling, and keeping things on track. "
         "What can I do for you?"
     )
-    data = await llm_json(prompt, mock_payload={"response": mock_response, "profile": {}})
+    data = await llm_messages_json(messages, mock_payload={"response": mock_response, "profile": {}})
 
     profile = {k: v for k, v in data.get("profile", {}).items() if v}
     logger.info("GENERAL  job_id=%s  profile_found=%s", job_id, list(profile))

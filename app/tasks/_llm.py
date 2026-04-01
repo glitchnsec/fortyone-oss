@@ -127,6 +127,70 @@ async def llm_json(
         return mock_payload
 
 
+async def llm_messages_json(
+    messages: list[dict],
+    mock_payload: dict,
+    timeout_s: float = 10.0,
+) -> dict:
+    """
+    Call the fast model with a pre-built messages array, expecting a JSON response.
+
+    Unlike llm_json (which wraps a single prompt string into a role:user message),
+    this helper accepts a pre-built messages list so callers can separate system
+    instructions (role:system) from user content (role:user).
+
+    Falls back to mock_payload on no key / timeout / error.
+    """
+    settings = get_settings()
+
+    if not settings.has_llm:
+        logger.info("LLM call=mock reason=no_key")
+        return mock_payload
+
+    t0 = time.monotonic()
+    try:
+        resp = await asyncio.wait_for(
+            _client(settings).chat.completions.create(
+                model=settings.llm_model_fast,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+                max_tokens=400,
+            ),
+            timeout=timeout_s,
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        raw = resp.choices[0].message.content
+        tokens = getattr(resp.usage, "completion_tokens", "?")
+        result = json.loads(raw)
+        logger.info(
+            "LLM call=json_messages  model=%s  latency_ms=%d  tokens=%s  response=%s",
+            settings.llm_model_fast, latency_ms, tokens, json.dumps(result)[:120],
+        )
+        return result
+
+    except asyncio.TimeoutError:
+        logger.warning("LLM call=timeout  latency_ms=%d  falling back to mock",
+                       int((time.monotonic() - t0) * 1000))
+        return mock_payload
+
+    except json.JSONDecodeError:
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        logger.warning("LLM call=json_parse_error  latency_ms=%d  attempting extraction", latency_ms)
+        try:
+            result = _extract_json_from_text(resp.choices[0].message.content)
+            logger.info("LLM json_extracted=%s", json.dumps(result)[:120])
+            return result
+        except (ValueError, UnboundLocalError) as exc:
+            logger.error("LLM json_extraction_failed: %s", exc)
+            return mock_payload
+
+    except Exception as exc:
+        logger.error("LLM call=error  latency_ms=%d  error=%s",
+                     int((time.monotonic() - t0) * 1000), exc)
+        return mock_payload
+
+
 async def llm_text(
     system: str,
     messages: list[dict],
