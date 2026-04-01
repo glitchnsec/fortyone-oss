@@ -35,6 +35,16 @@ class MemoryStore:
             await self.db.commit()
         return user
 
+    async def lookup_by_email(self, email: str) -> Optional[User]:
+        """Return the User with the given email, or None if not found."""
+        result = await self.db.execute(select(User).where(User.email == email))
+        return result.scalar_one_or_none()
+
+    async def lookup_by_phone(self, phone: str) -> Optional[User]:
+        """Return the User with the given phone number, or None if not found."""
+        result = await self.db.execute(select(User).where(User.phone == phone))
+        return result.scalar_one_or_none()
+
     async def update_user_name(self, user_id: str, name: str) -> None:
         result = await self.db.execute(select(User).where(User.id == user_id))
         user = result.scalars().first()

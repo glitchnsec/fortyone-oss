@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     # Example: https://abcd-1234.ngrok-free.app
     base_url: str = ""
 
+    # JWT Auth
+    jwt_secret: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    access_token_expire_minutes: int = 15
+    refresh_token_expire_days: int = 30
+
+    # External services
+    connections_service_url: str = "http://connections:8001"
+    twilio_verify_service_sid: str = ""    # For SMS OTP verification (plan 02-05)
+    brave_api_key: str = ""                # For Brave Search (plan 02-07)
+    dashboard_url: str = "http://localhost:5173"  # Redirect target post-OAuth
+
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
     environment: str = "development"
