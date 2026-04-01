@@ -18,6 +18,7 @@ Adding a new channel:
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -121,4 +122,29 @@ if settings.environment == "development":
 @app.get("/health", tags=["Meta"])
 async def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
+
+
+# ── SPA static serving ────────────────────────────────────────────────────────
+# CRITICAL: This MUST come after all include_router() calls.
+# API routes registered above are unaffected; this catch-all only fires for
+# unmatched paths (e.g. /connections, /conversations, /settings).
+from fastapi.staticfiles import StaticFiles   # noqa: E402
+from fastapi.responses import FileResponse    # noqa: E402
+
+_DASHBOARD_DIST = os.path.join(os.path.dirname(__file__), "..", "dashboard", "dist")
+
+if os.path.exists(_DASHBOARD_DIST):
+    # Mount /assets so Vite JS/CSS bundles (in dist/assets/) are served correctly
+    _assets_dir = os.path.join(_DASHBOARD_DIST, "assets")
+    if os.path.exists(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="static_assets")
+
+    # Catch-all: returns index.html for all paths not already handled by API routes.
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_spa(full_path: str) -> FileResponse:
+        return FileResponse(os.path.join(_DASHBOARD_DIST, "index.html"))
+
+    logger.info("SPA static mount registered from %s", _DASHBOARD_DIST)
+else:
+    logger.info("dashboard/dist not found — SPA static mount skipped (run npm run build)")
 
