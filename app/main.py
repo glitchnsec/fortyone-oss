@@ -94,14 +94,14 @@ app = FastAPI(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
-from app.memory.models import User                         # noqa: E402
-from app.middleware.auth import get_current_user           # noqa: E402
 from app.routes.auth import router as auth_router          # noqa: E402
+from app.routes.dashboard import router as dashboard_router  # noqa: E402
 from app.routes.sms import router as sms_router            # noqa: E402
 from app.routes.slack import router as slack_router        # noqa: E402
 
-# Auth router must be registered BEFORE any static/catch-all mounts
+# Auth + dashboard routers must be registered BEFORE any static/catch-all mounts
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
+app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(sms_router, prefix="/sms", tags=["SMS"])
 
 # ── Slack routes (disabled when signing secret is not configured) ─────────────
@@ -121,10 +121,4 @@ if settings.environment == "development":
 @app.get("/health", tags=["Meta"])
 async def health() -> dict:
     return {"status": "ok", "environment": settings.environment}
-
-
-@app.get("/api/v1/me", tags=["Auth"])
-async def me(user: User = Depends(get_current_user)) -> dict:
-    """Return basic profile for the authenticated user. Requires valid Bearer token."""
-    return {"user_id": user.id, "email": user.email, "phone": user.phone}
 
