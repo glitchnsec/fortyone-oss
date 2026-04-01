@@ -45,6 +45,18 @@ services:
       redis:
         condition: service_healthy
 
+  connections:
+    build:
+      context: ./connections
+      dockerfile: Dockerfile
+    ports:
+      - "8001:8001"
+    env_file:
+      - .env
+    volumes:
+      - ./connections:/app
+    restart: unless-stopped
+
 volumes:
   redis_data:
   sqlite_data:
