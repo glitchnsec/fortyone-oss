@@ -1,12 +1,15 @@
-"""Auth routes: register, login, refresh, logout.
+"""Auth routes: register, login, refresh, logout, OTP verification.
 
 Endpoints:
-  POST /auth/register  — create a new account (email + phone + password)
-  POST /auth/login     — validate credentials, return access token + httpOnly refresh cookie
-  POST /auth/refresh   — exchange refresh cookie for new access token (rotates session)
-  POST /auth/logout    — delete session row, clear cookie (idempotent 204)
+  POST /auth/register    — create a new account (email + phone + password)
+  POST /auth/login       — validate credentials, return access token + httpOnly refresh cookie
+  POST /auth/refresh     — exchange refresh cookie for new access token (rotates session)
+  POST /auth/logout      — delete session row, clear cookie (idempotent 204)
+  POST /auth/send-otp    — send SMS OTP via Twilio Verify (D-03, AUTH-02)
+  POST /auth/verify-otp  — verify SMS OTP and set phone_verified=True on User (D-03)
 """
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
@@ -14,16 +17,18 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from jose import jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.memory.models import User
+from app.middleware.auth import get_current_user as _get_current_user
 from app.models.auth import UserSession
 
 router = APIRouter()
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+logger = logging.getLogger(__name__)
 
 
 class RegisterInput(BaseModel):
@@ -142,3 +147,69 @@ async def logout(
         )
         await db.commit()
     response.delete_cookie("refresh_token")
+
+
+# ─── SMS OTP Verification (D-03, AUTH-02) ─────────────────────────────────────
+
+class SendOtpInput(BaseModel):
+    phone: str  # E.164 format e.g. "+15551234567"
+
+
+class VerifyOtpInput(BaseModel):
+    phone: str
+    code: str  # 6-digit code from Twilio Verify
+
+
+@router.post("/send-otp")
+async def send_otp(body: SendOtpInput):
+    """Send SMS OTP via Twilio Verify. Called from onboarding step 2."""
+    s = get_settings()
+    if not s.twilio_verify_service_sid or not s.twilio_account_sid:
+        # Dev mode: log the code, don't actually send
+        logger.info("DEV MODE: OTP send skipped for phone=%s", body.phone)
+        return {"status": "sent", "dev_mode": True}
+    try:
+        from twilio.rest import Client
+        client = Client(s.twilio_account_sid, s.twilio_auth_token)
+        client.verify.v2.services(s.twilio_verify_service_sid).verifications.create(
+            to=body.phone, channel="sms"
+        )
+        return {"status": "sent"}
+    except Exception as e:
+        logger.error("OTP send failed phone=%s error=%s", body.phone, e, exc_info=True)
+        raise HTTPException(500, "Failed to send verification code")
+
+
+@router.post("/verify-otp")
+async def verify_otp(
+    body: VerifyOtpInput,
+    user: User = Depends(_get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Verify SMS OTP and mark phone as verified on the User row."""
+    s = get_settings()
+    if not s.twilio_verify_service_sid or not s.twilio_account_sid:
+        # Dev mode: accept any 6-digit code
+        if len(body.code) == 6 and body.code.isdigit():
+            await db.execute(
+                update(User).where(User.id == user.id).values(phone_verified=True)
+            )
+            await db.commit()
+            return {"verified": True}
+        raise HTTPException(400, "Invalid verification code")
+    try:
+        from twilio.rest import Client
+        client = Client(s.twilio_account_sid, s.twilio_auth_token)
+        check = client.verify.v2.services(s.twilio_verify_service_sid).verification_checks.create(
+            to=body.phone, code=body.code
+        )
+        if check.status != "approved":
+            raise HTTPException(400, "Invalid or expired verification code")
+        await db.execute(update(User).where(User.id == user.id).values(phone_verified=True))
+        await db.commit()
+        return {"verified": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("OTP verify failed phone=%s error=%s", body.phone, e, exc_info=True)
+        raise HTTPException(500, "Verification check failed")

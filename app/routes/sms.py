@@ -72,6 +72,22 @@ async def _process_inbound(address: str, body: str) -> None:
     async with AsyncSessionLocal() as db:
         try:
             store = MemoryStore(db)
+
+            # D-05/AUTH-02: Check if this phone number belongs to a registered user.
+            # If not, send a registration link and do NOT create an account or bypass
+            # phone verification.
+            existing_user = await store.lookup_by_phone(address)
+            if not existing_user:
+                s = get_settings()
+                registration_url = f"{s.base_url.rstrip('/') if s.base_url else 'https://your-app.com'}/auth/register"
+                reply = f"Hi! To use Operator, please create your account here: {registration_url}"
+                logger.info(
+                    "UNREGISTERED  channel=sms  from=%s  sending_registration_link",
+                    address,
+                )
+                await _channel.send(address, reply)
+                return
+
             pipeline = MessagePipeline(
                 channel=_channel, queue=queue_client, store=store)
             await pipeline.handle(address=address, body=body)
