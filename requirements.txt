@@ -9,3 +9,9 @@ python-dotenv==1.0.1
 python-dateutil==2.9.0
 httpx==0.28.1
 python-multipart==0.0.20
+alembic==1.18.4
+asyncpg==0.31.0
+cryptography==46.0.6
+aiosqlite==0.20.0
+pytest==8.3.5
+pytest-asyncio==0.24.0

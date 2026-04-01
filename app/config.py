@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     slack_bot_token: str = ""       # xoxb-...  (Bot User OAuth Token)
     slack_signing_secret: str = ""  # from App Credentials page
 
+    # Encryption — required in production; generated with:
+    # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    encryption_key: str = ""
+
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
     environment: str = "development"
