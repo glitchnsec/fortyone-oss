@@ -43,7 +43,7 @@ settings = get_settings()
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
     # ── Startup ───────────────────────────────────────────────────────────────
-    init_db()
+    await init_db()
     logger.info("Database ready")
 
     await queue_client.connect()
@@ -116,28 +116,32 @@ async def reset_onboarding(phone: str) -> JSONResponse:
     phone must be URL-encoded, e.g. %2B15551234567 for +15551234567
     """
     from urllib.parse import unquote
-    from app.database import SessionLocal
+    from sqlalchemy import select, delete
+    from app.database import AsyncSessionLocal
     from app.memory.models import Memory, User
 
     phone = unquote(phone)
-    db = SessionLocal()
-    try:
-        user = db.query(User).filter(User.phone == phone).first()
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(User).where(User.phone == phone))
+        user = result.scalars().first()
         if not user:
             return JSONResponse(status_code=404, content={"error": f"No user found for {phone}"})
 
         keys_to_clear = {"onboarding_step", "name", "first_seen"}
         deleted = []
         for key in keys_to_clear:
-            mem = db.query(Memory).filter(Memory.user_id == user.id, Memory.key == key).first()
+            mem_result = await db.execute(
+                select(Memory).where(Memory.user_id == user.id, Memory.key == key)
+            )
+            mem = mem_result.scalars().first()
             if mem:
-                db.delete(mem)
+                await db.delete(mem)
                 deleted.append(key)
 
         # Reset name + timezone on the User row itself
         user.name = None
         user.timezone = "America/New_York"
-        db.commit()
+        await db.commit()
 
         return JSONResponse(content={
             "phone": phone,
@@ -145,23 +149,28 @@ async def reset_onboarding(phone: str) -> JSONResponse:
             "memories_cleared": deleted,
             "message": "Onboarding reset — next message will restart the flow.",
         })
-    finally:
-        db.close()
 
 
 @app.get("/debug/users", tags=["Debug"])
 async def debug_users() -> JSONResponse:
     """Dev-only: inspect stored users, memories, and tasks."""
-    from app.database import SessionLocal
+    from sqlalchemy import select
+    from app.database import AsyncSessionLocal
     from app.memory.models import Memory, Task, User
 
-    db = SessionLocal()
-    try:
-        users = db.query(User).all()
+    async with AsyncSessionLocal() as db:
+        users_result = await db.execute(select(User))
+        users = users_result.scalars().all()
         result = []
         for u in users:
-            memories = db.query(Memory).filter(Memory.user_id == u.id).all()
-            tasks = db.query(Task).filter(Task.user_id == u.id, Task.completed == False).all()  # noqa: E712
+            memories_result = await db.execute(
+                select(Memory).where(Memory.user_id == u.id)
+            )
+            memories = memories_result.scalars().all()
+            tasks_result = await db.execute(
+                select(Task).where(Task.user_id == u.id, Task.completed == False)  # noqa: E712
+            )
+            tasks = tasks_result.scalars().all()
             result.append({
                 "phone": u.phone,
                 "name": u.name,
@@ -179,5 +188,3 @@ async def debug_users() -> JSONResponse:
                 ],
             })
         return JSONResponse(content=result)
-    finally:
-        db.close()

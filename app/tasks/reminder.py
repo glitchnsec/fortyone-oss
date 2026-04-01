@@ -8,7 +8,7 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from app.database import SessionLocal
+from app.database import AsyncSessionLocal
 from app.memory.store import MemoryStore
 from app.tasks._llm import llm_json
 
@@ -49,10 +49,9 @@ If time is ambiguous, pick the most sensible interpretation and mention it."""
         "confirmation": f"Got it! I'll remind you: {body}.",
     })
 
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = store.get_or_create_user(phone)
+        user = await store.get_or_create_user(phone)
 
         due_at = None
         if data.get("due_at"):
@@ -61,7 +60,7 @@ If time is ambiguous, pick the most sensible interpretation and mention it."""
             except (ValueError, TypeError):
                 pass
 
-        task = store.store_task(
+        task = await store.store_task(
             user_id=user.id,
             task_type="reminder",
             title=data.get("task", body),
@@ -89,8 +88,6 @@ If time is ambiguous, pick the most sensible interpretation and mention it."""
                 "due_at": due_at.isoformat() if due_at else None,
             },
         }
-    finally:
-        db.close()
 
 
 async def handle_preference(payload: dict) -> dict:
@@ -113,11 +110,10 @@ Return JSON with:
         "confirmation": "Got it — I'll keep that in mind.",
     })
 
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = store.get_or_create_user(phone)
-        store.store_memory(
+        user = await store.get_or_create_user(phone)
+        await store.store_memory(
             user_id=user.id,
             memory_type="long_term",
             key=data.get("key", "preference"),
@@ -133,5 +129,3 @@ Return JSON with:
                 "value": data.get("value"),
             },
         }
-    finally:
-        db.close()

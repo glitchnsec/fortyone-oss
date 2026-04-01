@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Form
 from fastapi.responses import Response
 
 from app.channels.sms import SMSChannel
-from app.database import SessionLocal
+from app.database import AsyncSessionLocal
 from app.memory.store import MemoryStore
 from app.queue.client import queue_client
 
@@ -26,19 +26,17 @@ _EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>'
 async def _process_inbound(address: str, body: str) -> None:
     from app.core.pipeline import MessagePipeline
 
-    db = SessionLocal()
-    try:
-        store = MemoryStore(db)
-        pipeline = MessagePipeline(channel=_channel, queue=queue_client, store=store)
-        await pipeline.handle(address=address, body=body)
-    except Exception as exc:
-        logger.error("Pipeline error address=%s: %s", address, exc, exc_info=True)
+    async with AsyncSessionLocal() as db:
         try:
-            await _channel.send(address, _channel.error_reply)
-        except Exception:
-            pass
-    finally:
-        db.close()
+            store = MemoryStore(db)
+            pipeline = MessagePipeline(channel=_channel, queue=queue_client, store=store)
+            await pipeline.handle(address=address, body=body)
+        except Exception as exc:
+            logger.error("Pipeline error address=%s: %s", address, exc, exc_info=True)
+            try:
+                await _channel.send(address, _channel.error_reply)
+            except Exception:
+                pass
 
 
 @router.post("/inbound")

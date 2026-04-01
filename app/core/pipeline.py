@@ -57,7 +57,7 @@ class MessagePipeline:
           Slack → Slack User ID,       e.g. "U01ABC123"
         """
         # ── RECEIVED ─────────────────────────────────────────────────────────
-        user = self.store.get_or_create_user(address)
+        user = await self.store.get_or_create_user(address)
 
         # ── CLASSIFY ─────────────────────────────────────────────────────────
         intent = classify_intent(body)
@@ -68,7 +68,7 @@ class MessagePipeline:
         )
 
         # Single write per inbound message — includes intent once classified
-        self.store.store_message(
+        await self.store.store_message(
             user_id=user.id,
             direction="inbound",
             body=body,
@@ -79,7 +79,7 @@ class MessagePipeline:
         # ── ACK ──────────────────────────────────────────────────────────────
         # First message ever → warm intro that also acknowledges their request.
         # All subsequent messages → fast smart ACK (LLM or static fallback).
-        is_first = self.store.message_count(user.id) == 1
+        is_first = await self.store.message_count(user.id) == 1
         if is_first:
             ack_text = await first_greeting(self.channel.name, body)
             logger.info("FIRST_MESSAGE  channel=%s  address=%s", self.channel.name, address)
@@ -87,7 +87,7 @@ class MessagePipeline:
             ack_text = await get_smart_ack(intent.type, body, user_name=user.name)
         await self.channel.send(address, ack_text)
 
-        self.store.store_message(
+        await self.store.store_message(
             user_id=user.id,
             direction="outbound",
             body=ack_text,
@@ -99,7 +99,7 @@ class MessagePipeline:
             return
 
         # ── THINK / ACT ───────────────────────────────────────────────────────
-        context = self.store.get_context(user.id)
+        context = await self.store.get_context(user.id)
 
         job_id = await self.queue.push_job({
             "channel":  self.channel.name,   # used by ResponseListener to route reply
@@ -190,13 +190,12 @@ class ResponseListener:
         logger.info("CONFIRM  job_id=%s  channel=%s  address=%s", job_id, channel_name, address)
 
         # ── LEARN ─────────────────────────────────────────────────────────────
-        from app.database import SessionLocal
-        db = SessionLocal()
-        try:
+        from app.database import AsyncSessionLocal
+        async with AsyncSessionLocal() as db:
             store = MemoryStore(db)
-            user = store.get_or_create_user(address)
+            user = await store.get_or_create_user(address)
 
-            store.store_message(
+            await store.store_message(
                 user_id=user.id,
                 direction="outbound",
                 body=response_text,
@@ -208,24 +207,22 @@ class ResponseListener:
             if learn_signals:
                 await self._learn(store, user.id, learn_signals)
                 logger.info("LEARN  user_id=%s  signals=%s", user.id, learn_signals)
-        finally:
-            db.close()
 
     @staticmethod
     async def _learn(store: MemoryStore, user_id: str, signals: dict) -> None:
         signal_type = signals.get("type")
 
         if signal_type == "reminder_created":
-            _increment_counter(store, user_id, "reminder_count")
+            await _increment_counter(store, user_id, "reminder_count")
 
         elif signal_type == "preference_stored":
             key   = signals.get("key")
             value = signals.get("value")
             if key and value:
-                store.store_memory(user_id, "long_term", key, value)
+                await store.store_memory(user_id, "long_term", key, value)
 
         elif signal_type == "scheduling_request":
-            _increment_counter(store, user_id, "scheduling_requests")
+            await _increment_counter(store, user_id, "scheduling_requests")
 
         elif signal_type == "profile_update":
             # Passive profile fields extracted by handle_general from conversation
@@ -233,11 +230,11 @@ class ResponseListener:
             for key, value in fields.items():
                 if not (key and value):
                     continue
-                store.store_memory(user_id, "long_term", key, str(value))
+                await store.store_memory(user_id, "long_term", key, str(value))
                 if key == "name":
-                    store.update_user_name(user_id, str(value))
+                    await store.update_user_name(user_id, str(value))
                 elif key == "timezone":
-                    store.update_user_timezone(user_id, str(value))
+                    await store.update_user_timezone(user_id, str(value))
             if fields:
                 logger.info("PROFILE_UPDATED  user=%s  fields=%s", user_id[:8], list(fields))
 
@@ -247,18 +244,18 @@ class ResponseListener:
                 from datetime import datetime
                 dt = datetime.fromisoformat(due_at_str)
                 label = "morning" if dt.hour < 12 else ("afternoon" if dt.hour < 17 else "evening")
-                store.store_memory(user_id, "behavioral", "preferred_time_of_day", label, confidence=0.6)
+                await store.store_memory(user_id, "behavioral", "preferred_time_of_day", label, confidence=0.6)
             except Exception:
                 pass
 
 
-def _increment_counter(store: MemoryStore, user_id: str, key: str) -> None:
-    memories = store.get_memories(user_id, "behavioral")
+async def _increment_counter(store: MemoryStore, user_id: str, key: str) -> None:
+    memories = await store.get_memories(user_id, "behavioral")
     existing = next((m for m in memories if m.key == key), None)
     if existing:
         try:
-            store.store_memory(user_id, "behavioral", key, str(int(existing.value) + 1))
+            await store.store_memory(user_id, "behavioral", key, str(int(existing.value) + 1))
         except ValueError:
-            store.store_memory(user_id, "behavioral", key, "1")
+            await store.store_memory(user_id, "behavioral", key, "1")
     else:
-        store.store_memory(user_id, "behavioral", key, "1")
+        await store.store_memory(user_id, "behavioral", key, "1")

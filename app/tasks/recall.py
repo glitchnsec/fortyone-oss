@@ -5,7 +5,7 @@ import json
 import logging
 import re
 
-from app.database import SessionLocal
+from app.database import AsyncSessionLocal
 from app.memory.store import MemoryStore
 from app.tasks._llm import llm_json, llm_text
 
@@ -17,11 +17,10 @@ async def handle_recall(payload: dict) -> dict:
     job_id: str = payload["job_id"]
     phone: str = payload["phone"]
 
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = store.get_or_create_user(phone)
-        tasks = store.get_active_tasks(user.id)
+        user = await store.get_or_create_user(phone)
+        tasks = await store.get_active_tasks(user.id)
 
         if not tasks:
             return {
@@ -45,8 +44,6 @@ async def handle_recall(payload: dict) -> dict:
             "phone": phone,
             "response": "\n".join(lines),
         }
-    finally:
-        db.close()
 
 
 async def handle_complete(payload: dict) -> dict:
@@ -58,11 +55,10 @@ async def handle_complete(payload: dict) -> dict:
     phone: str = payload["phone"]
     body: str = payload["body"]
 
-    db = SessionLocal()
-    try:
+    async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = store.get_or_create_user(phone)
-        tasks = store.get_active_tasks(user.id)
+        user = await store.get_or_create_user(phone)
+        tasks = await store.get_active_tasks(user.id)
 
         if not tasks:
             return {
@@ -85,7 +81,7 @@ async def handle_complete(payload: dict) -> dict:
                 best_task = task
 
         if best_task and best_score > 0:
-            store.complete_task(best_task.id)
+            await store.complete_task(task_id=best_task.id, user_id=user.id)
             return {
                 "job_id": job_id,
                 "phone": phone,
@@ -99,8 +95,6 @@ async def handle_complete(payload: dict) -> dict:
             "phone": phone,
             "response": f"Which one did you complete? Here are your active tasks:\n{task_list}",
         }
-    finally:
-        db.close()
 
 
 async def handle_general(payload: dict) -> dict:
