@@ -5,14 +5,14 @@
  *
  * Steps:
  *   1. Account created confirmation (registration already done via /auth/register)
- *   2. Phone OTP verification — 6-digit code input, calls POST /auth/verify-otp
- *      Stub: accepts any 6-digit code locally until plan 02-05 patches the real endpoint.
+ *   2. Phone OTP verification — fetches phone from /api/v1/me, sends OTP via POST /auth/send-otp,
+ *      and verifies 6-digit code via POST /auth/verify-otp (D-03, AUTH-02).
  *      "Skip" option available so onboarding is not blocked in dev.
  *   3. Name your assistant — calls PATCH /api/v1/me/assistant
  *   4. Connect Google (optional) — initiates OAuth via POST /api/v1/connections/initiate
  *      Final CTA: "Start using Operator" navigates to /connections
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
@@ -87,9 +87,46 @@ function Step1AccountCreated({ onNext }: { onNext: () => void }) {
 // ─── Step 2: Verify phone OTP ─────────────────────────────────────────────────
 
 function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
+  const [phone, setPhone] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [loading, setLoading] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // On mount: fetch the user's phone number then send OTP
+  useEffect(() => {
+    let cancelled = false;
+
+    const sendCode = async () => {
+      setSending(true);
+      try {
+        // Fetch the authenticated user's phone number
+        const meRes = await fetchWithAuth("/api/v1/me");
+        if (!meRes.ok) return;
+        const meData = await meRes.json() as { phone?: string };
+        const userPhone = meData.phone ?? null;
+        if (cancelled) return;
+        setPhone(userPhone);
+
+        if (userPhone) {
+          // Send OTP to the user's registered phone
+          await fetchWithAuth("/auth/send-otp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ phone: userPhone }),
+          });
+          toast.success("Code sent to your phone.");
+        }
+      } catch {
+        // Non-fatal — user can still attempt to verify or skip
+      } finally {
+        if (!cancelled) setSending(false);
+      }
+    };
+
+    void sendCode();
+    return () => { cancelled = true; };
+  }, []);
 
   const handleVerify = async () => {
     setError(null);
@@ -99,27 +136,23 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
     }
     setLoading(true);
     try {
-      // Stub: POST /auth/verify-otp — accepts any 6-digit code until plan 02-05.
-      // In production this will validate against Twilio Verify.
-      const res = await fetch("/auth/verify-otp", {
+      const res = await fetchWithAuth("/auth/verify-otp", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ code }),
+        body: JSON.stringify({ phone: phone ?? "", code }),
       });
-      if (!res.ok && res.status !== 404) {
-        // Endpoint not yet implemented (02-05) — treat any non-server-error as success in dev
-        const data = await res.json().catch(() => ({})) as { detail?: string };
-        if (res.status >= 500) {
-          setError(data.detail ?? "Verification failed. Please try again.");
-          return;
-        }
+      if (res.ok) {
+        onNext();
+        return;
       }
-      // Stub acceptance: any 6-digit code proceeds to next step
-      onNext();
+      if (res.status === 400) {
+        const data = await res.json().catch(() => ({})) as { detail?: string };
+        setError(data.detail ?? "Invalid or expired verification code. Try again.");
+        return;
+      }
+      setError("Verification failed. Please try again.");
     } catch {
-      // Network error — still allow proceeding in dev (stub)
-      onNext();
+      setError("Verification failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -130,7 +163,9 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
       <CardHeader>
         <CardTitle className="text-xl">Verify your phone</CardTitle>
         <CardDescription>
-          We sent a 6-digit code to your phone number. Enter it below to verify your account.
+          {sending
+            ? "Sending a 6-digit code to your phone…"
+            : "We sent a 6-digit code to your phone number. Enter it below to verify your account."}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -158,7 +193,7 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
         <Button
           className="w-full bg-blue-600 hover:bg-blue-700"
           onClick={handleVerify}
-          disabled={loading || code.length !== 6}
+          disabled={loading || sending || code.length !== 6}
         >
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           Verify phone
