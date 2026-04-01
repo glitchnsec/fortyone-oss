@@ -1,8 +1,15 @@
+"""
+Async MemoryStore — all DB interactions go through here.
+
+Every public method is async and filters by user_id to enforce tenant isolation.
+Injected into the pipeline and task handlers via constructor dependency injection.
+"""
 import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy.orm import Session
+from sqlalchemy import select, nullslast
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.memory.models import Memory, Message, Task, User
 
@@ -10,38 +17,41 @@ from app.memory.models import Memory, Message, Task, User
 class MemoryStore:
     """All DB interactions go through here. Injected into pipeline and tasks."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: AsyncSession):
         self.db = db
 
     # ─── Users ───────────────────────────────────────────────────────────────
 
-    def get_or_create_user(self, phone: str) -> User:
-        user = self.db.query(User).filter(User.phone == phone).first()
+    async def get_or_create_user(self, phone: str) -> User:
+        result = await self.db.execute(select(User).where(User.phone == phone))
+        user = result.scalars().first()
         if not user:
             user = User(phone=phone)
             self.db.add(user)
-            self.db.commit()
-            self.db.refresh(user)
+            await self.db.commit()
+            await self.db.refresh(user)
         else:
             user.last_seen_at = datetime.now(timezone.utc)
-            self.db.commit()
+            await self.db.commit()
         return user
 
-    def update_user_name(self, user_id: str, name: str) -> None:
-        user = self.db.query(User).filter(User.id == user_id).first()
+    async def update_user_name(self, user_id: str, name: str) -> None:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
         if user:
             user.name = name
-            self.db.commit()
+            await self.db.commit()
 
-    def update_user_timezone(self, user_id: str, timezone: str) -> None:
-        user = self.db.query(User).filter(User.id == user_id).first()
+    async def update_user_timezone(self, user_id: str, tz: str) -> None:
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
         if user:
-            user.timezone = timezone
-            self.db.commit()
+            user.timezone = tz
+            await self.db.commit()
 
     # ─── Memory ──────────────────────────────────────────────────────────────
 
-    def store_memory(
+    async def store_memory(
         self,
         user_id: str,
         memory_type: str,
@@ -49,16 +59,15 @@ class MemoryStore:
         value: str,
         confidence: float = 1.0,
     ) -> Memory:
-        existing = (
-            self.db.query(Memory)
-            .filter(Memory.user_id == user_id, Memory.key == key)
-            .first()
+        result = await self.db.execute(
+            select(Memory).where(Memory.user_id == user_id, Memory.key == key)
         )
+        existing = result.scalars().first()
         if existing:
             existing.value = value
             existing.confidence = confidence
             existing.updated_at = datetime.now(timezone.utc)
-            self.db.commit()
+            await self.db.commit()
             return existing
 
         memory = Memory(
@@ -69,42 +78,45 @@ class MemoryStore:
             confidence=confidence,
         )
         self.db.add(memory)
-        self.db.commit()
-        self.db.refresh(memory)
+        await self.db.commit()
+        await self.db.refresh(memory)
         return memory
 
-    def get_memories(
+    async def get_memories(
         self, user_id: str, memory_type: Optional[str] = None
     ) -> list[Memory]:
-        q = self.db.query(Memory).filter(Memory.user_id == user_id)
+        stmt = select(Memory).where(Memory.user_id == user_id)
         if memory_type:
-            q = q.filter(Memory.memory_type == memory_type)
-        return q.order_by(Memory.updated_at.desc()).all()
+            stmt = stmt.where(Memory.memory_type == memory_type)
+        stmt = stmt.order_by(Memory.updated_at.desc())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def get_context(self, user_id: str) -> dict:
+    async def get_context(self, user_id: str) -> dict:
         """
         Assemble the full context packet that gets passed into every worker job.
         Keeps the critical path thin — DB reads only, no LLM.
         """
-        recent_messages = (
-            self.db.query(Message)
-            .filter(Message.user_id == user_id)
+        result = await self.db.execute(
+            select(Message)
+            .where(Message.user_id == user_id)
             .order_by(Message.created_at.desc())
             .limit(10)
-            .all()
         )
+        recent_messages = list(result.scalars().all())
 
-        all_memories = self.get_memories(user_id)
+        all_memories = await self.get_memories(user_id)
         memory_dict = {m.key: m.value for m in all_memories}
 
-        active_tasks = self.get_active_tasks(user_id)
+        active_tasks = await self.get_active_tasks(user_id)
 
-        user = self.db.query(User).filter(User.id == user_id).first()
+        user_result = await self.db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalars().first()
 
         return {
             "user": {
                 "id": user_id,
-                "name": user.name,
+                "name": user.name if user else None,
                 "timezone": user.timezone if user else "America/New_York",
                 "phone": user.phone if user else "",
             },
@@ -132,7 +144,7 @@ class MemoryStore:
 
     # ─── Tasks ───────────────────────────────────────────────────────────────
 
-    def store_task(
+    async def store_task(
         self,
         user_id: str,
         task_type: str,
@@ -150,32 +162,39 @@ class MemoryStore:
             metadata_json=json.dumps(metadata) if metadata else None,
         )
         self.db.add(task)
-        self.db.commit()
-        self.db.refresh(task)
+        await self.db.commit()
+        await self.db.refresh(task)
         return task
 
-    def get_active_tasks(
+    async def get_active_tasks(
         self, user_id: str, task_type: Optional[str] = None
     ) -> list[Task]:
-        q = self.db.query(Task).filter(
-            Task.user_id == user_id, Task.completed == False  # noqa: E712
+        stmt = (
+            select(Task)
+            .where(Task.user_id == user_id, Task.completed == False)  # noqa: E712
+            .order_by(nullslast(Task.due_at.asc()))
         )
         if task_type:
-            q = q.filter(Task.task_type == task_type)
-        return q.order_by(Task.due_at.asc().nullslast()).all()
+            stmt = stmt.where(Task.task_type == task_type)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
 
-    def complete_task(self, task_id: str) -> bool:
-        task = self.db.query(Task).filter(Task.id == task_id).first()
+    async def complete_task(self, task_id: str, user_id: str) -> bool:
+        """Mark a task complete — requires matching user_id to prevent cross-user completion."""
+        result = await self.db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        )
+        task = result.scalars().first()
         if task:
             task.completed = True
             task.updated_at = datetime.now(timezone.utc)
-            self.db.commit()
+            await self.db.commit()
             return True
         return False
 
     # ─── Messages ────────────────────────────────────────────────────────────
 
-    def store_message(
+    async def store_message(
         self,
         user_id: str,
         direction: str,
@@ -193,13 +212,14 @@ class MemoryStore:
             job_id=job_id,
         )
         self.db.add(message)
-        self.db.commit()
-        self.db.refresh(message)
+        await self.db.commit()
+        await self.db.refresh(message)
         return message
 
-    def message_count(self, user_id: str) -> int:
-        return (
-            self.db.query(Message)
-            .filter(Message.user_id == user_id, Message.direction == "inbound")
-            .count()
+    async def message_count(self, user_id: str) -> int:
+        result = await self.db.execute(
+            select(Message).where(
+                Message.user_id == user_id, Message.direction == "inbound"
+            )
         )
+        return len(result.scalars().all())
