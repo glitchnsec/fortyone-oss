@@ -1,7 +1,7 @@
 """
 Redis-backed queue client (producer side).
 
-The queue is a Redis list.  Producer: LPUSH.  Consumer: BRPOP.
+The queue is a Redis Stream. Producer: XADD. Consumer: XREADGROUP (in worker.py).
 Job results are stored as Redis keys with a TTL and announced via pub/sub.
 """
 import json
@@ -34,10 +34,14 @@ class QueueClient:
             await self._redis.aclose()
 
     async def push_job(self, payload: dict) -> str:
-        """Push a job onto the queue.  Returns the generated job_id."""
+        """Enqueue a job onto the Redis Stream. Returns the generated job_id."""
         job_id = str(uuid.uuid4())
         payload = {**payload, "job_id": job_id}
-        await self._redis.lpush(self.settings.queue_name, json.dumps(payload))
+        # XADD appends to the stream; "*" lets Redis auto-generate the entry ID
+        await self._redis.xadd(
+            self.settings.queue_name,
+            {"data": json.dumps(payload)},
+        )
         logger.debug("Pushed job_id=%s intent=%s", job_id, payload.get("intent"))
         return job_id
 
