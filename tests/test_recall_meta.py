@@ -68,3 +68,98 @@ class TestClarificationBypass:
         # IDENTITY may not exist in IntentType yet, but if it does it should be in the set
         if hasattr(IntentType, "IDENTITY"):
             assert IntentType.IDENTITY in _SKIP_CLARIFICATION_INTENTS
+
+
+# ── handle_recall: surfaces stored memories + profile ────────────────────────
+
+class TestHandleRecallMemories:
+    """handle_recall must return stored memories, profile, and tasks."""
+
+    @pytest.mark.asyncio
+    async def test_recall_with_memories_returns_stored_facts(self):
+        """handle_recall with context containing memories should mention them."""
+        from app.tasks.recall import handle_recall
+
+        mock_response = {"response": "I know your name is Alice and you prefer mornings."}
+
+        with patch("app.tasks.recall.llm_messages_json", new_callable=AsyncMock, return_value=mock_response):
+            result = await handle_recall({
+                "job_id": "test-1",
+                "phone": "+15551234567",
+                "body": "What do you know about me?",
+                "context": {
+                    "user": {"name": "Alice", "timezone": "US/Eastern"},
+                    "memories": {"preference_time": "morning", "hobby": "running"},
+                    "active_tasks": [{"title": "Call Bob", "due_at": None}],
+                },
+            })
+
+        assert "response" in result
+        assert result["job_id"] == "test-1"
+        # LLM was called and returned a meaningful response
+        assert "Alice" in result["response"] or "morning" in result["response"] or len(result["response"]) > 10
+
+    @pytest.mark.asyncio
+    async def test_recall_empty_context_friendly_message(self):
+        """handle_recall with no tasks and no memories returns friendly nothing-yet."""
+        from app.tasks.recall import handle_recall
+
+        mock_response = {"response": "I don't have much stored about you yet. Let's change that!"}
+
+        with patch("app.tasks.recall.llm_messages_json", new_callable=AsyncMock, return_value=mock_response):
+            result = await handle_recall({
+                "job_id": "test-2",
+                "phone": "+15551234567",
+                "body": "What do you know about me?",
+                "context": {
+                    "user": {},
+                    "memories": {},
+                    "active_tasks": [],
+                },
+            })
+
+        assert "response" in result
+        assert len(result["response"]) > 5
+
+    @pytest.mark.asyncio
+    async def test_recall_with_tasks_and_memories_returns_both(self):
+        """handle_recall with both tasks and memories includes both sections."""
+        from app.tasks.recall import handle_recall
+
+        mock_response = {"response": "You're Alice. I know you like running. You have 1 active task: Call Bob."}
+
+        with patch("app.tasks.recall.llm_messages_json", new_callable=AsyncMock, return_value=mock_response):
+            result = await handle_recall({
+                "job_id": "test-3",
+                "phone": "+15551234567",
+                "body": "What do you know about me?",
+                "context": {
+                    "user": {"name": "Alice", "timezone": "US/Eastern"},
+                    "memories": {"hobby": "running"},
+                    "active_tasks": [{"title": "Call Bob", "due_at": None}],
+                },
+            })
+
+        assert "response" in result
+        assert len(result["response"]) > 10
+
+    @pytest.mark.asyncio
+    async def test_recall_includes_profile_fields(self):
+        """handle_recall response includes user profile info when available."""
+        from app.tasks.recall import handle_recall
+
+        mock_response = {"response": "Hi Alice! Your timezone is US/Eastern. You prefer mornings."}
+
+        with patch("app.tasks.recall.llm_messages_json", new_callable=AsyncMock, return_value=mock_response):
+            result = await handle_recall({
+                "job_id": "test-4",
+                "phone": "+15551234567",
+                "body": "What do you know about me?",
+                "context": {
+                    "user": {"name": "Alice", "timezone": "US/Eastern"},
+                    "memories": {},
+                    "active_tasks": [],
+                },
+            })
+
+        assert "response" in result

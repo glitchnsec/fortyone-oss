@@ -20,38 +20,97 @@ GENERAL_SYSTEM = (
 )
 
 
+_RECALL_SYSTEM = (
+    "You are a personal assistant communicating via SMS/chat. "
+    "The user asked what you know about them. "
+    "Summarize their stored information naturally and conversationally. "
+    "Include their profile, memories, and active tasks. "
+    "Be warm but concise — 3-5 sentences max. "
+    "Return JSON: {\"response\": \"your summary\"}"
+)
+
+
 async def handle_recall(payload: dict) -> dict:
-    """Return a formatted list of the user's active tasks/reminders."""
+    """
+    Return a natural-language summary of what the assistant knows about the user.
+
+    Uses context from the pipeline payload (memories, active_tasks, user profile)
+    rather than querying the DB directly — context assembly is handled upstream.
+    Falls back to a static summary when LLM is unavailable.
+    """
     job_id: str = payload["job_id"]
     phone: str = payload["phone"]
+    body: str = payload.get("body", "What do you know about me?")
 
-    async with AsyncSessionLocal() as db:
-        store = MemoryStore(db)
-        user = await store.get_or_create_user(phone)
-        tasks = await store.get_active_tasks(user.id)
+    context: dict = payload.get("context", {})
+    memories: dict = context.get("memories", {})
+    active_tasks: list = context.get("active_tasks", [])
+    user_info: dict = context.get("user", {})
 
-        if not tasks:
-            return {
-                "job_id": job_id,
-                "phone": phone,
-                "response": "You're all clear — no pending reminders or tasks right now. 🎉",
-            }
+    name = user_info.get("name") or memories.get("name")
+    timezone = user_info.get("timezone") or memories.get("timezone")
 
-        lines = ["Here's what I have for you:"]
-        for i, task in enumerate(tasks[:8], 1):
-            due_str = ""
-            if task.due_at:
-                due_str = f" — due {task.due_at.strftime('%a %b %-d, %-I:%M %p')}"
-            lines.append(f"{i}. {task.title}{due_str}")
+    # Build structured context block for the LLM
+    profile_parts = []
+    if name:
+        profile_parts.append(f"name={name}")
+    if timezone:
+        profile_parts.append(f"timezone={timezone}")
+    profile_line = ", ".join(profile_parts) if profile_parts else "(no profile yet)"
 
-        if len(tasks) > 8:
-            lines.append(f"...and {len(tasks) - 8} more.")
+    memory_lines = "\n".join(
+        f"  {k}: {v}" for k, v in memories.items()
+        if k not in ("name", "timezone", "greeted", "onboarding_step")
+    ) or "  (none stored yet)"
 
-        return {
-            "job_id": job_id,
-            "phone": phone,
-            "response": "\n".join(lines),
-        }
+    task_lines = "\n".join(
+        f"  - {t.get('title', 'Untitled')}"
+        + (f" (due {t['due_at']})" if t.get("due_at") else "")
+        for t in active_tasks[:8]
+    ) or "  (none)"
+
+    user_message = (
+        f"User asked: {body}\n\n"
+        f"Profile: {profile_line}\n"
+        f"Memories:\n{memory_lines}\n"
+        f"Active tasks:\n{task_lines}"
+    )
+
+    # Build mock fallback — static summary without LLM
+    mock_parts = []
+    if name:
+        mock_parts.append(f"Your name is {name}.")
+    if timezone:
+        mock_parts.append(f"Your timezone is {timezone}.")
+
+    stored_memories = {k: v for k, v in memories.items()
+                       if k not in ("name", "timezone", "greeted", "onboarding_step")}
+    if stored_memories:
+        items = ", ".join(f"{k}: {v}" for k, v in list(stored_memories.items())[:5])
+        mock_parts.append(f"I remember: {items}.")
+
+    if active_tasks:
+        titles = ", ".join(t.get("title", "Untitled") for t in active_tasks[:5])
+        mock_parts.append(f"Active tasks: {titles}.")
+
+    if not mock_parts:
+        mock_text = "I don't have much stored about you yet — the more we chat, the more I'll remember!"
+    else:
+        mock_text = "Here's what I know about you: " + " ".join(mock_parts)
+
+    messages = [
+        {"role": "system", "content": _RECALL_SYSTEM},
+        {"role": "user", "content": user_message},
+    ]
+    data = await llm_messages_json(messages, mock_payload={"response": mock_text})
+
+    return {
+        "job_id": job_id,
+        "phone": phone,
+        "address": payload.get("address", phone),
+        "channel": payload.get("channel", "sms"),
+        "response": data.get("response") or mock_text,
+    }
 
 
 async def handle_complete(payload: dict) -> dict:
