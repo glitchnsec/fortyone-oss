@@ -6,6 +6,14 @@ from sqlalchemy.orm import relationship
 
 from app.database import Base
 
+# pgvector Vector type — only available when pgvector is installed (PostgreSQL).
+# Falls back to None for SQLite (dev/test) — embedding column omitted from model,
+# but the column exists in production via ALTER TABLE in migration 003.
+try:
+    from pgvector.sqlalchemy import Vector as _Vector
+except ImportError:
+    _Vector = None  # type: ignore[assignment,misc]
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -60,6 +68,15 @@ class Memory(Base):
     persona_tag = Column(String, nullable=True)   # D-07: all memory writes tagged with persona context
 
     user = relationship("User", back_populates="memories")
+
+
+# Register the embedding column on Memory when pgvector is available (PostgreSQL).
+# This MUST happen after the class definition — dynamic column attachment is required
+# because pgvector is not available in SQLite test environments.
+# In SQLite mode the column is absent from the ORM but search_memories() is never
+# called (embed_text always returns [] without a real PG connection).
+if _Vector is not None:
+    Memory.embedding = Column(_Vector(1536), nullable=True)  # type: ignore[attr-defined]
 
 
 class Task(Base):

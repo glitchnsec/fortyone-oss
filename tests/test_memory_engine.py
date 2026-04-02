@@ -44,7 +44,8 @@ async def test_embed_text_returns_empty_without_key():
     mock_settings = MagicMock()
     mock_settings.has_llm = False
 
-    with patch("app.memory.embeddings.get_settings", return_value=mock_settings):
+    # get_settings is imported lazily inside embed_text, patch at app.config module level
+    with patch("app.config.get_settings", return_value=mock_settings):
         from app.memory.embeddings import embed_text
         result = await embed_text("hello world")
     assert result == []
@@ -65,12 +66,11 @@ async def test_embed_text_returns_vector_when_llm_available():
     mock_client.embeddings.create = AsyncMock(return_value=mock_response)
 
     with (
-        patch("app.memory.embeddings.get_settings", return_value=mock_settings),
-        patch("app.memory.embeddings._client", return_value=mock_client),
+        patch("app.config.get_settings", return_value=mock_settings),
+        patch("app.tasks._llm._client", return_value=mock_client),
     ):
-        from app.memory import embeddings as emb_mod
-        # Reload to pick up patches cleanly in the module scope
-        result = await emb_mod.embed_text("hello world")
+        from app.memory.embeddings import embed_text
+        result = await embed_text("hello world")
 
     assert isinstance(result, list)
     assert len(result) == 1536
@@ -87,21 +87,22 @@ async def test_embed_text_truncates_long_input():
 
     captured = {}
 
-    async def mock_create(**kwargs):
-        captured["input"] = kwargs.get("input", "")
+    mock_client = AsyncMock()
+
+    async def mock_create(model, input):  # noqa: A002
+        captured["input"] = input
         mock_response = MagicMock()
         mock_response.data = [MagicMock(embedding=[0.1] * 1536)]
         return mock_response
 
-    mock_client = AsyncMock()
     mock_client.embeddings.create = mock_create
 
     with (
-        patch("app.memory.embeddings.get_settings", return_value=mock_settings),
-        patch("app.memory.embeddings._client", return_value=mock_client),
+        patch("app.config.get_settings", return_value=mock_settings),
+        patch("app.tasks._llm._client", return_value=mock_client),
     ):
-        from app.memory import embeddings as emb_mod
-        await emb_mod.embed_text(long_text)
+        from app.memory.embeddings import embed_text
+        await embed_text(long_text)
 
     assert len(captured["input"]) <= 8000
 

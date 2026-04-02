@@ -5,6 +5,7 @@ Every public method is async and filters by user_id to enforce tenant isolation.
 Injected into the pipeline and task handlers via constructor dependency injection.
 """
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -12,6 +13,8 @@ from sqlalchemy import select, nullslast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.memory.models import Memory, Message, Task, User
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryStore:
@@ -93,7 +96,28 @@ class MemoryStore:
         self.db.add(memory)
         await self.db.commit()
         await self.db.refresh(memory)
+        import asyncio as _asyncio
+        _asyncio.create_task(self._embed_memory(memory))
         return memory
+
+    async def _embed_memory(self, memory: "Memory") -> None:
+        """Embed memory value and update the embedding column. Fire-and-forget."""
+        from app.memory.embeddings import embed_text
+        try:
+            vector = await embed_text(f"{memory.key}: {memory.value}")
+            if not vector:
+                return
+            from app.database import AsyncSessionLocal
+            from sqlalchemy import update
+            async with AsyncSessionLocal() as db:
+                await db.execute(
+                    update(Memory)
+                    .where(Memory.id == memory.id)
+                    .values(embedding=vector)
+                )
+                await db.commit()
+        except Exception as exc:
+            logger.warning("embed_memory=error memory_id=%s err=%s", memory.id, exc)
 
     async def get_memories(
         self, user_id: str, memory_type: Optional[str] = None
@@ -304,3 +328,225 @@ class MemoryStore:
         await self.db.delete(persona)
         await self.db.commit()
         return True
+
+    # ─── Semantic Memory ─────────────────────────────────────────────────────────
+
+    async def search_memories(
+        self,
+        user_id: str,
+        query_embedding: list[float],
+        persona_tag: Optional[str] = None,
+        limit: int = 15,
+    ) -> list[Memory]:
+        """
+        Cosine similarity search using pgvector HNSW index.
+        persona_tag filter: "work"→(work|shared), "personal"→(personal|shared), None→all.
+        Skips memories with null embedding (legacy rows — no crash).
+        """
+        stmt = select(Memory).where(
+            Memory.user_id == user_id,
+            Memory.embedding.is_not(None),
+        )
+        if persona_tag and persona_tag != "shared":
+            stmt = stmt.where(
+                (Memory.persona_tag == persona_tag) | (Memory.persona_tag == "shared") | (Memory.persona_tag.is_(None))
+            )
+        stmt = stmt.order_by(Memory.embedding.cosine_distance(query_embedding)).limit(limit)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def get_relevant_memories(
+        self,
+        user_id: str,
+        query_text: str,
+        persona_tag: Optional[str] = None,
+        token_budget: int = 2000,
+    ) -> list[Memory]:
+        """
+        Retrieve semantically relevant memories within a hard 2K token budget (D-05).
+
+        Token estimation: ~1 token per 4 characters (rough, sufficient for cost control).
+        Falls back to recency ordering when embedding is unavailable.
+        """
+        from app.memory.embeddings import embed_text
+
+        query_embedding = await embed_text(query_text)
+
+        if query_embedding:
+            candidates = await self.search_memories(user_id, query_embedding, persona_tag=persona_tag, limit=20)
+        else:
+            # No embedding available — fall back to recency ordering
+            stmt = select(Memory).where(Memory.user_id == user_id)
+            if persona_tag and persona_tag != "shared":
+                stmt = stmt.where(
+                    (Memory.persona_tag == persona_tag) | (Memory.persona_tag == "shared") | (Memory.persona_tag.is_(None))
+                )
+            stmt = stmt.order_by(Memory.updated_at.desc()).limit(20)
+            result = await self.db.execute(stmt)
+            candidates = list(result.scalars().all())
+
+        selected: list[Memory] = []
+        total_tokens = 0
+        for memory in candidates:
+            estimated_tokens = len(f"{memory.key}: {memory.value}") // 4
+            if total_tokens + estimated_tokens > token_budget:
+                break
+            selected.append(memory)
+            total_tokens += estimated_tokens
+
+        return selected
+
+    # ─── Tiered Context Assembly ──────────────────────────────────────────────────
+
+    async def get_context_minimal(self, user_id: str, channel: str = "sms") -> dict:
+        """
+        ACK path: user info + last 5 messages + last_persona. No embedding, no memory search.
+        Target latency: <5ms. Used before sending smart ACK.
+
+        last_persona: the persona tag from the most recent outbound message that has
+        one set. The pipeline passes this into detect_persona() to enable same-persona
+        inheritance across turns (D-08 — never wrong twice).
+        """
+        result = await self.db.execute(
+            select(Message)
+            .where(
+                Message.user_id == user_id,
+                (Message.channel == channel) | (Message.channel.is_(None)),
+            )
+            .order_by(Message.created_at.desc())
+            .limit(5)
+        )
+        recent = list(result.scalars().all())
+
+        # Find last_persona: most recent outbound message with a persona_tag set
+        last_persona: Optional[str] = None
+        for msg in recent:  # already ordered newest-first
+            if msg.direction == "outbound" and getattr(msg, "persona_tag", None):
+                last_persona = msg.persona_tag
+                break
+
+        user_result = await self.db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalars().first()
+
+        return {
+            "user": {
+                "id": user_id,
+                "name": user.name if user else None,
+                "timezone": user.timezone if user else "America/New_York",
+                "phone": user.phone if user else "",
+            },
+            "recent_messages": [
+                {
+                    "direction": m.direction,
+                    "body": m.body,
+                    "at": m.created_at.isoformat(),
+                    "intent": m.intent,
+                }
+                for m in reversed(recent)
+            ],
+            "message_count": len(recent),
+            "last_persona": last_persona,   # None when no tagged messages exist
+        }
+
+    async def get_context_standard(
+        self,
+        user_id: str,
+        channel: str = "sms",
+        query: str = "",
+        persona_tag: Optional[str] = None,
+    ) -> dict:
+        """
+        Normal intents: last 20 messages + relevant memories (2K token budget).
+        Includes semantic retrieval when embedding is available.
+        """
+        result = await self.db.execute(
+            select(Message)
+            .where(
+                Message.user_id == user_id,
+                (Message.channel == channel) | (Message.channel.is_(None)),
+            )
+            .order_by(Message.created_at.desc())
+            .limit(20)
+        )
+        recent = list(result.scalars().all())
+
+        memories = await self.get_relevant_memories(
+            user_id,
+            query_text=query or "recent context",
+            persona_tag=persona_tag,
+            token_budget=2000,
+        )
+        memory_dict = {m.key: m.value for m in memories}
+
+        active_tasks = await self.get_active_tasks(user_id)
+
+        user_result = await self.db.execute(select(User).where(User.id == user_id))
+        user = user_result.scalars().first()
+
+        return {
+            "user": {
+                "id": user_id,
+                "name": user.name if user else None,
+                "timezone": user.timezone if user else "America/New_York",
+                "phone": user.phone if user else "",
+            },
+            "recent_messages": [
+                {
+                    "direction": m.direction,
+                    "body": m.body,
+                    "at": m.created_at.isoformat(),
+                    "intent": m.intent,
+                }
+                for m in reversed(recent)
+            ],
+            "memories": memory_dict,
+            "active_tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "due_at": t.due_at.isoformat() if t.due_at else None,
+                    "type": t.task_type,
+                }
+                for t in active_tasks[:5]
+            ],
+            "message_count": len(recent),
+        }
+
+    async def get_context_full(
+        self,
+        user_id: str,
+        channel: str = "sms",
+        query: str = "",
+        persona_tag: Optional[str] = None,
+    ) -> dict:
+        """
+        Complex intents (scheduling, cross-persona): standard context + all personas.
+        Used for SCHEDULE, GENERAL, and cross-context queries (D-10, D-15).
+        """
+        ctx = await self.get_context_standard(user_id, channel=channel, query=query, persona_tag=persona_tag)
+
+        # Add all personas for cross-context awareness
+        personas = await self.get_personas(user_id)
+        ctx["personas"] = [
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "tone_notes": p.tone_notes,
+            }
+            for p in personas
+        ]
+
+        # Expand active tasks (full list, not just 5)
+        active_tasks = await self.get_active_tasks(user_id)
+        ctx["active_tasks"] = [
+            {
+                "id": t.id,
+                "title": t.title,
+                "due_at": t.due_at.isoformat() if t.due_at else None,
+                "type": t.task_type,
+            }
+            for t in active_tasks
+        ]
+
+        return ctx
