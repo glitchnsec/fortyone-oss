@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     # Fast model: structured extraction, ACKs, classification
     # Any OpenRouter model ID works — e.g. openai/gpt-4o-mini, google/gemini-flash-1.5
-    llm_model_fast: str = "meta-llama/llama-3.1-8b-instruct:free"
+    llm_model_fast: str = "openai/gpt-4o-mini"
     # Capable model: free-form responses, scheduling, general chat
-    llm_model_capable: str = "meta-llama/llama-3.3-70b-instruct:free"
+    llm_model_capable: str = "anthropic/claude-3.5-haiku"
     # Optional: shown on openrouter.ai dashboard for usage tracking
     openrouter_site_url: str = ""
     openrouter_site_name: str = "Personal Assistant"

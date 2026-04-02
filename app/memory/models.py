@@ -95,6 +95,8 @@ class Message(Base):
     state = Column(String, nullable=True)        # pipeline state at time of write
     job_id = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
+    channel = Column(String, nullable=True, default="sms")      # D-01, D-02: scopes history per channel
+    persona_tag = Column(String, nullable=True)                  # D-08: active persona at send time
 
     user = relationship("User", back_populates="messages")
 
