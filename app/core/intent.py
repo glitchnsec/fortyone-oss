@@ -52,8 +52,8 @@ _RULES: list[tuple[IntentType, str, float]] = [
     # Task completion
     (IntentType.COMPLETE, r"\b(done|finished|complete[d]?|mark\s+.+\s+(as\s+)?(done|complete[d]?))\b", 0.88),
 
-    # Recall / list
-    (IntentType.RECALL, r"\b(what\s+(reminders?|tasks?|do\s+i\s+have|did\s+i|are\s+my)|show\s+(me\s+)?(my\s+)?(reminders?|tasks?)|list\s+(my\s+)?(reminders?|tasks?)|do\s+i\s+have\s+any|check\s+my)\b", 0.88),
+    # Recall / list / meta-recall ("what do you know about me?")
+    (IntentType.RECALL, r"\b(what\s+(reminders?|tasks?|do\s+i\s+have|did\s+i|are\s+my)|show\s+(me\s+)?(my\s+)?(reminders?|tasks?)|list\s+(my\s+)?(reminders?|tasks?)|do\s+i\s+have\s+any|check\s+my|what\s+(do\s+you|you)\s+(know|remember)\s*(about)?|what\s+have\s+you\s+(learned|stored|saved|remembered)|what\s+(info(rmation)?|data)\s+(do\s+you\s+have|have\s+you)|tell\s+me\s+what\s+you\s+(know|remember))\b", 0.88),
 
     # Scheduling
     (IntentType.SCHEDULE, r"\b(schedule|book\s+(a\s+)?(meeting|call|appointment)|find\s+(a\s+)?time|when\s+should\s+(we|i)|set\s+up\s+a\s+(meeting|call)|calendar|availability)\b", 0.85),

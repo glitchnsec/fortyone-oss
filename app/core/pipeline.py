@@ -52,6 +52,14 @@ _STANDARD_CONTEXT_INTENTS = frozenset({
     IntentType.FOLLOWUP,
 })
 
+# Intents that should never trigger persona clarification — they use "shared" context
+# RECALL: "What do you know about me?" should not ask work vs personal
+# IDENTITY: if added later, identity questions also bypass clarification
+_SKIP_CLARIFICATION_INTENTS = frozenset(
+    {IntentType.RECALL}
+    | ({IntentType.IDENTITY} if hasattr(IntentType, "IDENTITY") else set())
+)
+
 # Clarifying question text (per D-08 — sent once when LLM is uncertain about work vs personal)
 _CLARIFYING_QUESTION = (
     "Just to make sure I use the right account — is this for work or personal?"
@@ -162,7 +170,7 @@ class MessagePipeline:
         # ── CLARIFICATION BRANCH (per D-08) ──────────────────────────────────
         # When the LLM is uncertain about work vs personal context, ask once
         # rather than guess wrong. The user's next message resolves the context.
-        if needs_clarification:
+        if needs_clarification and intent.type not in _SKIP_CLARIFICATION_INTENTS:
             logger.info(
                 "CLARIFICATION_NEEDED  channel=%s  address=%s  body=%r",
                 self.channel.name, address, body[:60],
