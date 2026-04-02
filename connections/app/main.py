@@ -11,10 +11,23 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 
+async def _run_startup_migrations(conn):
+    """Add columns that were added to models after initial table creation.
+    create_all only creates missing tables — it won't ALTER existing ones."""
+    from sqlalchemy import inspect, text
+    inspector = inspect(conn)
+    if inspector.has_table("connections"):
+        columns = {c["name"] for c in inspector.get_columns("connections")}
+        if "persona_id" not in columns:
+            conn.execute(text("ALTER TABLE connections ADD COLUMN persona_id VARCHAR"))
+            logger.info("MIGRATION added connections.persona_id column")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.run_sync(_run_startup_migrations)
     logger.info("Connections service started")
     yield
     await engine.dispose()

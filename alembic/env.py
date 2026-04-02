@@ -19,7 +19,7 @@ target_metadata = Base.metadata
 
 def get_url() -> str:
     import os
-    url = os.environ.get("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost/operator")
+    url = os.environ.get("DATABASE_URL", "postgresql+asyncpg://operator:operator@localhost:5432/assistant")
     # Translate sync schemes to async
     if url.startswith("sqlite:///"):
         return url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
