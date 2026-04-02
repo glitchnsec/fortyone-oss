@@ -23,6 +23,7 @@ class Connection(Base):
     granted_scopes = Column(Text, nullable=True)           # space-separated scope URIs
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
+    persona_id = Column(String, nullable=True)   # which persona this connection belongs to (per D-09)
     token = relationship("OAuthToken", back_populates="connection", uselist=False, cascade="all, delete-orphan")
 
 

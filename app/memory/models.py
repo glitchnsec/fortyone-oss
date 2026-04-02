@@ -35,6 +35,7 @@ class User(Base):
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
+    personas = relationship("Persona", back_populates="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -56,6 +57,7 @@ class Memory(Base):
     confidence = Column(Float, default=1.0)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
+    persona_tag = Column(String, nullable=True)   # D-07: all memory writes tagged with persona context
 
     user = relationship("User", back_populates="memories")
 
@@ -99,6 +101,28 @@ class Message(Base):
     persona_tag = Column(String, nullable=True)                  # D-08: active persona at send time
 
     user = relationship("User", back_populates="messages")
+
+
+class Persona(Base):
+    """
+    Work / Personal / custom identity contexts.
+
+    Personas are credential profiles — each can have its own connections,
+    context, and behavioral tone notes. The shared memory pool stores
+    persona-tagged entries; detect_persona() routes each inbound message
+    to the right context.
+    """
+    __tablename__ = "personas"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)           # "work" | "personal" | user-defined
+    description = Column(Text, nullable=True)       # "I'm a PM at Acme Corp"
+    tone_notes = Column(Text, nullable=True)        # "formal in work contexts"
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="personas")
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.

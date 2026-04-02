@@ -68,6 +68,7 @@ class MemoryStore:
         key: str,
         value: str,
         confidence: float = 1.0,
+        persona_tag: str = "shared",   # D-07: all memory writes tagged with persona context
     ) -> Memory:
         result = await self.db.execute(
             select(Memory).where(Memory.user_id == user_id, Memory.key == key)
@@ -77,6 +78,7 @@ class MemoryStore:
             existing.value = value
             existing.confidence = confidence
             existing.updated_at = datetime.now(timezone.utc)
+            existing.persona_tag = persona_tag
             await self.db.commit()
             return existing
 
@@ -86,6 +88,7 @@ class MemoryStore:
             key=key,
             value=value,
             confidence=confidence,
+            persona_tag=persona_tag,
         )
         self.db.add(memory)
         await self.db.commit()
@@ -244,3 +247,60 @@ class MemoryStore:
             )
         )
         return len(result.scalars().all())
+
+    # ─── Personas ────────────────────────────────────────────────────────────
+
+    async def create_persona(
+        self,
+        user_id: str,
+        name: str,
+        description: Optional[str] = None,
+        tone_notes: Optional[str] = None,
+    ) -> "Persona":
+        from app.memory.models import Persona
+        persona = Persona(
+            user_id=user_id,
+            name=name,
+            description=description,
+            tone_notes=tone_notes,
+        )
+        self.db.add(persona)
+        await self.db.commit()
+        await self.db.refresh(persona)
+        return persona
+
+    async def get_personas(self, user_id: str) -> list["Persona"]:
+        from app.memory.models import Persona
+        result = await self.db.execute(
+            select(Persona)
+            .where(Persona.user_id == user_id, Persona.is_active == True)  # noqa: E712
+            .order_by(Persona.created_at.asc())
+        )
+        return list(result.scalars().all())
+
+    async def get_persona(self, user_id: str, persona_id: str) -> Optional["Persona"]:
+        from app.memory.models import Persona
+        result = await self.db.execute(
+            select(Persona).where(Persona.id == persona_id, Persona.user_id == user_id)
+        )
+        return result.scalar_one_or_none()
+
+    async def update_persona(self, user_id: str, persona_id: str, **fields) -> Optional["Persona"]:
+        persona = await self.get_persona(user_id, persona_id)
+        if not persona:
+            return None
+        allowed = {"name", "description", "tone_notes", "is_active"}
+        for key, value in fields.items():
+            if key in allowed:
+                setattr(persona, key, value)
+        await self.db.commit()
+        await self.db.refresh(persona)
+        return persona
+
+    async def delete_persona(self, user_id: str, persona_id: str) -> bool:
+        persona = await self.get_persona(user_id, persona_id)
+        if not persona:
+            return False
+        await self.db.delete(persona)
+        await self.db.commit()
+        return True
