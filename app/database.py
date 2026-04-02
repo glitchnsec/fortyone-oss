@@ -41,7 +41,8 @@ async def get_db():
 
 async def init_db() -> None:
     """Run Alembic migrations to head. Falls back to create_all only for in-memory SQLite (tests)."""
-    from app.memory import models  # noqa: F401 — registers models
+    from app.memory import models  # noqa: F401 — registers User, Memory, Task, Message
+    from app.models import auth  # noqa: F401 — registers UserSession (referenced by User.sessions relationship)
     settings = get_settings()
 
     if settings.database_url == "sqlite://":
