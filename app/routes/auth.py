@@ -13,8 +13,6 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
-import hashlib
-
 import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from jose import jwt
@@ -138,7 +136,9 @@ async def refresh(
     h = _hash_token(refresh_token)
     result = await db.execute(select(UserSession).where(UserSession.token_hash == h))
     session_row = result.scalar_one_or_none()
-    if not session_row or session_row.expires_at < datetime.now(timezone.utc):
+    # Compare as naive UTC — SQLite doesn't preserve timezone info
+    now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
+    if not session_row or session_row.expires_at.replace(tzinfo=None) < now_utc:
         raise HTTPException(401, "Your session has expired. Please sign in again.")
     user_id = session_row.user_id
     # Rotate: delete old session, create new one

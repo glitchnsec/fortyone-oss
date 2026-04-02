@@ -18,7 +18,9 @@ def _make_engine():
     settings = get_settings()
     url = settings.database_url
     # Translate sync URL schemes to async drivers
-    if url.startswith("sqlite:///"):
+    if url == "sqlite://":
+        url = "sqlite+aiosqlite://"
+    elif url.startswith("sqlite:///"):
         url = url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
     elif url.startswith("postgresql://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
