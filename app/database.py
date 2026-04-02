@@ -38,7 +38,28 @@ async def get_db():
 
 
 async def init_db() -> None:
-    """Create tables via SQLAlchemy metadata (development only; production uses Alembic)."""
-    from app.memory import models  # noqa: F401 — registers models before create_all
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+    """Run Alembic migrations to head. Falls back to create_all only for in-memory SQLite (tests)."""
+    from app.memory import models  # noqa: F401 — registers models
+    settings = get_settings()
+
+    if settings.database_url == "sqlite://":
+        # In-memory SQLite (tests only) — Alembic can't track these
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        return
+
+    # Production/dev: use Alembic so migrations are tracked properly
+    import subprocess
+    try:
+        subprocess.run(
+            ["alembic", "upgrade", "head"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except (subprocess.CalledProcessError, FileNotFoundError) as exc:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning("Alembic migration failed (%s), falling back to create_all", exc)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
