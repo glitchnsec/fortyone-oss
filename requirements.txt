@@ -11,6 +11,7 @@ httpx==0.28.1
 python-multipart==0.0.20
 alembic==1.18.4
 asyncpg==0.31.0
+pgvector==0.4.2
 cryptography==46.0.6
 aiosqlite==0.20.0
 pytest==8.3.5

@@ -1,6 +1,22 @@
 version: "3.9"
 
 services:
+  postgres:
+    image: ankane/pgvector:latest
+    environment:
+      POSTGRES_DB: assistant
+      POSTGRES_USER: operator
+      POSTGRES_PASSWORD: operator
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U operator"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   redis:
     image: redis:7-alpine
     ports:
@@ -27,10 +43,12 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=sqlite:///./data/assistant.db
+      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
       - REDIS_URL=redis://redis:6379
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   worker:
@@ -43,10 +61,12 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=sqlite:///./data/assistant.db
+      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
       - REDIS_URL=redis://redis:6379
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
 
   connections:
@@ -64,3 +84,4 @@ services:
 volumes:
   redis_data:
   sqlite_data:
+  postgres_data:
