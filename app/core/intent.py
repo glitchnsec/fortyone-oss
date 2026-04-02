@@ -20,6 +20,7 @@ class IntentType(str, Enum):
     STATUS = "status"
     WEB_SEARCH = "web_search"
     GENERAL = "general"
+    FOLLOWUP = "followup"
 
 
 # Intents that can be answered quickly without an LLM worker job
@@ -80,6 +81,18 @@ def classify_intent(text: str) -> Intent:
                 raw_text=text,
             )
 
+    # FOLLOWUP: short message (<15 words), no rule fired — likely a clarification of prior intent.
+    # Handles multi-turn continuations: "I meant Friday" / "actually 3pm" / "no, work email"
+    # Runs AFTER the rules loop so explicit intents (REMINDER, RECALL, etc.) always take priority.
+    words = text.split()
+    if len(words) < 15:
+        return Intent(
+            type=IntentType.FOLLOWUP,
+            confidence=0.70,
+            requires_worker=True,
+            raw_text=text,
+        )
+
     return Intent(
         type=IntentType.GENERAL,
         confidence=0.50,
@@ -100,4 +113,5 @@ def intent_label(intent_type: IntentType) -> str:
         IntentType.STATUS: "Status check",
         IntentType.WEB_SEARCH: "Web search",
         IntentType.GENERAL: "General",
+        IntentType.FOLLOWUP: "Follow-up",
     }.get(intent_type, intent_type.value)

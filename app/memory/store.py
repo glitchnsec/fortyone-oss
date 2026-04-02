@@ -102,16 +102,23 @@ class MemoryStore:
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_context(self, user_id: str) -> dict:
+    async def get_context(self, user_id: str, channel: str = "sms") -> dict:
         """
         Assemble the full context packet that gets passed into every worker job.
         Keeps the critical path thin — DB reads only, no LLM.
+
+        Scoped to a specific channel (D-01, D-02) so SMS and Slack histories
+        are never intermixed in the sliding window.
+        Legacy rows (channel IS NULL) are treated as 'sms' for backward compat.
         """
         result = await self.db.execute(
             select(Message)
-            .where(Message.user_id == user_id)
+            .where(
+                Message.user_id == user_id,
+                (Message.channel == channel) | (Message.channel.is_(None)),
+            )
             .order_by(Message.created_at.desc())
-            .limit(10)
+            .limit(20)   # D-01: last 20 messages
         )
         recent_messages = list(result.scalars().all())
 
@@ -212,6 +219,8 @@ class MemoryStore:
         intent: Optional[str] = None,
         state: Optional[str] = None,
         job_id: Optional[str] = None,
+        channel: Optional[str] = None,      # NEW — per D-01, D-02: scopes history per channel
+        persona_tag: Optional[str] = None,  # NEW — per D-08: records active persona at send time
     ) -> Message:
         message = Message(
             user_id=user_id,
@@ -220,6 +229,8 @@ class MemoryStore:
             intent=intent,
             state=state,
             job_id=job_id,
+            channel=channel or "sms",   # default sms for backward compat
+            persona_tag=persona_tag,
         )
         self.db.add(message)
         await self.db.commit()

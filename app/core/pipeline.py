@@ -74,6 +74,7 @@ class MessagePipeline:
             body=body,
             intent=intent.type.value,
             state=MessageState.THINK.value,
+            channel=self.channel.name,   # D-01, D-02: scope message to originating channel
         )
 
         # ── ACK ──────────────────────────────────────────────────────────────
@@ -92,6 +93,7 @@ class MessagePipeline:
             direction="outbound",
             body=ack_text,
             state=MessageState.ACK.value,
+            channel=self.channel.name,   # D-01, D-02: scope ACK to originating channel
         )
 
         # Standalone greetings: ACK is the full response
@@ -99,7 +101,7 @@ class MessagePipeline:
             return
 
         # ── THINK / ACT ───────────────────────────────────────────────────────
-        context = await self.store.get_context(user.id)
+        context = await self.store.get_context(user.id, channel=self.channel.name)  # D-01, D-02
 
         job_id = await self.queue.push_job({
             "channel":  self.channel.name,   # used by ResponseListener to route reply
