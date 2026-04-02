@@ -1,10 +1,11 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { useAuth } from "../../lib/auth";
 
 export const Route = createFileRoute("/auth/register")({ component: RegisterPage });
 
@@ -16,6 +17,7 @@ interface RegisterForm {
 }
 
 function RegisterPage() {
+  const { login } = useAuth();
   const {
     register,
     handleSubmit,
@@ -47,6 +49,8 @@ function RegisterPage() {
       setServerError("Registration failed. Please try again.");
       return;
     }
+    const data2 = await res.json();
+    login(data2.access_token, data2.user_id);
     await navigate({ to: "/onboarding" });
   };
 

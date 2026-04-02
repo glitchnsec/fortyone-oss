@@ -72,8 +72,8 @@ async def _get_db():
 
 
 @router.post("/register", status_code=201)
-async def register(body: RegisterInput, db: AsyncSession = Depends(_get_db)):
-    """Create a new user account. Returns {user_id} on success; 409 if email already registered."""
+async def register(body: RegisterInput, response: Response, db: AsyncSession = Depends(_get_db)):
+    """Create a new user account and auto-login. Returns access_token; sets refresh_token cookie."""
     existing = await db.execute(select(User).where(User.email == body.email))
     if existing.scalar_one_or_none():
         raise HTTPException(409, "An account with this email already exists. Sign in instead?")
@@ -85,7 +85,20 @@ async def register(body: RegisterInput, db: AsyncSession = Depends(_get_db)):
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    return {"user_id": user.id}
+
+    # Auto-login: issue tokens so the user is authenticated immediately after registration
+    access_token = _create_access_token(user.id)
+    raw_refresh = secrets.token_urlsafe(64)
+    s = get_settings()
+    exp = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
+    session_row = UserSession(user_id=user.id, token_hash=_hash_token(raw_refresh), expires_at=exp)
+    db.add(session_row)
+    await db.commit()
+    response.set_cookie(
+        key="refresh_token", value=raw_refresh, httponly=True, secure=True,
+        samesite="lax", max_age=s.refresh_token_expire_days * 86400, path="/auth",
+    )
+    return {"access_token": access_token, "user_id": user.id}
 
 
 @router.post("/login")
