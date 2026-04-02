@@ -13,9 +13,11 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 
+import hashlib
+
+import bcrypt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
 from jose import jwt
-from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,15 +29,19 @@ from app.middleware.auth import get_current_user as _get_current_user
 from app.models.auth import UserSession
 
 router = APIRouter()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logger = logging.getLogger(__name__)
 
 
-def _pre_hash(password: str) -> str:
-    """SHA-256 pre-hash to bypass bcrypt's 72-byte limit on long passwords."""
-    import hashlib
-    import base64
-    return base64.b64encode(hashlib.sha256(password.encode()).digest()).decode()
+def _hash_password(password: str) -> str:
+    """Hash password with SHA-256 pre-hash + bcrypt (handles any password length)."""
+    pre = hashlib.sha256(password.encode()).digest()
+    return bcrypt.hashpw(pre, bcrypt.gensalt()).decode()
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    """Verify password against bcrypt hash (with SHA-256 pre-hash)."""
+    pre = hashlib.sha256(password.encode()).digest()
+    return bcrypt.checkpw(pre, hashed.encode())
 
 
 class RegisterInput(BaseModel):
@@ -74,7 +80,7 @@ async def register(body: RegisterInput, db: AsyncSession = Depends(_get_db)):
     user = User(
         email=body.email,
         phone=body.phone,
-        password_hash=pwd_context.hash(_pre_hash(body.password)),
+        password_hash=_hash_password(body.password),
     )
     db.add(user)
     await db.commit()
@@ -87,7 +93,7 @@ async def login(body: LoginInput, response: Response, db: AsyncSession = Depends
     """Validate credentials. Returns {access_token} in body; sets refresh_token httpOnly cookie."""
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
-    if not user or not pwd_context.verify(_pre_hash(body.password), user.password_hash or ""):
+    if not user or not _verify_password(body.password, user.password_hash or ""):
         raise HTTPException(401, "Email or password is incorrect. Try again or reset your password.")
     access_token = _create_access_token(user.id)
     raw_refresh = secrets.token_urlsafe(64)
