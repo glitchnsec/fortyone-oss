@@ -31,6 +31,13 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 logger = logging.getLogger(__name__)
 
 
+def _pre_hash(password: str) -> str:
+    """SHA-256 pre-hash to bypass bcrypt's 72-byte limit on long passwords."""
+    import hashlib
+    import base64
+    return base64.b64encode(hashlib.sha256(password.encode()).digest()).decode()
+
+
 class RegisterInput(BaseModel):
     email: EmailStr
     phone: str
@@ -67,7 +74,7 @@ async def register(body: RegisterInput, db: AsyncSession = Depends(_get_db)):
     user = User(
         email=body.email,
         phone=body.phone,
-        password_hash=pwd_context.hash(body.password),
+        password_hash=pwd_context.hash(_pre_hash(body.password)),
     )
     db.add(user)
     await db.commit()
@@ -80,7 +87,7 @@ async def login(body: LoginInput, response: Response, db: AsyncSession = Depends
     """Validate credentials. Returns {access_token} in body; sets refresh_token httpOnly cookie."""
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
-    if not user or not pwd_context.verify(body.password, user.password_hash or ""):
+    if not user or not pwd_context.verify(_pre_hash(body.password), user.password_hash or ""):
         raise HTTPException(401, "Email or password is incorrect. Try again or reset your password.")
     access_token = _create_access_token(user.id)
     raw_refresh = secrets.token_urlsafe(64)
