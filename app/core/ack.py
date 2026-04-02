@@ -83,21 +83,32 @@ _ACK_SYSTEM = (
 )
 
 
-async def _llm_ack(body: str, user_name: Optional[str]) -> str:
+async def _llm_ack(
+    body: str,
+    user_name: Optional[str],
+    recent_messages: Optional[list[dict]] = None,
+) -> str:
     """Raw LLM call — no timeout, no fallback. Callers handle that."""
     from app.config import get_settings
     from app.tasks._llm import _client
 
     settings = get_settings()
     name_hint = f" The user's name is {user_name}." if user_name else ""
-    user_prompt = f'User just texted: "{body}"{name_hint}'
+
+    # Build conversation history for context-aware ACK (D-12)
+    messages = [{"role": "system", "content": _ACK_SYSTEM + name_hint}]
+    if recent_messages:
+        # Include last 3 exchanges for context without exceeding ACK latency budget
+        for msg in recent_messages[-6:]:   # 3 pairs = 6 messages
+            role = "user" if msg.get("direction") == "inbound" else "assistant"
+            content = msg.get("body", "")
+            if content:
+                messages.append({"role": role, "content": content})
+    messages.append({"role": "user", "content": f'User just sent: "{body}"{name_hint}'})
 
     resp = await _client(settings).chat.completions.create(
         model=settings.llm_model_fast,
-        messages=[
-            {"role": "system", "content": _ACK_SYSTEM},
-            {"role": "user",   "content": user_prompt},
-        ],
+        messages=messages,
         temperature=0.8,
         max_tokens=25,      # tiny budget = fast + forces brevity
     )
@@ -109,12 +120,14 @@ async def get_smart_ack(
     intent_type: IntentType,
     body: str,
     user_name: Optional[str] = None,
+    recent_messages: Optional[list[dict]] = None,   # NEW — per D-12: context-aware ACK
     timeout_s: float = 0.90,    # leaves 100ms headroom inside the 1s SLA
 ) -> str:
     """
     Try an LLM-generated ACK within `timeout_s` seconds.
     Falls back to the static pool the moment the deadline is exceeded.
 
+    recent_messages: last N messages from get_context_minimal for context-aware ACK.
     Logs whether the LLM path was used and its latency, so you can monitor
     how often the fallback fires in production.
     """
@@ -127,7 +140,10 @@ async def get_smart_ack(
     t0 = time.monotonic()
 
     try:
-        result = await asyncio.wait_for(_llm_ack(body, user_name), timeout=timeout_s)
+        result = await asyncio.wait_for(
+            _llm_ack(body, user_name, recent_messages=recent_messages),
+            timeout=timeout_s,
+        )
         elapsed_ms = (time.monotonic() - t0) * 1000
 
         if result:
