@@ -4,6 +4,7 @@ Async SQLAlchemy engine and session factory.
 Supports both PostgreSQL (asyncpg) and SQLite (aiosqlite) via URL scheme translation.
 Use AsyncSessionLocal for production code; engine is exposed for Alembic env.py.
 """
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
@@ -31,6 +32,21 @@ def _make_engine():
 
 engine = _make_engine()
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+try:
+    from pgvector.asyncpg import register_vector
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_vector_type(dbapi_connection, connection_record):
+        """Register pgvector types with asyncpg on every new connection.
+        Without this, vector columns return raw bytes instead of list[float].
+        See: https://github.com/pgvector/pgvector-python (asyncpg section)
+        """
+        dbapi_connection.run_sync(register_vector)
+
+except ImportError:
+    # pgvector not installed — skip registration (SQLite dev mode)
+    pass
 
 
 async def get_db():
