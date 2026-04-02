@@ -23,37 +23,37 @@ logger = logging.getLogger(__name__)
 
 _ACK_POOL: dict[IntentType, list[str]] = {
     IntentType.REMINDER: [
-        "On it — setting that up now.",
-        "Got it. Give me a sec.",
-        "Sure, I'll take care of that.",
+        "Working on that...",
+        "On it, one sec...",
+        "Looking into it...",
     ],
     IntentType.SCHEDULE: [
-        "Let me check your preferences and find a good time.",
-        "On it — looking at your calendar now.",
-        "Working on finding the best slot for you.",
+        "Checking your schedule...",
+        "On it, one moment...",
+        "Looking into that...",
     ],
     IntentType.RECALL: [
-        "Let me pull that up for you...",
-        "One sec — checking what I have.",
-        "On it.",
+        "Pulling that up...",
+        "One sec, checking...",
+        "Looking into it...",
     ],
     IntentType.PREFERENCE: [
-        "Got it — I'll remember that.",
-        "Noted. I'll keep that in mind.",
-        "Good to know. Storing that.",
+        "On it, one moment...",
+        "Working on that...",
+        "One sec...",
     ],
     IntentType.COMPLETE: [
-        "Got it — marking that done.",
-        "On it.",
+        "On it, one sec...",
+        "Working on that...",
     ],
     IntentType.STATUS: [
-        "Let me check on that for you.",
-        "One moment — looking into it.",
+        "Checking on that...",
+        "One moment, looking into it...",
     ],
     IntentType.GENERAL: [
-        "Got it — working on it.",
-        "On it. Give me a moment.",
-        "Sure, let me handle that.",
+        "Working on that...",
+        "On it, one moment...",
+        "Looking into it...",
     ],
 }
 
@@ -75,11 +75,14 @@ def get_ack(intent_type: IntentType) -> str:
 # ─── Smart ACK (LLM with timeout) ────────────────────────────────────────────
 
 _ACK_SYSTEM = (
-    "You are a personal SMS assistant. "
-    "Reply with ONE short acknowledgment sentence (max 8 words). "
-    "Be natural and warm — not robotic. "
-    "Do NOT answer the question yet, just acknowledge you're on it. "
-    "No punctuation at the very end."
+    "Generate a SHORT (under 10 words) acknowledgment that the user's request is being processed. "
+    "CRITICAL RULES: "
+    "- NEVER answer the user's question. "
+    "- NEVER provide information or suggestions. "
+    "- ONLY indicate you are working on their request. "
+    "- Reference what they asked about if possible. "
+    "Examples: 'Checking your schedule...', 'Looking into that for you...', 'Pulling up your reminders...' "
+    "Return ONLY the acknowledgment text, nothing else."
 )
 
 

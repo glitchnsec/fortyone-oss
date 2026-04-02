@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     brave_api_key: str = ""                # For Brave Search (plan 02-07)
     dashboard_url: str = "http://localhost:5173"  # Redirect target post-OAuth
 
+    # Race timeout: wait for worker before sending ACK (UAT showed 2.4s typical)
+    race_timeout_s: float = 4.0
+
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
     environment: str = "development"
