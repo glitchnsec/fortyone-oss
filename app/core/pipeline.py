@@ -9,6 +9,7 @@ SMS, Slack, or any future channel plugs in without touching this file.
 MessagePipeline  : fast path (runs inside FastAPI background task)
 ResponseListener : listens for worker results and delivers the final reply
 """
+import asyncio
 import json
 import logging
 from enum import Enum
@@ -115,39 +116,35 @@ class MessagePipeline:
         recent_messages = minimal_ctx.get("recent_messages", [])
         last_persona = minimal_ctx.get("last_persona")   # D-08: inherit across turns
 
-        # ── ACK ──────────────────────────────────────────────────────────────
-        # First message ever → warm intro that also acknowledges their request.
-        # All subsequent messages → fast smart ACK (LLM or static fallback).
+        # ── FIRST MESSAGE — warm intro (fast path, no race) ───────────────────
         is_first = await self.store.message_count(user.id) == 1
         if is_first:
             ack_text = await first_greeting(self.channel.name, body)
             logger.info("FIRST_MESSAGE  channel=%s  address=%s", self.channel.name, address)
-        else:
-            ack_text = await get_smart_ack(
-                intent.type,
-                body,
-                user_name=user.name,
-                recent_messages=recent_messages,   # D-12: context-aware ACK
+            await self.channel.send(address, ack_text)
+            await self.store.store_message(
+                user_id=user.id, direction="outbound", body=ack_text,
+                state=MessageState.ACK.value, channel=self.channel.name,
+                persona_tag=last_persona,
             )
-        await self.channel.send(address, ack_text)
+            # First greeting IS the response — no worker needed
+            return
 
-        await self.store.store_message(
-            user_id=user.id,
-            direction="outbound",
-            body=ack_text,
-            state=MessageState.ACK.value,
-            channel=self.channel.name,
-            persona_tag=last_persona,  # tag ACK with current persona so next get_context_minimal can read it
-        )
-
-        # Standalone greetings: ACK is the full response
+        # Standalone greetings: respond immediately, no worker
         if intent.type == IntentType.GREETING:
+            ack_text = await get_smart_ack(
+                intent.type, body, user_name=user.name,
+                recent_messages=recent_messages,
+            )
+            await self.channel.send(address, ack_text)
+            await self.store.store_message(
+                user_id=user.id, direction="outbound", body=ack_text,
+                state=MessageState.DONE.value, channel=self.channel.name,
+                persona_tag=last_persona,
+            )
             return
 
         # ── PERSONA DETECTION ────────────────────────────────────────────────
-        # Runs once per message; result cached in job payload.
-        # detect_persona returns (persona_name, confidence, needs_clarification).
-        # Does NOT block on embedding — uses rule fast-path first.
         user_personas = await self.store.get_personas(user.id)
         persona_name, persona_confidence, needs_clarification = ("shared", 0.5, False)
         if user_personas:
@@ -168,8 +165,6 @@ class MessagePipeline:
         )
 
         # ── CLARIFICATION BRANCH (per D-08) ──────────────────────────────────
-        # When the LLM is uncertain about work vs personal context, ask once
-        # rather than guess wrong. The user's next message resolves the context.
         if needs_clarification and intent.type not in _SKIP_CLARIFICATION_INTENTS:
             logger.info(
                 "CLARIFICATION_NEEDED  channel=%s  address=%s  body=%r",
@@ -177,48 +172,95 @@ class MessagePipeline:
             )
             await self.channel.send(address, _CLARIFYING_QUESTION)
             await self.store.store_message(
-                user_id=user.id,
-                direction="outbound",
-                body=_CLARIFYING_QUESTION,
-                state=MessageState.ACK.value,
-                channel=self.channel.name,
-                persona_tag=None,  # no persona set — waiting for user to clarify
+                user_id=user.id, direction="outbound", body=_CLARIFYING_QUESTION,
+                state=MessageState.ACK.value, channel=self.channel.name,
+                persona_tag=None,
             )
-            return  # do NOT push a job; wait for the user's clarifying reply
+            return
 
         # ── THINK / ACT — tiered context assembly ────────────────────────────
-        # Select context depth based on intent complexity (PERS-08 / D-05)
         if intent.type in _FULL_CONTEXT_INTENTS:
             context = await self.store.get_context_full(
-                user.id,
-                channel=self.channel.name,
-                query=body,
+                user.id, channel=self.channel.name, query=body,
                 persona_tag=persona_name if persona_name != "shared" else None,
             )
         else:
-            # Standard tier for REMINDER, RECALL, COMPLETE, PREFERENCE, STATUS, FOLLOWUP
             context = await self.store.get_context_standard(
-                user.id,
-                channel=self.channel.name,
-                query=body,
+                user.id, channel=self.channel.name, query=body,
                 persona_tag=persona_name if persona_name != "shared" else None,
             )
 
+        # ── QUEUE JOB ────────────────────────────────────────────────────────
         job_id = await self.queue.push_job({
-            "channel":  self.channel.name,   # used by ResponseListener to route reply
+            "channel":  self.channel.name,
             "address":  address,
-            "phone":    address,             # backward-compat alias for worker tasks
+            "phone":    address,
             "body":     body,
             "intent":   intent.type.value,
             "context":  context,
             "user_id":  user.id,
-            "persona":  persona_name,        # NEW — task handlers use this for connection selection
+            "persona":  persona_name,
         })
 
         logger.info(
             "QUEUED  job_id=%s  channel=%s  intent=%s  persona=%s",
             job_id, self.channel.name, intent.type.value, persona_name,
         )
+
+        # ── RACE PATTERN ─────────────────────────────────────────────────────
+        # Queue the job first, then race: wait for worker result vs ACK timeout.
+        # If worker responds fast → send single message (no ACK).
+        # If timeout → send ACK, let ResponseListener deliver result later.
+        from app.config import get_settings
+        race_timeout = get_settings().race_timeout_s
+
+        # Start ACK generation concurrently (so it's ready if we need it)
+        ack_task = asyncio.create_task(get_smart_ack(
+            intent.type, body, user_name=user.name,
+            recent_messages=recent_messages,
+        ))
+
+        # Wait for worker result within timeout
+        result = await self.queue.wait_for_result(job_id, timeout_s=race_timeout)
+
+        if result is not None:
+            # ── RACE WON — worker responded fast, send single message ─────
+            ack_task.cancel()
+            claimed = await self.queue.claim_delivery(job_id)
+            if not claimed:
+                logger.info("RACE_LOST_CLAIM  job_id=%s — ResponseListener already delivered", job_id)
+                return
+
+            response_text = result.get("response", "")
+            if response_text:
+                await self.channel.send(address, response_text)
+                await self.store.store_message(
+                    user_id=user.id, direction="outbound", body=response_text,
+                    state=MessageState.CONFIRM.value, channel=self.channel.name,
+                    persona_tag=persona_name if persona_name != "shared" else None,
+                    job_id=job_id,
+                )
+                logger.info(
+                    "RACE_WON  job_id=%s  channel=%s  address=%s  (single message)",
+                    job_id, self.channel.name, address,
+                )
+                # Run LEARN inline since ResponseListener won't handle this job
+                learn_signals = result.get("learn", {})
+                if learn_signals:
+                    await ResponseListener._learn(self.store, user.id, learn_signals)
+        else:
+            # ── RACE TIMEOUT — send ACK, ResponseListener delivers later ──
+            ack_text = await ack_task
+            await self.channel.send(address, ack_text)
+            await self.store.store_message(
+                user_id=user.id, direction="outbound", body=ack_text,
+                state=MessageState.ACK.value, channel=self.channel.name,
+                persona_tag=last_persona,
+            )
+            logger.info(
+                "RACE_TIMEOUT  job_id=%s  channel=%s  address=%s  (ACK sent, waiting for worker)",
+                job_id, self.channel.name, address,
+            )
 
 
 # ─── Response listener ────────────────────────────────────────────────────────
@@ -266,6 +308,14 @@ class ResponseListener:
                 )
 
     async def _deliver(self, redis, job_id: str) -> None:
+        # ── DELIVERY CLAIM (race pattern) ─────────────────────────────────────
+        # If the race path already delivered this job, skip to avoid duplicates.
+        from app.queue.client import queue_client
+        claimed = await queue_client.claim_delivery(job_id)
+        if not claimed:
+            logger.info("RACE_DELIVERED  job_id=%s — race path already sent, skipping", job_id)
+            return
+
         raw = await redis.get(f"result:{job_id}")
         if not raw:
             logger.warning("No result stored for job_id=%s", job_id)

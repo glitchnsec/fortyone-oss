@@ -15,11 +15,11 @@ from unittest.mock import AsyncMock, patch, MagicMock
 from app.core.intent import IntentType
 
 
-def test_race_timeout_defaults_to_4():
-    """Settings().race_timeout_s defaults to 4.0 seconds."""
+def test_race_timeout_defaults_to_8():
+    """Settings().race_timeout_s defaults to 8.0 seconds."""
     from app.config import Settings
     s = Settings()
-    assert s.race_timeout_s == 4.0, f"Expected 4.0, got {s.race_timeout_s}"
+    assert s.race_timeout_s == 8.0, f"Expected 8.0, got {s.race_timeout_s}"
 
 
 def test_ack_pool_entries_contain_action_words():

@@ -50,6 +50,24 @@ class QueueClient:
         raw = await self._redis.get(f"result:{job_id}")
         return json.loads(raw) if raw else None
 
+    async def wait_for_result(self, job_id: str, timeout_s: float) -> Optional[dict]:
+        """Poll for a job result within timeout. Returns result dict or None on timeout."""
+        import asyncio
+        elapsed = 0.0
+        poll_interval = 0.05  # 50ms
+        while elapsed < timeout_s:
+            result = await self.get_result(job_id)
+            if result is not None:
+                return result
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+        return None
+
+    async def claim_delivery(self, job_id: str) -> bool:
+        """Atomic delivery lock. Returns True if this caller won the lock."""
+        ok = await self._redis.set(f"delivered:{job_id}", "1", nx=True, ex=300)
+        return ok is not None
+
 
 # Singleton used by both the API and the pipeline
 queue_client = QueueClient()
