@@ -97,3 +97,10 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", back_populates="messages")
+
+
+# Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
+# UserSession is defined in app/models/auth.py but User references it as relationship("UserSession").
+# Without this import, any process that imports models.py without also importing auth.py
+# (e.g. the worker) will crash with "failed to locate a name 'UserSession'".
+from app.models.auth import UserSession  # noqa: E402, F401
