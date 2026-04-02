@@ -48,8 +48,10 @@ async def client():
 
     from app.routes.auth import _get_db as auth_get_db
     from app.middleware.auth import _get_db as mw_get_db
+    from app.routes.dashboard import _get_db as dash_get_db
     app.dependency_overrides[auth_get_db] = _override_db
     app.dependency_overrides[mw_get_db] = _override_db
+    app.dependency_overrides[dash_get_db] = _override_db
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -252,3 +254,65 @@ async def test_long_password_works(client):
     })
     assert login.status_code == 200
     assert "access_token" in login.json()
+
+
+@pytest.mark.asyncio
+async def test_register_merges_sms_user(client):
+    """FLOW TEST: SMS user exists → web register with same phone → merges into same user.
+    This ensures conversation history is preserved when an SMS user creates a web account."""
+    from app.database import Base
+    from app.memory.models import User, Message
+
+    # Step 1: Simulate SMS pipeline creating a user with messages
+    async with _TestSession() as db:
+        sms_user = User(phone=TEST_USER["phone"])
+        db.add(sms_user)
+        await db.commit()
+        await db.refresh(sms_user)
+        sms_user_id = sms_user.id
+
+        # Add a message as if the SMS pipeline recorded it
+        msg = Message(
+            user_id=sms_user_id,
+            direction="inbound",
+            body="hello from SMS",
+            intent="general",
+        )
+        db.add(msg)
+        await db.commit()
+
+    # Step 2: Register via web with the same phone number
+    resp = await client.post("/auth/register", json=TEST_USER)
+    assert resp.status_code == 201
+    web_user_id = resp.json()["user_id"]
+
+    # Step 3: The web user should be the SAME user (merged, not new)
+    assert web_user_id == sms_user_id, (
+        f"Expected merge into SMS user {sms_user_id}, got new user {web_user_id}"
+    )
+
+    # Step 4: Conversations should be visible via the web user's token
+    token = resp.json()["access_token"]
+    conv_resp = await client.get(
+        "/api/v1/conversations",
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert conv_resp.status_code == 200
+    conversations = conv_resp.json()["conversations"]
+    assert len(conversations) >= 1, "SMS messages should be visible after merge"
+    assert conversations[0]["body"] == "hello from SMS"
+
+
+@pytest.mark.asyncio
+async def test_register_rejects_duplicate_phone_with_email(client):
+    """If a fully registered user (has email) exists with the same phone, reject with 409."""
+    # Register first user
+    await client.post("/auth/register", json=TEST_USER)
+
+    # Try to register another user with same phone but different email
+    resp = await client.post("/auth/register", json={
+        "email": "other@example.com",
+        "phone": TEST_USER["phone"],
+        "password": "AnotherPass123!",
+    })
+    assert resp.status_code == 409

@@ -71,18 +71,43 @@ async def _get_db():
 
 @router.post("/register", status_code=201)
 async def register(body: RegisterInput, response: Response, db: AsyncSession = Depends(_get_db)):
-    """Create a new user account and auto-login. Returns access_token; sets refresh_token cookie."""
-    existing = await db.execute(select(User).where(User.email == body.email))
-    if existing.scalar_one_or_none():
+    """Create a new user account and auto-login. Returns access_token; sets refresh_token cookie.
+
+    If an SMS-only user already exists with this phone number (created by the SMS pipeline
+    before web registration existed), upgrade that user in-place rather than creating a
+    duplicate. This preserves conversation history and memories.
+    """
+    # Check email uniqueness
+    existing_email = await db.execute(select(User).where(User.email == body.email))
+    if existing_email.scalar_one_or_none():
         raise HTTPException(409, "An account with this email already exists. Sign in instead?")
-    user = User(
-        email=body.email,
-        phone=body.phone,
-        password_hash=_hash_password(body.password),
-    )
-    db.add(user)
-    await db.commit()
-    await db.refresh(user)
+
+    # Check if an SMS-only user exists with this phone (no email = pre-registration SMS user)
+    existing_phone = await db.execute(select(User).where(User.phone == body.phone))
+    sms_user = existing_phone.scalar_one_or_none()
+
+    if sms_user and sms_user.email:
+        # Phone already claimed by a fully registered user
+        raise HTTPException(409, "An account with this phone number already exists. Sign in instead?")
+
+    if sms_user and not sms_user.email:
+        # Upgrade SMS-only user → full account (preserves messages, memories, tasks)
+        sms_user.email = body.email
+        sms_user.password_hash = _hash_password(body.password)
+        await db.commit()
+        await db.refresh(sms_user)
+        user = sms_user
+        logger.info("UPGRADE  sms_user=%s  email=%s  (merged SMS account into web registration)", user.id, body.email)
+    else:
+        # Brand new user — no prior SMS history
+        user = User(
+            email=body.email,
+            phone=body.phone,
+            password_hash=_hash_password(body.password),
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
 
     # Auto-login: issue tokens so the user is authenticated immediately after registration
     access_token = _create_access_token(user.id)
