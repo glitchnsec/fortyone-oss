@@ -8,3 +8,4 @@ python-dotenv==1.0.1
 cryptography==46.0.6
 authlib==1.6.9
 httpx==0.28.1
+aiosqlite==0.20.0
