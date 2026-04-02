@@ -3,6 +3,7 @@
 Endpoints:
   GET  /api/v1/me              — current user profile
   PATCH /api/v1/me/assistant   — update assistant name / personality
+  DELETE /api/v1/me            — permanently delete account and all user data
   GET  /api/v1/conversations   — paginated message history (user-scoped)
   GET  /api/v1/connections     — proxy to connections service
   POST /api/v1/connections/initiate — initiate OAuth flow (proxy)
@@ -33,6 +34,13 @@ async def _get_db():
         yield session
 
 
+async def _connections_client():
+    """Yield a short-lived httpx client pointed at the connections service."""
+    s = get_settings()
+    async with httpx.AsyncClient(base_url=s.connections_service_url, timeout=10.0) as client:
+        yield client
+
+
 # ─── User / Me ────────────────────────────────────────────────────────────────
 
 @router.get("/me")
@@ -50,6 +58,35 @@ async def get_me(user: User = Depends(get_current_user)):
 class AssistantUpdate(BaseModel):
     assistant_name: str
     personality: Optional[str] = None
+
+
+@router.delete("/me", status_code=204)
+async def delete_account(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Permanently delete the authenticated user and all related data.
+
+    Cascade order:
+      1. Best-effort: notify connections service to purge OAuth tokens for this user.
+      2. Delete User row — SQLAlchemy cascade="all, delete-orphan" removes Memories,
+         Messages, Tasks, and UserSessions automatically.
+    Returns 204 on success (no body).
+    """
+    # Step 1: best-effort connections cleanup (non-fatal if service is down)
+    try:
+        resp = await client.delete(f"/connections/user/{user.id}")
+        resp.raise_for_status()
+    except Exception as e:
+        logger.warning("connections purge failed user_id=%s error=%s", user.id, e)
+
+    # Step 2: delete User row — cascades to all child tables
+    db_user = await db.get(User, user.id)
+    if db_user:
+        await db.delete(db_user)
+        await db.commit()
+    logger.info("ACCOUNT_DELETED  user_id=%s  email=%s", user.id, user.email)
 
 
 @router.patch("/me/assistant")
@@ -107,13 +144,6 @@ async def list_conversations(
 
 
 # ─── Connections proxy ────────────────────────────────────────────────────────
-
-async def _connections_client():
-    """Yield a short-lived httpx client pointed at the connections service."""
-    s = get_settings()
-    async with httpx.AsyncClient(base_url=s.connections_service_url, timeout=10.0) as client:
-        yield client
-
 
 @router.get("/connections")
 async def list_connections(
