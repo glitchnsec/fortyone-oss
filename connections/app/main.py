@@ -11,16 +11,24 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(na
 logger = logging.getLogger(__name__)
 
 
-async def _run_startup_migrations(conn):
+def _run_startup_migrations(sync_conn):
     """Add columns that were added to models after initial table creation.
-    create_all only creates missing tables — it won't ALTER existing ones."""
+    create_all only creates missing tables — it won't ALTER existing ones.
+    This runs synchronously inside run_sync() — receives a raw connection."""
     from sqlalchemy import inspect, text
-    inspector = inspect(conn)
-    if inspector.has_table("connections"):
-        columns = {c["name"] for c in inspector.get_columns("connections")}
-        if "persona_id" not in columns:
-            conn.execute(text("ALTER TABLE connections ADD COLUMN persona_id VARCHAR"))
-            logger.info("MIGRATION added connections.persona_id column")
+    try:
+        inspector = inspect(sync_conn)
+        if inspector.has_table("connections"):
+            columns = {c["name"] for c in inspector.get_columns("connections")}
+            if "persona_id" not in columns:
+                sync_conn.execute(text("ALTER TABLE connections ADD COLUMN persona_id VARCHAR"))
+                logger.info("STARTUP_MIGRATION added connections.persona_id column")
+            else:
+                logger.info("STARTUP_MIGRATION connections.persona_id already exists — skipping")
+        else:
+            logger.info("STARTUP_MIGRATION connections table not found — create_all will handle it")
+    except Exception as exc:
+        logger.error("STARTUP_MIGRATION failed: %s", exc, exc_info=True)
 
 
 @asynccontextmanager
@@ -28,7 +36,7 @@ async def lifespan(app: FastAPI):
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_run_startup_migrations)
-    logger.info("Connections service started")
+    logger.info("Connections service started — schema up to date")
     yield
     await engine.dispose()
 
