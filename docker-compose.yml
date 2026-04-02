@@ -19,8 +19,11 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - .:/app
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./alembic:/app/alembic
       - sqlite_data:/app/data
+      # dashboard/dist is baked into the image — do NOT mount .:/app or it gets overridden
     env_file:
       - .env
     environment:
@@ -34,7 +37,8 @@ services:
     build: .
     command: python scripts/run_worker.py
     volumes:
-      - .:/app
+      - ./app:/app/app
+      - ./scripts:/app/scripts
       - sqlite_data:/app/data
     env_file:
       - .env
