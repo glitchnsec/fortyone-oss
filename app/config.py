@@ -59,7 +59,7 @@ class Settings(BaseSettings):
     dashboard_url: str = "http://localhost:5173"  # Redirect target post-OAuth
 
     # Race timeout: wait for worker before sending ACK (UAT showed 2.4s typical)
-    race_timeout_s: float = 4.0
+    race_timeout_s: float = 8.0
 
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
