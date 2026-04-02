@@ -36,6 +36,28 @@ class MessageState(str, Enum):
     DONE     = "done"
 
 
+# Intent → context tier mapping (D-05 / PERS-08)
+# GREETING is handled before context assembly (early return after ACK)
+_FULL_CONTEXT_INTENTS = frozenset({
+    IntentType.SCHEDULE,
+    IntentType.GENERAL,
+    IntentType.WEB_SEARCH,
+})
+_STANDARD_CONTEXT_INTENTS = frozenset({
+    IntentType.REMINDER,
+    IntentType.RECALL,
+    IntentType.COMPLETE,
+    IntentType.PREFERENCE,
+    IntentType.STATUS,
+    IntentType.FOLLOWUP,
+})
+
+# Clarifying question text (per D-08 — sent once when LLM is uncertain about work vs personal)
+_CLARIFYING_QUESTION = (
+    "Just to make sure I use the right account — is this for work or personal?"
+)
+
+
 class MessagePipeline:
     def __init__(
         self,
@@ -77,6 +99,14 @@ class MessagePipeline:
             channel=self.channel.name,   # D-01, D-02: scope message to originating channel
         )
 
+        # ── MINIMAL CONTEXT (for ACK — no embedding, fast) ───────────────────
+        # get_context_minimal returns recent messages and last_persona for:
+        #   1. Context-aware ACK (D-12)
+        #   2. Persona inheritance across turns (D-08)
+        minimal_ctx = await self.store.get_context_minimal(user.id, channel=self.channel.name)
+        recent_messages = minimal_ctx.get("recent_messages", [])
+        last_persona = minimal_ctx.get("last_persona")   # D-08: inherit across turns
+
         # ── ACK ──────────────────────────────────────────────────────────────
         # First message ever → warm intro that also acknowledges their request.
         # All subsequent messages → fast smart ACK (LLM or static fallback).
@@ -85,7 +115,12 @@ class MessagePipeline:
             ack_text = await first_greeting(self.channel.name, body)
             logger.info("FIRST_MESSAGE  channel=%s  address=%s", self.channel.name, address)
         else:
-            ack_text = await get_smart_ack(intent.type, body, user_name=user.name)
+            ack_text = await get_smart_ack(
+                intent.type,
+                body,
+                user_name=user.name,
+                recent_messages=recent_messages,   # D-12: context-aware ACK
+            )
         await self.channel.send(address, ack_text)
 
         await self.store.store_message(
@@ -93,15 +128,73 @@ class MessagePipeline:
             direction="outbound",
             body=ack_text,
             state=MessageState.ACK.value,
-            channel=self.channel.name,   # D-01, D-02: scope ACK to originating channel
+            channel=self.channel.name,
+            persona_tag=last_persona,  # tag ACK with current persona so next get_context_minimal can read it
         )
 
         # Standalone greetings: ACK is the full response
         if intent.type == IntentType.GREETING:
             return
 
-        # ── THINK / ACT ───────────────────────────────────────────────────────
-        context = await self.store.get_context(user.id, channel=self.channel.name)  # D-01, D-02
+        # ── PERSONA DETECTION ────────────────────────────────────────────────
+        # Runs once per message; result cached in job payload.
+        # detect_persona returns (persona_name, confidence, needs_clarification).
+        # Does NOT block on embedding — uses rule fast-path first.
+        user_personas = await self.store.get_personas(user.id)
+        persona_name, persona_confidence, needs_clarification = ("shared", 0.5, False)
+        if user_personas:
+            try:
+                from app.core.persona import detect_persona
+                persona_name, persona_confidence, needs_clarification = await detect_persona(
+                    body=body,
+                    user_personas=user_personas,
+                    recent_messages=recent_messages,
+                    last_persona=last_persona,
+                )
+            except Exception as exc:
+                logger.warning("PERSONA_DETECT failed=%s — using shared", exc)
+
+        logger.info(
+            "PERSONA  channel=%s  persona=%s  confidence=%.2f  needs_clarification=%s",
+            self.channel.name, persona_name, persona_confidence, needs_clarification,
+        )
+
+        # ── CLARIFICATION BRANCH (per D-08) ──────────────────────────────────
+        # When the LLM is uncertain about work vs personal context, ask once
+        # rather than guess wrong. The user's next message resolves the context.
+        if needs_clarification:
+            logger.info(
+                "CLARIFICATION_NEEDED  channel=%s  address=%s  body=%r",
+                self.channel.name, address, body[:60],
+            )
+            await self.channel.send(address, _CLARIFYING_QUESTION)
+            await self.store.store_message(
+                user_id=user.id,
+                direction="outbound",
+                body=_CLARIFYING_QUESTION,
+                state=MessageState.ACK.value,
+                channel=self.channel.name,
+                persona_tag=None,  # no persona set — waiting for user to clarify
+            )
+            return  # do NOT push a job; wait for the user's clarifying reply
+
+        # ── THINK / ACT — tiered context assembly ────────────────────────────
+        # Select context depth based on intent complexity (PERS-08 / D-05)
+        if intent.type in _FULL_CONTEXT_INTENTS:
+            context = await self.store.get_context_full(
+                user.id,
+                channel=self.channel.name,
+                query=body,
+                persona_tag=persona_name if persona_name != "shared" else None,
+            )
+        else:
+            # Standard tier for REMINDER, RECALL, COMPLETE, PREFERENCE, STATUS, FOLLOWUP
+            context = await self.store.get_context_standard(
+                user.id,
+                channel=self.channel.name,
+                query=body,
+                persona_tag=persona_name if persona_name != "shared" else None,
+            )
 
         job_id = await self.queue.push_job({
             "channel":  self.channel.name,   # used by ResponseListener to route reply
@@ -111,11 +204,12 @@ class MessagePipeline:
             "intent":   intent.type.value,
             "context":  context,
             "user_id":  user.id,
+            "persona":  persona_name,        # NEW — task handlers use this for connection selection
         })
 
         logger.info(
-            "QUEUED  job_id=%s  channel=%s  intent=%s",
-            job_id, self.channel.name, intent.type.value,
+            "QUEUED  job_id=%s  channel=%s  intent=%s  persona=%s",
+            job_id, self.channel.name, intent.type.value, persona_name,
         )
 
 
