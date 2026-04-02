@@ -18,6 +18,7 @@ class IntentType(str, Enum):
     COMPLETE = "complete"   # "done", "mark X complete"
     GREETING = "greeting"
     STATUS = "status"
+    WEB_SEARCH = "web_search"
     GENERAL = "general"
 
 
@@ -61,6 +62,9 @@ _RULES: list[tuple[IntentType, str, float]] = [
 
     # Status check
     (IntentType.STATUS, r"\b(status|update|how'?s\s+it\s+going|did\s+you|have\s+you|any\s+updates?)\b", 0.75),
+
+    # Web search
+    (IntentType.WEB_SEARCH, r"\b(search(\s+for)?|look\s+up|google|find\s+out|what\s+is\s+the\s+(weather|news|price|score)|weather\s+in|news\s+(about|on)|latest\s+(news|info)|who\s+is|what\s+is|how\s+(do|does|did|to)|tell\s+me\s+about)\b", 0.72),
 ]
 
 
@@ -94,5 +98,6 @@ def intent_label(intent_type: IntentType) -> str:
         IntentType.COMPLETE: "Complete task",
         IntentType.GREETING: "Greeting",
         IntentType.STATUS: "Status check",
+        IntentType.WEB_SEARCH: "Web search",
         IntentType.GENERAL: "General",
     }.get(intent_type, intent_type.value)

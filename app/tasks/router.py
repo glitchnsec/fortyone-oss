@@ -1,7 +1,13 @@
 """
 Routes a queued job to the correct task handler based on intent.
+
+Handles 401 HTTPException from the connections service: translates it into a
+user-readable "needs reauthorization" message (CONN-07) so the assistant
+always sends an actionable reply rather than silently failing.
 """
 import logging
+
+from fastapi import HTTPException as FastAPIHTTPException
 
 from app.core.intent import IntentType
 
@@ -18,25 +24,53 @@ async def route_job(payload: dict) -> dict:
 
     logger.debug("Routing intent=%s job_id=%s", intent, payload.get("job_id"))
 
+    # ── Resolve handler ───────────────────────────────────────────────────────
     if intent == IntentType.REMINDER:
         from app.tasks.reminder import handle_reminder
-        return await handle_reminder(payload)
+        handler = handle_reminder
 
-    if intent == IntentType.SCHEDULE:
+    elif intent == IntentType.SCHEDULE:
         from app.tasks.scheduling import handle_scheduling
-        return await handle_scheduling(payload)
+        handler = handle_scheduling
 
-    if intent in (IntentType.RECALL, IntentType.STATUS):
+    elif intent in (IntentType.RECALL, IntentType.STATUS):
         from app.tasks.recall import handle_recall
-        return await handle_recall(payload)
+        handler = handle_recall
 
-    if intent == IntentType.PREFERENCE:
+    elif intent == IntentType.PREFERENCE:
         from app.tasks.reminder import handle_preference
-        return await handle_preference(payload)
+        handler = handle_preference
 
-    if intent == IntentType.COMPLETE:
+    elif intent == IntentType.COMPLETE:
         from app.tasks.recall import handle_complete
-        return await handle_complete(payload)
+        handler = handle_complete
 
-    from app.tasks.recall import handle_general
-    return await handle_general(payload)
+    elif intent == IntentType.WEB_SEARCH:
+        from app.tasks.web_search import handle_web_search
+        handler = handle_web_search
+
+    else:
+        from app.tasks.recall import handle_general
+        handler = handle_general
+
+    # ── Dispatch with 401 reauth interception (CONN-07) ───────────────────────
+    try:
+        result = await handler(payload)
+    except FastAPIHTTPException as exc:
+        if exc.status_code == 401:
+            job_id = payload.get("job_id", "")
+            phone = payload.get("phone", "")
+            logger.warning(
+                "401 from connections service — needs reauth job_id=%s phone=%s", job_id, phone
+            )
+            return {
+                "job_id": job_id,
+                "phone": phone,
+                "response": (
+                    "Your Google connection needs reauthorization. "
+                    "Visit your dashboard connections page to reconnect."
+                ),
+            }
+        raise
+
+    return result
