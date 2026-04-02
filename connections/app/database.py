@@ -10,8 +10,13 @@ class Base(DeclarativeBase):
 
 def _make_engine():
     url = get_settings().database_url
-    if url.startswith("sqlite"):
-        url = url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+    if url.startswith("sqlite") and "+aiosqlite" not in url:
+        if url == "sqlite://":
+            url = "sqlite+aiosqlite://"
+        else:
+            url = url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
     return create_async_engine(url, echo=False)
 
 

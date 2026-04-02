@@ -9,3 +9,5 @@ cryptography==46.0.6
 authlib==1.6.9
 httpx==0.28.1
 aiosqlite==0.20.0
+pytest==8.3.5
+pytest-asyncio==0.24.0
