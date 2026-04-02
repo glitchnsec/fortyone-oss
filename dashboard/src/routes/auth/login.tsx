@@ -44,9 +44,10 @@ function LoginPage() {
     });
     const { user_id } = (await me.json()) as { user_id: string };
     login(access_token, user_id);
-    // Force TanStack Router to re-evaluate beforeLoad with updated auth context.
-    // Without this, navigate() fires before React batches the state update from login(),
-    // so beforeLoad sees isAuthenticated=false and redirects back to /auth/login.
+    // Wait one micro-tick so React flushes the state update from login() before
+    // we invalidate the router. Without this, beforeLoad reads stale auth context
+    // (isAuthenticated=false) and redirects back to /auth/login.
+    await new Promise((r) => setTimeout(r, 0));
     await router.invalidate();
     await navigate({ to: "/connections" });
   };
