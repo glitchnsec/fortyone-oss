@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 
 async def main() -> None:
-    init_db()
+    await init_db()
     logger.info("Worker DB initialised")
 
     from app.queue.worker import Worker
