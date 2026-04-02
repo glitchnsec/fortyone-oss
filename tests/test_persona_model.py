@@ -165,9 +165,14 @@ async def test_store_memory_accepts_persona_tag(db_session):
 # ─── Task 2: detect_persona ────────────────────────────────────────────────────
 
 def _make_persona(name, description=None):
-    """Helper — creates a simple Persona-like object for detection tests."""
-    from app.memory.models import Persona
-    p = Persona.__new__(Persona)
+    """Helper — creates a simple Persona-like object for detection tests.
+
+    Uses a plain object rather than SQLAlchemy model instance so tests
+    don't need a DB connection.
+    """
+    class _FakePersona:
+        pass
+    p = _FakePersona()
     p.id = "test-id"
     p.name = name
     p.description = description
