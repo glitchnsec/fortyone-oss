@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -21,9 +21,20 @@ function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginForm>();
   const [serverError, setServerError] = useState<string | null>(null);
-  const { login } = useAuth();
+  const { login, isAuthenticated } = useAuth();
   const navigate = useNavigate();
   const router = useRouter();
+  const pendingRedirect = useRef(false);
+
+  // Reactive navigation: waits for React to flush auth state before navigating.
+  // This avoids the race where router.invalidate() + navigate() fire before
+  // isAuthenticated updates, causing beforeLoad to redirect back to /auth/login.
+  useEffect(() => {
+    if (pendingRedirect.current && isAuthenticated) {
+      pendingRedirect.current = false;
+      router.invalidate().then(() => navigate({ to: "/connections" }));
+    }
+  }, [isAuthenticated, navigate, router]);
 
   const onSubmit = async (data: LoginForm) => {
     setServerError(null);
@@ -43,13 +54,8 @@ function LoginPage() {
       credentials: "include",
     });
     const { user_id } = (await me.json()) as { user_id: string };
+    pendingRedirect.current = true;
     login(access_token, user_id);
-    // Wait one micro-tick so React flushes the state update from login() before
-    // we invalidate the router. Without this, beforeLoad reads stale auth context
-    // (isAuthenticated=false) and redirects back to /auth/login.
-    await new Promise((r) => setTimeout(r, 0));
-    await router.invalidate();
-    await navigate({ to: "/connections" });
   };
 
   return (
