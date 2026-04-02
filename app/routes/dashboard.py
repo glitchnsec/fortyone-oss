@@ -52,12 +52,13 @@ async def get_me(user: User = Depends(get_current_user)):
         "phone": user.phone,
         "phone_verified": user.phone_verified,
         "assistant_name": user.assistant_name,
+        "personality_notes": getattr(user, "personality_notes", None),
     }
 
 
 class AssistantUpdate(BaseModel):
     assistant_name: str
-    personality: Optional[str] = None
+    personality_notes: Optional[str] = None
 
 
 @router.delete("/me", status_code=204)
@@ -96,11 +97,14 @@ async def update_assistant(
     db: AsyncSession = Depends(_get_db),
 ):
     """Update the assistant's name (and optional personality notes)."""
+    values = {"assistant_name": body.assistant_name}
+    if body.personality_notes is not None:
+        values["personality_notes"] = body.personality_notes
     await db.execute(
-        update(User).where(User.id == user.id).values(assistant_name=body.assistant_name)
+        update(User).where(User.id == user.id).values(**values)
     )
     await db.commit()
-    return {"assistant_name": body.assistant_name}
+    return {"assistant_name": body.assistant_name, "personality_notes": body.personality_notes}
 
 
 # ─── Conversations ────────────────────────────────────────────────────────────

@@ -163,6 +163,8 @@ class MemoryStore:
                 "name": user.name if user else None,
                 "timezone": user.timezone if user else "America/New_York",
                 "phone": user.phone if user else "",
+                "assistant_name": getattr(user, "assistant_name", None) if user else None,
+                "personality_notes": getattr(user, "personality_notes", None) if user else None,
             },
             "recent_messages": [
                 {
@@ -434,6 +436,8 @@ class MemoryStore:
                 "name": user.name if user else None,
                 "timezone": user.timezone if user else "America/New_York",
                 "phone": user.phone if user else "",
+                "assistant_name": getattr(user, "assistant_name", None) if user else None,
+                "personality_notes": getattr(user, "personality_notes", None) if user else None,
             },
             "recent_messages": [
                 {
@@ -489,6 +493,8 @@ class MemoryStore:
                 "name": user.name if user else None,
                 "timezone": user.timezone if user else "America/New_York",
                 "phone": user.phone if user else "",
+                "assistant_name": getattr(user, "assistant_name", None) if user else None,
+                "personality_notes": getattr(user, "personality_notes", None) if user else None,
             },
             "recent_messages": [
                 {

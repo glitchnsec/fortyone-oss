@@ -36,13 +36,21 @@ def _table_exists(table_name: str) -> bool:
     return sa.inspect(bind).has_table(table_name)
 
 
+def _is_postgres() -> bool:
+    """Return True when running against PostgreSQL (not SQLite)."""
+    return op.get_bind().dialect.name == "postgresql"
+
+
 def upgrade() -> None:
     # 1. Enable pgvector extension — must come BEFORE adding VECTOR column
     #    IF NOT EXISTS makes this safe to run multiple times
-    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    #    Only runs on PostgreSQL — SQLite has no extension support
+    if _is_postgres():
+        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # 2. Add embedding column to memories (VECTOR(1536) for text-embedding-3-small)
-    if not _column_exists("memories", "embedding"):
+    #    Only on PostgreSQL — SQLite does not support vector columns
+    if _is_postgres() and not _column_exists("memories", "embedding"):
         op.execute(
             "ALTER TABLE memories ADD COLUMN embedding vector(1536)"
         )
@@ -86,17 +94,19 @@ def upgrade() -> None:
     # 7. HNSW index on memories.embedding for cosine similarity
     #    Only valid after the column exists — conditional on column presence
     #    (HNSW: no training step, works on empty table, O(log n) query)
-    bind = op.get_bind()
-    indexes = [idx["name"] for idx in sa.inspect(bind).get_indexes("memories")]
-    if "ix_memories_embedding_cosine" not in indexes:
-        op.execute(
-            """
-            CREATE INDEX ix_memories_embedding_cosine
-            ON memories
-            USING hnsw (embedding vector_cosine_ops)
-            WITH (m = 16, ef_construction = 64)
-            """
-        )
+    #    Only on PostgreSQL — SQLite has no HNSW index support
+    if _is_postgres():
+        bind = op.get_bind()
+        indexes = [idx["name"] for idx in sa.inspect(bind).get_indexes("memories")]
+        if "ix_memories_embedding_cosine" not in indexes:
+            op.execute(
+                """
+                CREATE INDEX ix_memories_embedding_cosine
+                ON memories
+                USING hnsw (embedding vector_cosine_ops)
+                WITH (m = 16, ef_construction = 64)
+                """
+            )
 
 
 def downgrade() -> None:

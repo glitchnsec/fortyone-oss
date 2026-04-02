@@ -38,6 +38,7 @@ class User(Base):
     password_hash = Column(String, nullable=True)
     phone_verified = Column(Boolean, default=False)
     assistant_name = Column(String, nullable=True)  # Onboarding step 3 (DASH-02 / D-12)
+    personality_notes = Column(Text, nullable=True)  # Free-form personality/tone notes
 
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")

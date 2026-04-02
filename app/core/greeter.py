@@ -19,16 +19,28 @@ _MOCK = (
 )
 
 
-async def first_greeting(channel_name: str, body: str) -> str:
+async def first_greeting(
+    channel_name: str,
+    body: str,
+    assistant_name: str | None = None,
+    personality_notes: str | None = None,
+) -> str:
     """
     Generate a casual intro that also acknowledges the user's first message.
     Replaces the smart ACK for message #1 only.
     """
+    from app.core.identity import identity_preamble
     from app.tasks._llm import llm_text
+
+    identity = identity_preamble(
+        assistant_name=assistant_name,
+        personality_notes=personality_notes,
+        channel_hint=channel_name,
+    )
 
     return await llm_text(
         system=(
-            f"You are a personal assistant on {channel_name}. "
+            f"{identity} "
             "This is the user's very first message to you. "
             "Reply in 2-3 sentences: quickly introduce yourself (you help with "
             "reminders, tasks, scheduling), then naturally address what they said. "

@@ -55,11 +55,8 @@ _STANDARD_CONTEXT_INTENTS = frozenset({
 
 # Intents that should never trigger persona clarification — they use "shared" context
 # RECALL: "What do you know about me?" should not ask work vs personal
-# IDENTITY: if added later, identity questions also bypass clarification
-_SKIP_CLARIFICATION_INTENTS = frozenset(
-    {IntentType.RECALL}
-    | ({IntentType.IDENTITY} if hasattr(IntentType, "IDENTITY") else set())
-)
+# IDENTITY: "what's your name?" — always answered directly, no clarification needed
+_SKIP_CLARIFICATION_INTENTS = frozenset({IntentType.RECALL, IntentType.IDENTITY})
 
 # Clarifying question text (per D-08 — sent once when LLM is uncertain about work vs personal)
 _CLARIFYING_QUESTION = (
@@ -119,7 +116,11 @@ class MessagePipeline:
         # ── FIRST MESSAGE — warm intro (fast path, no race) ───────────────────
         is_first = await self.store.message_count(user.id) == 1
         if is_first:
-            ack_text = await first_greeting(self.channel.name, body)
+            ack_text = await first_greeting(
+                self.channel.name, body,
+                assistant_name=getattr(user, "assistant_name", None),
+                personality_notes=getattr(user, "personality_notes", None),
+            )
             logger.info("FIRST_MESSAGE  channel=%s  address=%s", self.channel.name, address)
             await self.channel.send(address, ack_text)
             await self.store.store_message(
@@ -130,11 +131,31 @@ class MessagePipeline:
             # First greeting IS the response — no worker needed
             return
 
+        # Identity questions: respond with configured name/personality, no worker
+        if intent.type == IntentType.IDENTITY:
+            assistant_name = getattr(user, "assistant_name", None)
+            personality_notes = getattr(user, "personality_notes", None)
+            if assistant_name:
+                identity_text = f"I'm {assistant_name}, your personal assistant!"
+                if personality_notes:
+                    identity_text += f" {personality_notes}"
+            else:
+                identity_text = "I'm your personal assistant! You can give me a name in your settings."
+            await self.channel.send(address, identity_text)
+            await self.store.store_message(
+                user_id=user.id, direction="outbound", body=identity_text,
+                state=MessageState.DONE.value, channel=self.channel.name,
+                persona_tag=last_persona,
+            )
+            return
+
         # Standalone greetings: respond immediately, no worker
         if intent.type == IntentType.GREETING:
             ack_text = await get_smart_ack(
                 intent.type, body, user_name=user.name,
                 recent_messages=recent_messages,
+                assistant_name=getattr(user, "assistant_name", None),
+                personality_notes=getattr(user, "personality_notes", None),
             )
             await self.channel.send(address, ack_text)
             await self.store.store_message(
@@ -218,6 +239,8 @@ class MessagePipeline:
         ack_task = asyncio.create_task(get_smart_ack(
             intent.type, body, user_name=user.name,
             recent_messages=recent_messages,
+            assistant_name=getattr(user, "assistant_name", None),
+            personality_notes=getattr(user, "personality_notes", None),
         ))
 
         # Wait for worker result within timeout

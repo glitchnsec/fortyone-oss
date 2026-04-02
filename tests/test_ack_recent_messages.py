@@ -51,7 +51,7 @@ async def test_get_smart_ack_passes_recent_messages_to_llm():
     ]
     captured_kwargs = {}
 
-    async def fake_llm_ack(body, user_name, recent_messages=None):
+    async def fake_llm_ack(body, user_name, recent_messages=None, **kwargs):
         captured_kwargs["recent_messages"] = recent_messages
         return "On it!"
 

@@ -28,6 +28,7 @@ interface MeResponse {
   phone: string;
   phone_verified: boolean;
   assistant_name: string | null;
+  personality_notes: string | null;
 }
 
 function AssistantSettingsPage() {
@@ -46,6 +47,7 @@ function AssistantSettingsPage() {
   // Populate form once data loads
   useEffect(() => {
     if (data?.assistant_name) setAssistantName(data.assistant_name);
+    if (data?.personality_notes) setPersonality(data.personality_notes);
   }, [data]);
 
   const saveMutation = useMutation({
@@ -55,7 +57,7 @@ function AssistantSettingsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           assistant_name: assistantName.trim(),
-          personality: personality.trim() || undefined,
+          personality_notes: personality.trim() || undefined,
         }),
       });
       if (!res.ok) {

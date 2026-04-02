@@ -90,16 +90,20 @@ async def _llm_ack(
     body: str,
     user_name: Optional[str],
     recent_messages: Optional[list[dict]] = None,
+    assistant_name: Optional[str] = None,
+    personality_notes: Optional[str] = None,
 ) -> str:
     """Raw LLM call — no timeout, no fallback. Callers handle that."""
     from app.config import get_settings
+    from app.core.identity import identity_preamble
     from app.tasks._llm import _client
 
     settings = get_settings()
     name_hint = f" The user's name is {user_name}." if user_name else ""
+    identity = identity_preamble(assistant_name=assistant_name, personality_notes=personality_notes)
 
     # Build conversation history for context-aware ACK (D-12)
-    messages = [{"role": "system", "content": _ACK_SYSTEM + name_hint}]
+    messages = [{"role": "system", "content": identity + " " + _ACK_SYSTEM + name_hint}]
     if recent_messages:
         # Include last 3 exchanges for context without exceeding ACK latency budget
         for msg in recent_messages[-6:]:   # 3 pairs = 6 messages
@@ -124,6 +128,8 @@ async def get_smart_ack(
     body: str,
     user_name: Optional[str] = None,
     recent_messages: Optional[list[dict]] = None,   # NEW — per D-12: context-aware ACK
+    assistant_name: Optional[str] = None,
+    personality_notes: Optional[str] = None,
     timeout_s: float = 0.90,    # leaves 100ms headroom inside the 1s SLA
 ) -> str:
     """
@@ -144,7 +150,8 @@ async def get_smart_ack(
 
     try:
         result = await asyncio.wait_for(
-            _llm_ack(body, user_name, recent_messages=recent_messages),
+            _llm_ack(body, user_name, recent_messages=recent_messages,
+                     assistant_name=assistant_name, personality_notes=personality_notes),
             timeout=timeout_s,
         )
         elapsed_ms = (time.monotonic() - t0) * 1000

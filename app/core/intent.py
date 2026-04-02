@@ -19,6 +19,7 @@ class IntentType(str, Enum):
     GREETING = "greeting"
     STATUS = "status"
     WEB_SEARCH = "web_search"
+    IDENTITY = "identity"
     GENERAL = "general"
     FOLLOWUP = "followup"
 
@@ -26,6 +27,7 @@ class IntentType(str, Enum):
 # Intents that can be answered quickly without an LLM worker job
 FAST_PATH_INTENTS: set[IntentType] = {
     IntentType.GREETING,
+    IntentType.IDENTITY,
 }
 
 
@@ -43,6 +45,9 @@ class Intent:
 
 # (intent, pattern, confidence)
 _RULES: list[tuple[IntentType, str, float]] = [
+    # Identity questions — "what's your name?", "who are you?", "what are you?"
+    (IntentType.IDENTITY, r"\b(what'?s?\s+your\s+name|who\s+are\s+you|what\s+are\s+you|what\s+should\s+i\s+call\s+you|tell\s+me\s+(about\s+)?yourself)\b", 0.95),
+
     # Greetings — standalone greeting only (not "hey, remind me…")
     (IntentType.GREETING, r"^(hi|hello|hey(\s+there)?|good\s+(morning|afternoon|evening)|sup|what'?s\s+up)\s*[!?.]?\s*$", 0.95),
 
@@ -53,7 +58,7 @@ _RULES: list[tuple[IntentType, str, float]] = [
     (IntentType.COMPLETE, r"\b(done|finished|complete[d]?|mark\s+.+\s+(as\s+)?(done|complete[d]?))\b", 0.88),
 
     # Recall / list / meta-recall ("what do you know about me?")
-    (IntentType.RECALL, r"\b(what\s+(reminders?|tasks?|do\s+i\s+have|did\s+i|are\s+my)|show\s+(me\s+)?(my\s+)?(reminders?|tasks?)|list\s+(my\s+)?(reminders?|tasks?)|do\s+i\s+have\s+any|check\s+my|what\s+(do\s+you|you)\s+(know|remember)\s*(about)?|what\s+have\s+you\s+(learned|stored|saved|remembered)|what\s+(info(rmation)?|data)\s+(do\s+you\s+have|have\s+you)|tell\s+me\s+what\s+you\s+(know|remember))\b", 0.88),
+    (IntentType.RECALL, r"\b(what\s+(reminders?|tasks?|do\s+i\s+have|did\s+i|are\s+my)|show\s+(me\s+)?(my\s+)?(reminders?|tasks?)|list\s+(my\s+)?(reminders?|tasks?)|do\s+i\s+have\s+any|check\s+my|what\s+(do\s+you|you)\s+(know|remember)\s*(about)?|what\s+have\s+you\s+(learned|stored|saved|remembered)|what\s+(info(rmation)?|data)\s+(do\s+you\s+have|have\s+you)|tell\s+me\s+what\s+you\s+(know|remember)|who\s+am\s+i)\b", 0.88),
 
     # Scheduling
     (IntentType.SCHEDULE, r"\b(schedule|book\s+(a\s+)?(meeting|call|appointment)|find\s+(a\s+)?time|when\s+should\s+(we|i)|set\s+up\s+a\s+(meeting|call)|calendar|availability)\b", 0.85),
@@ -112,6 +117,7 @@ def intent_label(intent_type: IntentType) -> str:
         IntentType.GREETING: "Greeting",
         IntentType.STATUS: "Status check",
         IntentType.WEB_SEARCH: "Web search",
+        IntentType.IDENTITY: "Identity",
         IntentType.GENERAL: "General",
         IntentType.FOLLOWUP: "Follow-up",
     }.get(intent_type, intent_type.value)
