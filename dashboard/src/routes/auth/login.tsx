@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
@@ -23,6 +23,7 @@ function LoginPage() {
   const [serverError, setServerError] = useState<string | null>(null);
   const { login } = useAuth();
   const navigate = useNavigate();
+  const router = useRouter();
 
   const onSubmit = async (data: LoginForm) => {
     setServerError(null);
@@ -43,6 +44,10 @@ function LoginPage() {
     });
     const { user_id } = (await me.json()) as { user_id: string };
     login(access_token, user_id);
+    // Force TanStack Router to re-evaluate beforeLoad with updated auth context.
+    // Without this, navigate() fires before React batches the state update from login(),
+    // so beforeLoad sees isAuthenticated=false and redirects back to /auth/login.
+    await router.invalidate();
     await navigate({ to: "/connections" });
   };
 

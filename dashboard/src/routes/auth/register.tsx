@@ -1,5 +1,5 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useContext, useState } from "react";
+import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { useForm } from "react-hook-form";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
@@ -26,6 +26,7 @@ function RegisterPage() {
   } = useForm<RegisterForm>();
   const [serverError, setServerError] = useState<string | null>(null);
   const navigate = useNavigate();
+  const router = useRouter();
 
   const password = watch("password");
 
@@ -51,6 +52,7 @@ function RegisterPage() {
     }
     const data2 = await res.json();
     login(data2.access_token, data2.user_id);
+    await router.invalidate();
     await navigate({ to: "/onboarding" });
   };
 
