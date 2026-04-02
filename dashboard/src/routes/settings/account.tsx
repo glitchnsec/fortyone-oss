@@ -11,6 +11,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel,
+  AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
+  AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { fetchWithAuth } from "@/lib/api";
 import { useAuth } from "@/lib/auth.tsx";
 import { useState } from "react";
@@ -32,12 +37,27 @@ function AccountSettingsPage() {
   const { logout } = useAuth();
   const navigate = useNavigate();
   const [loggingOut, setLoggingOut] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const { data, isLoading } = useQuery<MeResponse>({
     queryKey: ["me"],
     queryFn: () =>
       fetchWithAuth("/api/v1/me").then((r) => r.json()) as Promise<MeResponse>,
   });
+
+  const handleDeleteAccount = async () => {
+    setDeleting(true);
+    try {
+      const res = await fetchWithAuth("/api/v1/me", { method: "DELETE" });
+      if (!res.ok) throw new Error("Delete failed");
+    } catch {
+      toast.error("Failed to delete account. Please try again.");
+      setDeleting(false);
+      return;
+    }
+    logout();
+    navigate({ to: "/auth/login" });
+  };
 
   const handleLogout = async () => {
     setLoggingOut(true);
@@ -93,6 +113,40 @@ function AccountSettingsPage() {
               {loggingOut && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               Log out
             </Button>
+          </div>
+
+          {/* Danger Zone — Delete Account */}
+          <div className="border-t border-red-100 pt-6">
+            <h2 className="mb-1 text-sm font-medium text-red-600">Danger Zone</h2>
+            <p className="mb-4 text-xs text-neutral-400">
+              Permanently delete your account and all associated data. This cannot be undone.
+            </p>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" disabled={deleting}>
+                  {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Delete Account
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete your account?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will permanently delete your account, all memories, conversations, tasks,
+                    and connected services. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    onClick={handleDeleteAccount}
+                    className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
+                  >
+                    Yes, delete my account
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
           </div>
         </div>
       )}
