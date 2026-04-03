@@ -77,9 +77,17 @@ async def scheduler_loop():
                             logger.info("SCHEDULER_SKIP rate_limited user=%s", user_id[:8])
                             continue
 
-                    # Idempotency check
+                    # Idempotency check — key varies by job type:
+                    # - task_reminder: per task_id (user can have multiple reminders per day)
+                    # - briefing/recap: per user per day (one morning briefing per day)
                     from app.core.throttle import check_idempotency
-                    idem_key = f"proactive:{user_id}:{payload.get('type', 'unknown')}:{int(now // 86400)}"
+                    job_type = payload.get("type", "unknown")
+                    if job_type == "task_reminder":
+                        # Per-task idempotency — each task fires exactly once
+                        idem_key = f"proactive:{user_id}:task_reminder:{payload.get('task_id', 'unknown')}"
+                    else:
+                        # Per-user-per-day for recurring proactive jobs
+                        idem_key = f"proactive:{user_id}:{job_type}:{int(now // 86400)}"
                     is_new = await check_idempotency(r, idem_key)
                     if not is_new:
                         logger.info("SCHEDULER_SKIP duplicate idem_key=%s", idem_key)
