@@ -236,3 +236,73 @@ async def llm_text(
         logger.error("LLM call=error  latency_ms=%d  error=%s",
                      int((time.monotonic() - t0) * 1000), exc)
         return mock_text
+
+
+async def llm_tools(
+    messages: list[dict],
+    tools: list[dict],
+    mock_text: str,
+    timeout_s: float = 15.0,
+    model: str | None = None,
+) -> dict:
+    """
+    Call the capable model with tool definitions.
+    Returns a dict with "content" and "tool_calls" keys.
+    Falls back to a mock response dict on no key / timeout / error.
+
+    Return format:
+      {"content": "...", "tool_calls": [...] or None}
+    """
+    settings = get_settings()
+
+    if not settings.has_llm:
+        logger.info("LLM call=mock reason=no_key")
+        return {"content": mock_text, "tool_calls": None}
+
+    use_model = model or settings.llm_model_capable
+    t0 = time.monotonic()
+    try:
+        resp = await asyncio.wait_for(
+            _client(settings).chat.completions.create(
+                model=use_model,
+                messages=messages,
+                tools=tools if tools else None,
+                temperature=0.3,
+                max_tokens=500,
+            ),
+            timeout=timeout_s,
+        )
+        latency_ms = int((time.monotonic() - t0) * 1000)
+        choice = resp.choices[0].message
+        tokens = getattr(resp.usage, "completion_tokens", "?")
+
+        tool_calls = None
+        if choice.tool_calls:
+            tool_calls = [
+                {
+                    "id": tc.id,
+                    "function": {
+                        "name": tc.function.name,
+                        "arguments": tc.function.arguments,
+                    },
+                }
+                for tc in choice.tool_calls
+            ]
+
+        logger.info(
+            "LLM call=tools  model=%s  latency_ms=%d  tokens=%s  tool_calls=%d  content=%r",
+            use_model, latency_ms, tokens,
+            len(tool_calls) if tool_calls else 0,
+            (choice.content or "")[:80],
+        )
+        return {"content": choice.content, "tool_calls": tool_calls}
+
+    except asyncio.TimeoutError:
+        logger.warning("LLM call=timeout  latency_ms=%d  falling back to mock",
+                       int((time.monotonic() - t0) * 1000))
+        return {"content": mock_text, "tool_calls": None}
+
+    except Exception as exc:
+        logger.error("LLM call=error  latency_ms=%d  error=%s",
+                     int((time.monotonic() - t0) * 1000), exc)
+        return {"content": mock_text, "tool_calls": None}
