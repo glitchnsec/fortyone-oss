@@ -89,24 +89,32 @@ subagents:
         risk_level: medium
 
   - name: task_agent
-    description: "Manage user tasks and reminders"
+    description: "Manage user tasks, reminders, and scheduled notifications"
     tools:
       - name: create_reminder
-        description: "Create a reminder for the user"
+        description: >-
+          Use this tool whenever the user wants something done, remembered, or
+          communicated at a specific time — whether relative ('in 5 minutes',
+          'in an hour') or explicit ('tonight', 'tomorrow at 3pm', 'next Monday').
+          This includes: 'remind me to...', 'text me a joke in 2 mins',
+          'let me know when...', 'set a timer for...', or any request that
+          involves a future action or notification. The system will extract the
+          task description and schedule delivery at the right time. Always use
+          this tool — do not refuse or say you cannot set reminders.
         parameters:
           type: object
           properties:
             title:
               type: string
-              description: "Reminder title"
+              description: "What the user wants to be reminded about — use their words"
             due_at:
               type: string
-              description: "Due date/time in ISO 8601 format"
+              description: "When to trigger the reminder, in ISO 8601 format. For relative times like 'in 5 minutes', compute from the current time provided in the system prompt. If unsure, leave null and the system will parse it."
           required: ["title"]
         handler: app.tasks.reminder.handle_reminder
         risk_level: low
       - name: list_tasks
-        description: "List the user's current tasks and reminders"
+        description: "List the user's current tasks, reminders, and scheduled items"
         parameters:
           type: object
           properties:
