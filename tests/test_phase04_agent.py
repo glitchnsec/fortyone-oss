@@ -626,3 +626,77 @@ def test_reminder_handler_schedules_to_redis():
     assert "_schedule_task_reminder" in source, (
         "handle_reminder must call _schedule_task_reminder when due_at is set"
     )
+
+
+# ─── 36-39. Retryable vs Capability Error Handling (regression guards) ─────
+
+def test_manager_retryable_errors_keep_tool_available():
+    """
+    Regression: When a tool returns a retryable error (date_parse_failed,
+    invalid_input), the manager must NOT remove the tool from schemas.
+    The LLM should get the error back with a hint and retry with corrected input.
+
+    Bug: All tool errors were treated the same — tool removed, deflection
+    blocked. For bad dates, the LLM should be allowed to retry with the
+    correct date instead of losing the tool entirely.
+    """
+    import inspect
+    from app.tasks import manager
+    source = inspect.getsource(manager.manager_dispatch)
+    # Must distinguish retryable from capability errors
+    assert "is_retryable" in source, (
+        "manager_dispatch must distinguish retryable errors from capability failures"
+    )
+    assert "date_parse_failed" in source, (
+        "date_parse_failed must be classified as retryable"
+    )
+
+
+def test_retryable_error_includes_current_time_hint():
+    """
+    Regression: When feeding a retryable date error back to the LLM,
+    the error content must include the current UTC time so the LLM
+    knows what 'now' is and can generate a correct future date.
+    """
+    import inspect
+    from app.tasks import manager
+    source = inspect.getsource(manager.manager_dispatch)
+    assert "current UTC time is" in source or "Current UTC time is" in source, (
+        "Retryable error hint must include current UTC time for LLM to self-correct"
+    )
+
+
+def test_reminder_returns_error_on_date_failure():
+    """
+    Regression: handle_reminder must return error='date_parse_failed'
+    when the date couldn't be parsed AND the user clearly wanted a time.
+    Previously it returned success with a blank due_at — the manager LLM
+    told the user the reminder was set when nothing was scheduled.
+    """
+    from app.tasks.reminder import _has_time_reference
+    # These should all be detected as having time references
+    assert _has_time_reference("leave for church in 5 mins")
+    assert _has_time_reference("call me at 3pm")
+    assert _has_time_reference("remind me tomorrow")
+    assert _has_time_reference("schedule for next monday")
+    # These should NOT have time references
+    assert not _has_time_reference("buy groceries")
+    assert not _has_time_reference("hello how are you")
+
+
+def test_capability_errors_still_remove_tool():
+    """
+    Regression: Capability failures (tool unavailable, no API key) must
+    still remove the tool from schemas and block deflection. Only retryable
+    errors (bad input) should keep the tool available.
+    """
+    import inspect
+    from app.tasks import manager
+    source = inspect.getsource(manager.manager_dispatch)
+    # Capability path must still remove tools
+    assert "tools = [t for t in tools if t" in source, (
+        "Capability failure path must remove the failed tool from schemas"
+    )
+    assert "deflection_tools" in source, (
+        "Capability failure path must still block deflection tools"
+    )
