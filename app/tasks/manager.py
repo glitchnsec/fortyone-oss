@@ -120,7 +120,8 @@ async def manager_dispatch(payload: dict) -> dict:
                     pending = await store.create_pending_action(
                         user_id=user_id,
                         action_type=tool_name,
-                        action_params=json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw,
+                        action_params=json.loads(tool_args_raw) if isinstance(
+                            tool_args_raw, str) else tool_args_raw,
                         risk_level=risk,
                     )
                     await store.log_action(
@@ -131,7 +132,8 @@ async def manager_dispatch(payload: dict) -> dict:
                         trigger="user_request",
                     )
 
-                description = _format_action_description(tool_name, tool_args_raw)
+                description = _format_action_description(
+                    tool_name, tool_args_raw)
                 response_text = f"I'd like to {description}. Should I go ahead? (Reply YES or NO)"
 
                 return {
@@ -148,12 +150,14 @@ async def manager_dispatch(payload: dict) -> dict:
             # Track tool failures — distinguish retryable (bad input) from capability (tool down)
             is_failed = "error" in tool_result
             error_type = tool_result.get("error", "") if is_failed else ""
-            is_retryable = error_type in ("date_parse_failed", "invalid_input", "validation_error")
+            is_retryable = error_type in (
+                "date_parse_failed", "invalid_input", "validation_error")
 
             if is_failed and is_retryable:
                 # RETRYABLE: The tool works but the LLM sent bad input.
                 # Feed the error back with specifics so the LLM can fix and retry.
-                tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
+                tool_failure_counts[tool_name] = tool_failure_counts.get(
+                    tool_name, 0) + 1
                 logger.info(
                     "TOOL_RETRYABLE  tool=%s  error=%s  attempt=%d  job_id=%s",
                     tool_name, error_type, tool_failure_counts[tool_name], job_id,
@@ -176,8 +180,10 @@ async def manager_dispatch(payload: dict) -> dict:
 
             elif is_failed:
                 # CAPABILITY FAILURE: The tool itself is unavailable.
-                tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
-                user_reason = tool_result.get("user_message", tool_result["error"])
+                tool_failure_counts[tool_name] = tool_failure_counts.get(
+                    tool_name, 0) + 1
+                user_reason = tool_result.get(
+                    "user_message", tool_result["error"])
                 failed_tools[tool_name] = user_reason
 
                 logger.warning(
@@ -195,15 +201,18 @@ async def manager_dispatch(payload: dict) -> dict:
                 })
 
                 # Remove the failed tool so it can't be retried
-                tools = [t for t in tools if t["function"]["name"] != tool_name]
+                tools = [t for t in tools if t["function"]
+                         ["name"] != tool_name]
 
                 # Remove deflection tools when a primary tool fails
                 deflection_tools = {"create_reminder", "list_tasks"}
                 if tool_name not in deflection_tools:
-                    tools = [t for t in tools if t["function"]["name"] not in deflection_tools]
+                    tools = [t for t in tools if t["function"]
+                             ["name"] not in deflection_tools]
                     logger.info(
                         "DEFLECTION_BLOCKED  removed=%s  remaining=%s  job_id=%s",
-                        deflection_tools, [t["function"]["name"] for t in tools], job_id,
+                        deflection_tools, [t["function"]["name"]
+                                           for t in tools], job_id,
                     )
             else:
                 messages.append({
@@ -244,16 +253,19 @@ async def manager_dispatch(payload: dict) -> dict:
             mock_text="I've been working on your request. Here's what I found so far.",
             timeout_s=10.0,
         )
-        response_text = result.get("content") or "I've been working on your request but need a bit more time."
+        response_text = result.get(
+            "content") or "I've been working on your request but need a bit more time."
 
     # TRANSPARENCY GUARD: If any tools failed during this dispatch,
     # ensure the response acknowledges the limitation. The LLM often
     # produces responses that gloss over failures — prepend a clear note.
     if failed_tools and response_text:
-        failure_summaries = [_tool_failure_user_message(name) for name in failed_tools]
+        failure_summaries = [_tool_failure_user_message(
+            name) for name in failed_tools]
         failure_note = " ".join(failure_summaries)
         # Only prepend if the response doesn't already mention the limitation
-        limitation_keywords = ["can't search", "unable to search", "not available", "couldn't search", "unavailable"]
+        limitation_keywords = ["can't search", "unable to search",
+                               "not available", "couldn't search", "unavailable"]
         if not any(kw in response_text.lower() for kw in limitation_keywords):
             response_text = f"Heads up: {failure_note}\n\n{response_text}"
 
@@ -314,7 +326,8 @@ async def _passive_profile_learn(user_id: str, message_text: str, persona: str =
 
             # Check if upsert_profile_entry is available (added in plan 04-04)
             if not hasattr(store, "upsert_profile_entry"):
-                logger.debug("upsert_profile_entry not yet available — skipping passive learning")
+                logger.debug(
+                    "upsert_profile_entry not yet available — skipping passive learning")
                 return
 
             for fact in facts[:3]:  # Cap at 3 facts per message to avoid noise
@@ -358,21 +371,25 @@ def _build_system_prompt(payload: dict) -> str:
         pass
 
     parts.append(
-        "You are a personal assistant manager. You can respond directly to simple questions "
-        "or use tools to help with tasks like searching the web, managing email, checking "
-        "calendar events, and handling reminders.\n\n"
+        "You are a VERY capable and wise personal assistant manager. Your the best at understanding the user's needs and you help them achieve their fullest potential. "
+        "You can respond directly to simple questions "
+        "or use tools and subagents to help with tasks like searching the web, managing email, checking "
+        "calendar events, and handling reminders. "
+        "You understand the tools you're equiped with very well.\n\n"
         "Guidelines:\n"
-        "- For simple questions or conversation, respond directly without tools.\n"
+        "- It is important that you understand the ultimate intent of the user before deciding whether to act or delegate.\n"
+        "- For simple questions or conversation, respond directly without delegating.\n"
         "- For tasks requiring external data (weather, email, calendar), use the appropriate tool.\n"
+        "- If you're unable to find the write tool. Let the user know, no shame in that.\n"
         "- Keep responses concise and helpful — you're texting, not writing an essay.\n"
         "- If you use a tool, summarize the results naturally for the user.\n"
         "- Never expose raw tool output or JSON to the user.\n"
         "- If a tool fails or is unavailable, tell the user honestly — e.g., 'I can't search the web right now.'\n"
-        "- When the user says 'remind me to...' or 'set a reminder for...', ALWAYS use the create_reminder tool. "
-        "Setting reminders IS your job — you are a personal assistant that manages reminders and tasks.\n"
-        "- However, do NOT create a reminder as a substitute when a different tool fails. "
-        "For example, if web_search fails while the user asked you to find something, "
-        "don't create a reminder for the user to search manually — tell them the search is unavailable instead.\n"
+        # "- When the user says 'remind me to...' or 'set a reminder for...', ALWAYS use the create_reminder tool. "
+        # "Setting reminders IS your job — you are a personal assistant that manages reminders and tasks.\n"
+        # "- However, do NOT create a reminder as a substitute when a different tool fails. "
+        # "For example, if web_search fails while the user asked you to find something, "
+        # "don't create a reminder for the user to search manually — tell them the search is unavailable instead.\n"
         "- Do not mention technical details like API keys or configuration to the user."
     )
 
@@ -384,7 +401,8 @@ def _build_system_prompt(payload: dict) -> str:
     # memories is a dict {key: value} from MemoryStore.get_context_standard/full
     memories = context.get("memories", {})
     if memories:
-        items = list(memories.items())[:10] if isinstance(memories, dict) else []
+        items = list(memories.items())[:10] if isinstance(
+            memories, dict) else []
         if items:
             mem_text = "\n".join(f"- {k}: {v}" for k, v in items)
             parts.append(f"\nWhat you know about this user:\n{mem_text}")
@@ -413,7 +431,8 @@ def _build_system_prompt(payload: dict) -> str:
 def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
     """Format a human-readable description of a tool call for confirmation."""
     try:
-        args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+        args = json.loads(tool_args_raw) if isinstance(
+            tool_args_raw, str) else tool_args_raw
     except json.JSONDecodeError:
         return f"perform {tool_name}"
 
@@ -447,7 +466,8 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
     Local tools (web_search, reminder, recall) are called directly.
     """
     try:
-        tool_args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+        tool_args = json.loads(tool_args_raw) if isinstance(
+            tool_args_raw, str) else tool_args_raw
     except json.JSONDecodeError:
         return {"error": f"Invalid tool arguments: {tool_args_raw[:100]}"}
 
@@ -456,11 +476,14 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
     try:
         if tool_name == "web_search":
             from app.tasks.web_search import handle_web_search
-            search_payload = {**payload, "body": tool_args.get("query", payload.get("body", ""))}
+            search_payload = {
+                **payload, "body": tool_args.get("query", payload.get("body", ""))}
             result = await handle_web_search(search_payload)
-            tool_result = {"results": result.get("response", "No results found")}
+            tool_result = {"results": result.get(
+                "response", "No results found")}
             if result.get("degraded"):
-                tool_result["error"] = result.get("user_reason", "Web search is not available")
+                tool_result["error"] = result.get(
+                    "user_reason", "Web search is not available")
                 tool_result["degraded"] = True
                 if result.get("admin_reason"):
                     logger.warning(
@@ -520,7 +543,8 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             return {"error": f"Unknown tool: {tool_name}"}
 
     except Exception as exc:
-        logger.error("Tool execution failed tool=%s error=%s", tool_name, exc, exc_info=True)
+        logger.error("Tool execution failed tool=%s error=%s",
+                     tool_name, exc, exc_info=True)
         return {"error": f"Tool {tool_name} failed: {str(exc)[:200]}"}
 
 

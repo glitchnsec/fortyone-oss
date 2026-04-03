@@ -25,7 +25,10 @@ async def handle_web_search(payload: dict) -> dict:
         return {
             "job_id": job_id,
             "phone": phone,
-            "response": f"I searched for '{message}' but web search isn't configured yet. Set BRAVE_API_KEY to enable it.",
+            "response": "Web search is not available right now.",
+            "degraded": True,
+            "admin_reason": "BRAVE_API_KEY not set — configure it to enable web search",
+            "user_reason": "Web search isn't available right now",
         }
 
     try:
@@ -66,12 +69,16 @@ async def handle_web_search(payload: dict) -> dict:
                 "job_id": job_id,
                 "phone": phone,
                 "response": "I hit a search rate limit. Try again in a moment.",
+                "degraded": True,
+                "user_reason": "Search rate limit reached — try again in a moment",
             }
         logger.error("Brave Search API error status=%s", e.response.status_code, exc_info=True)
         return {
             "job_id": job_id,
             "phone": phone,
             "response": "I ran into an issue with web search. Try again shortly.",
+            "degraded": True,
+            "user_reason": "Web search encountered an error",
         }
     except Exception as e:
         logger.error("web_search handler error: %s", e, exc_info=True)
@@ -79,4 +86,6 @@ async def handle_web_search(payload: dict) -> dict:
             "job_id": job_id,
             "phone": phone,
             "response": "Web search failed. I'll try again if you ask.",
+            "degraded": True,
+            "user_reason": "Web search failed unexpectedly",
         }

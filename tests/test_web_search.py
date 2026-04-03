@@ -25,7 +25,11 @@ async def test_no_api_key_returns_fallback():
 
     assert result["job_id"] == "test-123"
     assert result["phone"] == "+15551234567"
-    assert "not configured" in result["response"].lower() or "BRAVE_API_KEY" in result["response"]
+    assert "not available" in result["response"].lower()
+    assert result["degraded"] is True
+    assert "admin_reason" in result
+    assert "BRAVE_API_KEY" in result["admin_reason"]
+    assert "user_reason" in result
 
 
 @pytest.mark.asyncio
