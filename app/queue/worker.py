@@ -139,6 +139,36 @@ class Worker:
 
         logger.info("Processing job_id=%s intent=%s phone=%s", job_id, intent, phone)
 
+        # Handle scheduler-sourced proactive jobs (source="scheduler")
+        source = payload.get("source")
+        if source == "scheduler":
+            job_type = payload.get("type", "")
+            logger.info("Processing proactive job_id=%s type=%s user=%s", job_id, job_type, payload.get("user_id", "")[:8])
+            try:
+                from app.tasks.proactive import (
+                    handle_morning_briefing, handle_evening_recap,
+                    handle_goal_checkin, handle_weekly_digest,
+                )
+                if job_type == "morning_briefing":
+                    result = await handle_morning_briefing(payload)
+                elif job_type == "evening_recap":
+                    result = await handle_evening_recap(payload)
+                elif job_type == "goal_checkin":
+                    result = await handle_goal_checkin(payload)
+                elif job_type == "weekly_digest":
+                    result = await handle_weekly_digest(payload)
+                else:
+                    logger.warning("Unknown proactive job type=%s", job_type)
+                    result = {"job_id": job_id, "phone": phone, "response": ""}
+            except Exception as exc:
+                logger.error("Proactive job %s failed: %s", job_id, exc, exc_info=True)
+                result = {"job_id": job_id, "phone": phone, "response": ""}
+
+            # Only publish if there's a response to send
+            if result.get("response"):
+                await self._publish_result(job_id, result)
+            return
+
         try:
             from app.tasks.router import route_job
             result = await route_job(payload)

@@ -15,6 +15,39 @@ logger = logging.getLogger(__name__)
 
 
 async def route_job(payload: dict) -> dict:
+    # Handle confirmed pending actions (from confirmation flow in pipeline)
+    confirmed_action = payload.get("confirmed_action")
+    if confirmed_action:
+        import json
+        from app.tasks.manager import _execute_tool
+        tool_name = confirmed_action["type"]
+        tool_args = json.dumps(confirmed_action["params"])
+        tool_result = await _execute_tool(tool_name, tool_args, payload)
+
+        # Log the confirmed action
+        from app.database import AsyncSessionLocal
+        from app.memory.store import MemoryStore
+        async with AsyncSessionLocal() as db:
+            store = MemoryStore(db)
+            await store.log_action(
+                user_id=payload.get("user_id", ""),
+                action_type=tool_name,
+                description=f"Executed confirmed action: {tool_name}",
+                outcome="success" if "error" not in tool_result else "failed",
+                trigger="user_request",
+            )
+
+        response = tool_result.get("result", tool_result.get("results", json.dumps(tool_result)))
+        if isinstance(response, dict):
+            response = json.dumps(response)
+        return {
+            "job_id": payload.get("job_id", ""),
+            "phone": payload.get("phone", ""),
+            "address": payload.get("address", payload.get("phone", "")),
+            "channel": payload.get("channel", "sms"),
+            "response": f"Done! {str(response)[:300]}",
+        }
+
     intent_str: str = payload.get("intent", "general")
 
     try:
