@@ -190,22 +190,24 @@ def test_identity_is_fast_path():
     )
 
 
-# ─── 14. RECALL regex catches meta questions ─────────────────────────────────
+# ─── 14. Meta questions route to manager (Phase 4: NEEDS_MANAGER) ────────────
 # Debug: assistant-settings-unused.md (03-06 gap closure)
+# Updated: Phase 4 (04-02) removed RECALL regex — meta questions now route
+# through NEEDS_MANAGER to the LLM manager dispatch for richer handling.
 
-def test_recall_catches_who_am_i():
+def test_meta_who_am_i_routes_to_manager():
     from app.core.intent import classify_intent, IntentType
     intent = classify_intent("who am i")
-    assert intent.type == IntentType.RECALL, (
-        f"'who am i' classified as {intent.type} instead of RECALL"
+    assert intent.type == IntentType.NEEDS_MANAGER, (
+        f"'who am i' classified as {intent.type} instead of NEEDS_MANAGER"
     )
 
 
-def test_recall_catches_what_do_you_know():
+def test_meta_what_do_you_know_routes_to_manager():
     from app.core.intent import classify_intent, IntentType
     intent = classify_intent("what do you know about me")
-    assert intent.type == IntentType.RECALL, (
-        f"'what do you know about me' classified as {intent.type} instead of RECALL"
+    assert intent.type == IntentType.NEEDS_MANAGER, (
+        f"'what do you know about me' classified as {intent.type} instead of NEEDS_MANAGER"
     )
 
 
