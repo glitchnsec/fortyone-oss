@@ -49,6 +49,29 @@ async def route_job(payload: dict) -> dict:
         from app.tasks.web_search import handle_web_search
         handler = handle_web_search
 
+    elif intent == IntentType.NEEDS_MANAGER:
+        # Manager dispatch handles its own return format — bypass normal handler flow
+        from app.tasks.manager import manager_dispatch
+        try:
+            result = await manager_dispatch(payload)
+        except FastAPIHTTPException as exc:
+            if exc.status_code == 401:
+                job_id = payload.get("job_id", "")
+                phone = payload.get("phone", "")
+                logger.warning(
+                    "401 from connections service — needs reauth job_id=%s phone=%s", job_id, phone
+                )
+                return {
+                    "job_id": job_id,
+                    "phone": phone,
+                    "response": (
+                        "Your Google connection needs reauthorization. "
+                        "Visit your dashboard connections page to reconnect."
+                    ),
+                }
+            raise
+        return result
+
     else:
         from app.tasks.recall import handle_general
         handler = handle_general

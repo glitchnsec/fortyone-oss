@@ -43,6 +43,7 @@ _FULL_CONTEXT_INTENTS = frozenset({
     IntentType.SCHEDULE,
     IntentType.GENERAL,
     IntentType.WEB_SEARCH,
+    IntentType.NEEDS_MANAGER,  # Manager gets full context for tool-calling decisions
 })
 _STANDARD_CONTEXT_INTENTS = frozenset({
     IntentType.REMINDER,
