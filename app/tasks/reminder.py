@@ -37,14 +37,21 @@ async def handle_reminder(payload: dict) -> dict:
     body: str = payload["body"]
     context: dict = payload.get("context", {})
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    now = datetime.now(timezone.utc)
+    now_str = now.strftime("%Y-%m-%d %H:%M UTC")
     tz = context.get("memories", {}).get("timezone", "America/New_York")
 
     # Separate system instructions from user content — no f-string interpolation (D-10)
     messages = [
         {
             "role": "system",
-            "content": REMINDER_SYSTEM + f"\nCurrent UTC time: {now_str}\nUser timezone: {tz}",
+            "content": (
+                REMINDER_SYSTEM
+                + f"\nCurrent UTC time: {now_str}"
+                + f"\nCurrent year: {now.year}"
+                + f"\nUser timezone: {tz}"
+                + f"\nIMPORTANT: All dates MUST be in {now.year} or later. Never generate a date in the past."
+            ),
         },
         {
             "role": "user",
@@ -68,6 +75,14 @@ async def handle_reminder(payload: dict) -> dict:
         if data.get("due_at"):
             try:
                 due_at = datetime.fromisoformat(str(data["due_at"]).replace("Z", "+00:00"))
+                # Guard against LLM hallucinating past dates (common with gpt-4o-mini)
+                now = datetime.now(timezone.utc)
+                if due_at < now:
+                    logger.warning(
+                        "REMINDER_DATE_IN_PAST  parsed=%s  now=%s — discarding bad date",
+                        due_at.isoformat(), now.isoformat(),
+                    )
+                    due_at = None  # Drop the bad date rather than store a past reminder
             except (ValueError, TypeError):
                 pass
 
