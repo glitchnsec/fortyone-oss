@@ -166,6 +166,45 @@ class MessagePipeline:
             )
             return
 
+        # ── CONFIRMATION RESOLUTION (D-04) ──────────────────────────────────
+        # Check if user is responding to a pending action confirmation
+        lower_body = body.lower().strip()
+        if lower_body in ("yes", "no", "y", "n", "yeah", "nah", "nope", "yep", "go ahead", "cancel"):
+            pending = await self.store.get_pending_action(user.id)
+            if pending:
+                is_confirmed = lower_body in ("yes", "y", "yeah", "yep", "go ahead")
+                if is_confirmed:
+                    status = "confirmed"
+                    await self.store.resolve_pending_action(pending.id, status)
+                    # Queue the tool execution
+                    job_id = await self.queue.push_job({
+                        "channel": self.channel.name,
+                        "address": address,
+                        "phone": address,
+                        "body": f"Execute confirmed action: {pending.action_type}",
+                        "intent": "needs_manager",
+                        "context": await self.store.get_context_full(user.id, channel=self.channel.name, query=body),
+                        "user_id": user.id,
+                        "persona": "shared",
+                        "confirmed_action": {
+                            "type": pending.action_type,
+                            "params": json.loads(pending.action_params_json),
+                        },
+                    })
+                    ack_text = "Got it, I'm on it!"
+                else:
+                    status = "rejected"
+                    await self.store.resolve_pending_action(pending.id, status)
+                    ack_text = "No problem, I've cancelled that."
+
+                await self.channel.send(address, ack_text)
+                await self.store.store_message(
+                    user_id=user.id, direction="outbound", body=ack_text,
+                    state=MessageState.DONE.value, channel=self.channel.name,
+                )
+                logger.info("CONFIRMATION_%s  user=%s  action=%s", status.upper(), user.id[:8], pending.action_type)
+                return
+
         # ── PERSONA DETECTION ────────────────────────────────────────────────
         user_personas = await self.store.get_personas(user.id)
         persona_name, persona_confidence, needs_clarification = ("shared", 0.5, False)

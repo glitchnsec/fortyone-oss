@@ -81,6 +81,25 @@ services:
       - ./connections:/app
     restart: unless-stopped
 
+  scheduler:
+    build: .
+    command: python scripts/run_scheduler.py
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./config:/app/config
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   redis_data:
   sqlite_data:

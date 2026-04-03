@@ -103,9 +103,38 @@ async def manager_dispatch(payload: dict) -> dict:
 
             risk = get_tool_risk(tool_name)
 
-            # For medium/high risk tools, we need confirmation (D-04)
-            # This will be wired in plan 04-03 (confirmation pattern)
-            # For now, execute all tools directly
+            # D-04: Confirmation for medium/high risk tools
+            if risk in ("medium", "high"):
+                from app.database import AsyncSessionLocal
+                from app.memory.store import MemoryStore
+                async with AsyncSessionLocal() as db:
+                    store = MemoryStore(db)
+                    pending = await store.create_pending_action(
+                        user_id=user_id,
+                        action_type=tool_name,
+                        action_params=json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw,
+                        risk_level=risk,
+                    )
+                    await store.log_action(
+                        user_id=user_id,
+                        action_type=f"confirmation_requested:{tool_name}",
+                        description=f"Awaiting user confirmation for {tool_name}",
+                        outcome="pending",
+                        trigger="user_request",
+                    )
+
+                description = _format_action_description(tool_name, tool_args_raw)
+                response_text = f"I'd like to {description}. Should I go ahead? (Reply YES or NO)"
+
+                return {
+                    "job_id": job_id,
+                    "phone": phone,
+                    "address": address,
+                    "channel": channel,
+                    "response": response_text,
+                    "learn": {"pending_action_id": pending.id},
+                }
+
             tool_result = await _execute_tool(tool_name, tool_args_raw, payload)
 
             messages.append({
@@ -281,6 +310,21 @@ def _build_system_prompt(payload: dict) -> str:
         parts.append(f"\nUser profile (TELOS):\n{entry_text}")
 
     return "\n\n".join(parts)
+
+
+def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
+    """Format a human-readable description of a tool call for confirmation."""
+    try:
+        args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+    except json.JSONDecodeError:
+        return f"perform {tool_name}"
+
+    if tool_name == "send_email":
+        return f"send an email to {args.get('to', 'someone')} about \"{args.get('subject', 'something')}\""
+    elif tool_name == "create_event":
+        return f"create a calendar event \"{args.get('summary', 'event')}\" at {args.get('start_time', 'the scheduled time')}"
+    else:
+        return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
 
 async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> dict:
