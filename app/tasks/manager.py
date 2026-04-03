@@ -71,6 +71,8 @@ async def manager_dispatch(payload: dict) -> dict:
 
     response_text = None
     learn_signals = {}
+    tool_failure_counts: dict[str, int] = {}  # Track per-tool failure count
+    failed_tools: dict[str, str] = {}  # tool_name -> user-facing reason
 
     for round_num in range(MAX_TOOL_ROUNDS):
         result = await llm_tools(
@@ -98,6 +100,8 @@ async def manager_dispatch(payload: dict) -> dict:
         if content:
             assistant_msg["content"] = content
         messages.append(assistant_msg)
+
+        should_break_early = False
 
         for tc in tool_calls:
             tool_name = tc["function"]["name"]
@@ -140,11 +144,45 @@ async def manager_dispatch(payload: dict) -> dict:
 
             tool_result = await _execute_tool(tool_name, tool_args_raw, payload)
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": json.dumps(tool_result),
-            })
+            # Track tool failures for early-exit detection
+            is_failed = "error" in tool_result
+            if is_failed:
+                tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
+                failed_tools[tool_name] = tool_result.get("user_message", tool_result["error"])
+
+                if tool_failure_counts[tool_name] >= 2:
+                    logger.warning(
+                        "TOOL_REPEATED_FAILURE  tool=%s  failures=%d  job_id=%s — stopping retries",
+                        tool_name, tool_failure_counts[tool_name], job_id,
+                    )
+                    should_break_early = True
+
+            # Feed tool result back to LLM — if the tool failed, make the error
+            # explicit so the LLM acknowledges it instead of silently pivoting
+            if is_failed:
+                error_content = json.dumps({
+                    "error": True,
+                    "tool": tool_name,
+                    "message": (
+                        f"The {tool_name} tool is currently unavailable. "
+                        f"You MUST tell the user this capability is not working right now. "
+                        f"Do NOT retry this tool or silently switch to a different approach. "
+                        f"Do NOT create reminders for the user to do what they asked you to do."
+                    ),
+                })
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": error_content,
+                })
+                # Remove failed tool from schemas so LLM can't retry it
+                tools = [t for t in tools if t["function"]["name"] != tool_name]
+            else:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(tool_result),
+                })
 
             # Log the action for AGENT-06
             learn_signals["action_log"] = {
@@ -154,16 +192,53 @@ async def manager_dispatch(payload: dict) -> dict:
             }
 
             logger.info(
-                "TOOL_CALL  round=%d  tool=%s  risk=%s  job_id=%s",
-                round_num + 1, tool_name, risk, job_id,
+                "TOOL_CALL  round=%d  tool=%s  risk=%s  status=%s  job_id=%s",
+                round_num + 1, tool_name, risk,
+                "degraded" if "error" in tool_result else "ok",
+                job_id,
             )
+
+        if should_break_early:
+            break
     else:
-        # Exhausted MAX_TOOL_ROUNDS — force a response
+        # Exhausted MAX_TOOL_ROUNDS without early break
         logger.warning(
             "TOOL_LIMIT_REACHED  rounds=%d  job_id=%s — forcing response",
             MAX_TOOL_ROUNDS, job_id,
         )
-        # One final call without tools to get a summary
+
+    # If we exited the loop with failures (early break or round exhaustion) and no response yet,
+    # make one final LLM call with failure context so the response is helpful
+    if response_text is None and failed_tools:
+        failure_context = "\n".join(
+            f"- {name}: {reason}" for name, reason in failed_tools.items()
+        )
+        messages.append({
+            "role": "system",
+            "content": (
+                "IMPORTANT: The following tools failed and are currently unavailable. "
+                "Do NOT retry them. Instead, acknowledge the limitation to the user and "
+                "suggest what you can still help with. Do not mention technical details "
+                "like API keys or configuration — just say the capability is unavailable.\n\n"
+                f"Unavailable tools:\n{failure_context}"
+            ),
+        })
+        result = await llm_tools(
+            messages=messages,
+            tools=[],  # No tools — force text response
+            mock_text=(
+                "I wasn't able to search the web right now — that capability isn't "
+                "available at the moment. I can still help with reminders, tasks, or "
+                "answering questions from what I already know."
+            ),
+            timeout_s=10.0,
+        )
+        response_text = result.get("content") or (
+            "I wasn't able to complete that request — some capabilities aren't "
+            "available right now. Let me know if there's something else I can help with."
+        )
+    elif response_text is None:
+        # Exhausted rounds but no specific tool failures — generic fallback
         result = await llm_tools(
             messages=messages,
             tools=[],  # No tools — force text response
@@ -281,7 +356,11 @@ def _build_system_prompt(payload: dict) -> str:
         "- For tasks requiring external data (weather, email, calendar), use the appropriate tool.\n"
         "- Keep responses concise and helpful — you're texting, not writing an essay.\n"
         "- If you use a tool, summarize the results naturally for the user.\n"
-        "- Never expose raw tool output or JSON to the user."
+        "- Never expose raw tool output or JSON to the user.\n"
+        "- If a tool fails or is unavailable, tell the user honestly — e.g., 'I can't search the web right now.'\n"
+        "- NEVER create a reminder for the user to do something they asked YOU to handle. "
+        "If you can't complete a task, say so and offer alternatives that YOU can do.\n"
+        "- Do not mention technical details like API keys or configuration to the user."
     )
 
     # Add persona context
@@ -352,7 +431,16 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             from app.tasks.web_search import handle_web_search
             search_payload = {**payload, "body": tool_args.get("query", payload.get("body", ""))}
             result = await handle_web_search(search_payload)
-            return {"results": result.get("response", "No results found")}
+            tool_result = {"results": result.get("response", "No results found")}
+            if result.get("degraded"):
+                tool_result["error"] = result.get("user_reason", "Web search is not available")
+                tool_result["degraded"] = True
+                if result.get("admin_reason"):
+                    logger.warning(
+                        "TOOL_DEGRADED  tool=web_search  admin_reason=%s",
+                        result["admin_reason"],
+                    )
+            return tool_result
 
         elif tool_name == "read_emails":
             return await _call_connections_tool(
