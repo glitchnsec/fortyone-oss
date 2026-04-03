@@ -133,36 +133,32 @@ async def handle_reminder(payload: dict) -> dict:
         store = MemoryStore(db)
         user = await store.get_or_create_user(phone)
 
-        due_at = None
-        if data.get("due_at"):
+        # DETERMINISTIC FIRST: Try relative time parsing BEFORE using the LLM's
+        # date. "in 5 minutes", "in 2 mins", "in an hour" are computed exactly
+        # with zero LLM dependency. This is the most reliable path.
+        original_body = payload.get("_original_body", "")
+        due_at = _parse_relative_time(original_body) if original_body else None
+        if due_at is None:
+            due_at = _parse_relative_time(body)
+        if due_at:
+            logger.info(
+                "REMINDER_RELATIVE_PARSE  original=%r  body=%r  computed=%s",
+                original_body[:60], body[:60], due_at.isoformat(),
+            )
+
+        # Only use LLM's date if the relative parser didn't match
+        if due_at is None and data.get("due_at"):
             try:
                 due_at = datetime.fromisoformat(str(data["due_at"]).replace("Z", "+00:00"))
-                # Guard against LLM hallucinating past dates (common with gpt-4o-mini)
                 now = datetime.now(timezone.utc)
                 if due_at < now:
                     logger.warning(
-                        "REMINDER_DATE_IN_PAST  parsed=%s  now=%s — falling back to relative parse",
+                        "REMINDER_DATE_IN_PAST  parsed=%s  now=%s — discarding",
                         due_at.isoformat(), now.isoformat(),
                     )
-                    due_at = None  # Will try relative parse below
+                    due_at = None
             except (ValueError, TypeError):
                 pass
-
-        # Fallback: if LLM failed to produce a valid future date, try to
-        # compute it deterministically from the user's message.
-        # This handles "in 5 minutes", "in an hour", "in 30 min", etc.
-        # Try the original user message first (from manager dispatch),
-        # then fall back to the constructed body.
-        if due_at is None:
-            original_body = payload.get("_original_body", "")
-            due_at = _parse_relative_time(original_body) if original_body else None
-            if due_at is None:
-                due_at = _parse_relative_time(body)
-            if due_at:
-                logger.info(
-                    "REMINDER_RELATIVE_PARSE  original=%r  body=%r  computed=%s",
-                    original_body[:60], body[:60], due_at.isoformat(),
-                )
 
         # If we still have no due_at after LLM + relative parse, signal
         # failure back to the caller so the manager LLM can ask the user
