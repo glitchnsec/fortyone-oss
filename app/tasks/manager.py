@@ -18,6 +18,7 @@ Per Common Pitfall 2: Hard limit of 3 tool-calling rounds to prevent infinite lo
 import asyncio
 import json
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from app.config import get_settings
@@ -144,9 +145,37 @@ async def manager_dispatch(payload: dict) -> dict:
 
             tool_result = await _execute_tool(tool_name, tool_args_raw, payload)
 
-            # Track tool failures
+            # Track tool failures — distinguish retryable (bad input) from capability (tool down)
             is_failed = "error" in tool_result
-            if is_failed:
+            error_type = tool_result.get("error", "") if is_failed else ""
+            is_retryable = error_type in ("date_parse_failed", "invalid_input", "validation_error")
+
+            if is_failed and is_retryable:
+                # RETRYABLE: The tool works but the LLM sent bad input.
+                # Feed the error back with specifics so the LLM can fix and retry.
+                tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
+                logger.info(
+                    "TOOL_RETRYABLE  tool=%s  error=%s  attempt=%d  job_id=%s",
+                    tool_name, error_type, tool_failure_counts[tool_name], job_id,
+                )
+                now_utc = datetime.now(timezone.utc).isoformat()
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps({
+                        "error": error_type,
+                        "message": tool_result.get("user_message", tool_result.get("result", "")),
+                        "hint": (
+                            f"The date you provided was invalid or in the past. "
+                            f"The current UTC time is {now_utc}. "
+                            f"Please retry with a correct future date in ISO 8601 format."
+                        ),
+                    }),
+                })
+                # Do NOT remove the tool — let the LLM retry with corrected input
+
+            elif is_failed:
+                # CAPABILITY FAILURE: The tool itself is unavailable.
                 tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
                 user_reason = tool_result.get("user_message", tool_result["error"])
                 failed_tools[tool_name] = user_reason
@@ -156,7 +185,6 @@ async def manager_dispatch(payload: dict) -> dict:
                     tool_name, job_id, user_reason,
                 )
 
-                # Feed a clear error back so the LLM knows the tool failed
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
@@ -169,10 +197,7 @@ async def manager_dispatch(payload: dict) -> dict:
                 # Remove the failed tool so it can't be retried
                 tools = [t for t in tools if t["function"]["name"] != tool_name]
 
-                # CRITICAL: Also remove deflection tools (create_reminder, list_tasks)
-                # when a primary tool fails. The user asked the operator to DO something,
-                # not to be reminded to do it themselves. The LLM will always try to
-                # "help" by creating reminders — block that at the schema level.
+                # Remove deflection tools when a primary tool fails
                 deflection_tools = {"create_reminder", "list_tasks"}
                 if tool_name not in deflection_tools:
                     tools = [t for t in tools if t["function"]["name"] not in deflection_tools]
