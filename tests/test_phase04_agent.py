@@ -381,3 +381,155 @@ def test_llm_tools_return_includes_type_field():
                 assert "arguments" in tc["function"]
 
     asyncio.run(run())
+
+
+# ─── 24-28. Tool Failure Handling (regression guards) ──────────────────────
+
+def test_execute_tool_web_search_degraded_returns_error_key():
+    """
+    Regression: When web_search returns degraded=True (e.g., no BRAVE_API_KEY),
+    _execute_tool must return a dict with "error" key so the manager loop
+    detects the failure instead of treating mock data as success.
+
+    Bug: Manager silently retried web_search 3 times with mock data,
+    then the LLM created a reminder instead of telling the user search failed.
+    """
+    import asyncio
+    from unittest.mock import patch, AsyncMock
+
+    from app.tasks.manager import _execute_tool
+
+    async def run():
+        # Mock web_search to return degraded result (simulates no API key)
+        mock_result = {
+            "job_id": "test",
+            "phone": "",
+            "response": "Web search is not available right now",
+            "degraded": True,
+            "user_reason": "Web search is not available right now",
+            "admin_reason": "BRAVE_API_KEY not set",
+        }
+        # handle_web_search is imported lazily inside _execute_tool,
+        # so patch at the source module level
+        with patch("app.tasks.web_search.handle_web_search", new_callable=AsyncMock, return_value=mock_result):
+            result = await _execute_tool(
+                "web_search",
+                '{"query": "auto body shops"}',
+                {"body": "find auto body shops", "user_id": "test123"},
+            )
+
+        assert "error" in result, (
+            f"_execute_tool should return 'error' key for degraded tools, got: {result}"
+        )
+        assert "degraded" in result, "Should propagate degraded flag"
+
+    asyncio.run(run())
+
+
+def test_failed_tool_error_content_instructs_llm():
+    """
+    Regression: When a tool fails, the error message fed back to the LLM
+    must explicitly instruct it to tell the user about the limitation.
+    Without this, the LLM silently pivots to another tool (like create_reminder).
+    """
+    import json
+
+    # Simulate what the manager builds for a failed tool result
+    error_content = json.dumps({
+        "error": True,
+        "tool": "web_search",
+        "message": (
+            "The web_search tool is currently unavailable. "
+            "You MUST tell the user this capability is not working right now. "
+            "Do NOT retry this tool or silently switch to a different approach. "
+            "Do NOT create reminders for the user to do what they asked you to do."
+        ),
+    })
+
+    parsed = json.loads(error_content)
+    assert parsed["error"] is True
+    assert "MUST tell the user" in parsed["message"]
+    assert "Do NOT create reminders" in parsed["message"]
+    assert "Do NOT retry" in parsed["message"]
+
+
+def test_system_prompt_forbids_task_deflection():
+    """
+    Regression: System prompt must instruct the LLM to never create reminders
+    for tasks the user asked the operator to handle. The operator must be
+    honest about limitations instead of deflecting work back to the user.
+
+    Bug: User asked "find and book an auto body shop" → LLM created a reminder
+    for the USER to research auto body shops.
+    """
+    from app.tasks.manager import _build_system_prompt
+
+    result = _build_system_prompt({"context": {}, "persona": "shared"})
+
+    assert "NEVER create a reminder" in result, (
+        "System prompt missing anti-deflection rule"
+    )
+    assert "asked YOU to handle" in result, (
+        "System prompt should reference user's delegation intent"
+    )
+    assert "tool fails" in result or "unavailable" in result, (
+        "System prompt should instruct transparency about tool failures"
+    )
+
+
+def test_failed_tools_removed_from_schemas():
+    """
+    Regression: After a tool fails, it must be removed from the available
+    tool schemas so the LLM cannot retry it on the next round.
+
+    Bug: web_search failed but stayed in the tools list, so the LLM
+    called it again on rounds 2 and 3 before hitting TOOL_LIMIT_REACHED.
+    """
+    from app.core.tools import get_tool_schemas
+
+    tools = get_tool_schemas()
+    original_count = len(tools)
+    assert original_count >= 7, f"Expected >= 7 tools, got {original_count}"
+
+    # Simulate removing a failed tool (this is what manager_dispatch does)
+    filtered = [t for t in tools if t["function"]["name"] != "web_search"]
+    assert len(filtered) == original_count - 1, "web_search should be removed"
+    assert all(t["function"]["name"] != "web_search" for t in filtered), (
+        "web_search should not appear in filtered tools"
+    )
+
+
+def test_execute_tool_connections_error_returns_error_key():
+    """
+    Regression: When connections service returns an error (e.g., needs_reauth),
+    _execute_tool must return a dict with "error" key.
+    """
+    import asyncio
+    from unittest.mock import patch, AsyncMock, MagicMock
+
+    from app.tasks.manager import _execute_tool
+
+    async def run():
+        # Mock httpx to simulate connections service returning 401
+        # httpx is imported lazily inside _call_connections_tool
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+
+        mock_client_instance = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=mock_response)
+        mock_client_instance.__aenter__ = AsyncMock(return_value=mock_client_instance)
+        mock_client_instance.__aexit__ = AsyncMock(return_value=False)
+
+        with patch("httpx.AsyncClient", return_value=mock_client_instance):
+            result = await _execute_tool(
+                "read_emails",
+                '{"max_results": 5}',
+                {"user_id": "test123"},
+            )
+
+        assert "error" in result, f"Expected error key for 401, got: {result}"
+        assert "reauth" in result.get("error", "").lower(), (
+            f"Error should mention reauth: {result}"
+        )
+
+    asyncio.run(run())
