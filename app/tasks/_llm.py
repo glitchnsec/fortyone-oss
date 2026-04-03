@@ -131,13 +131,18 @@ async def llm_messages_json(
     messages: list[dict],
     mock_payload: dict,
     timeout_s: float = 10.0,
+    model: str | None = None,
 ) -> dict:
     """
-    Call the fast model with a pre-built messages array, expecting a JSON response.
+    Call an LLM with a pre-built messages array, expecting a JSON response.
 
     Unlike llm_json (which wraps a single prompt string into a role:user message),
     this helper accepts a pre-built messages list so callers can separate system
     instructions (role:system) from user content (role:user).
+
+    Args:
+        model: Override model. Default is llm_model_fast. Use settings.llm_model_capable
+               for tasks requiring better reasoning (e.g., date arithmetic).
 
     Falls back to mock_payload on no key / timeout / error.
     """
@@ -147,11 +152,12 @@ async def llm_messages_json(
         logger.info("LLM call=mock reason=no_key")
         return mock_payload
 
+    use_model = model or settings.llm_model_fast
     t0 = time.monotonic()
     try:
         resp = await asyncio.wait_for(
             _client(settings).chat.completions.create(
-                model=settings.llm_model_fast,
+                model=use_model,
                 messages=messages,
                 response_format={"type": "json_object"},
                 temperature=0.2,
@@ -165,7 +171,7 @@ async def llm_messages_json(
         result = json.loads(raw)
         logger.info(
             "LLM call=json_messages  model=%s  latency_ms=%d  tokens=%s  response=%s",
-            settings.llm_model_fast, latency_ms, tokens, json.dumps(result)[:120],
+            use_model, latency_ms, tokens, json.dumps(result)[:120],
         )
         return result
 

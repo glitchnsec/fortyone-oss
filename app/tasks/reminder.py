@@ -102,13 +102,17 @@ async def handle_reminder(payload: dict) -> dict:
         },
     ]
     mock_due = datetime.now(timezone.utc).replace(hour=15, minute=0, second=0, microsecond=0)
+    # Use the capable model for date extraction — gpt-4o-mini consistently
+    # generates past dates (2024) because its training cutoff is old.
+    from app.config import get_settings as _get_settings
+    _s = _get_settings()
     data = await llm_messages_json(messages, mock_payload={
         "task": body,
         "due_at": mock_due.isoformat(),
         "recurrence": "none",
         "contact": None,
         "confirmation": f"Got it! I'll remind you about that.",
-    })
+    }, model=_s.llm_model_capable)
 
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
