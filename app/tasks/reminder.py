@@ -31,6 +31,49 @@ PREFERENCE_SYSTEM = (
 )
 
 
+import re
+from datetime import timedelta
+
+
+def _parse_relative_time(text: str) -> datetime | None:
+    """
+    Parse relative time expressions deterministically — no LLM needed.
+
+    Handles:
+      "in 5 minutes", "in 30 min", "in 1 hour", "in 2 hours",
+      "in an hour", "in half an hour"
+
+    Returns a timezone-aware UTC datetime, or None if no match.
+    """
+    lower = text.lower()
+    now = datetime.now(timezone.utc)
+
+    # "in N minute(s)/min(s)"
+    m = re.search(r'\bin\s+(\d+)\s*(?:minutes?|mins?)\b', lower)
+    if m:
+        return now + timedelta(minutes=int(m.group(1)))
+
+    # "in N hour(s)/hr(s)"
+    m = re.search(r'\bin\s+(\d+)\s*(?:hours?|hrs?)\b', lower)
+    if m:
+        return now + timedelta(hours=int(m.group(1)))
+
+    # "in an hour" / "in 1 hour"
+    if re.search(r'\bin\s+(?:an?\s+)?hour\b', lower):
+        return now + timedelta(hours=1)
+
+    # "in half an hour" / "in 30 min"
+    if re.search(r'\bin\s+half\s+an?\s+hour\b', lower):
+        return now + timedelta(minutes=30)
+
+    # "in N seconds" (for testing)
+    m = re.search(r'\bin\s+(\d+)\s*(?:seconds?|secs?)\b', lower)
+    if m:
+        return now + timedelta(seconds=int(m.group(1)))
+
+    return None
+
+
 async def handle_reminder(payload: dict) -> dict:
     job_id: str = payload["job_id"]
     phone: str = payload["phone"]
@@ -79,12 +122,23 @@ async def handle_reminder(payload: dict) -> dict:
                 now = datetime.now(timezone.utc)
                 if due_at < now:
                     logger.warning(
-                        "REMINDER_DATE_IN_PAST  parsed=%s  now=%s — discarding bad date",
+                        "REMINDER_DATE_IN_PAST  parsed=%s  now=%s — falling back to relative parse",
                         due_at.isoformat(), now.isoformat(),
                     )
-                    due_at = None  # Drop the bad date rather than store a past reminder
+                    due_at = None  # Will try relative parse below
             except (ValueError, TypeError):
                 pass
+
+        # Fallback: if LLM failed to produce a valid future date, try to
+        # compute it deterministically from the user's message.
+        # This handles "in 5 minutes", "in an hour", "in 30 min", etc.
+        if due_at is None:
+            due_at = _parse_relative_time(body)
+            if due_at:
+                logger.info(
+                    "REMINDER_RELATIVE_PARSE  body=%r  computed=%s",
+                    body[:60], due_at.isoformat(),
+                )
 
         task = await store.store_task(
             user_id=user.id,

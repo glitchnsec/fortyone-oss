@@ -578,6 +578,42 @@ def test_worker_dispatches_task_reminder():
     )
 
 
+def test_relative_time_parsing_in_5_minutes():
+    """
+    Regression: When LLM generates a past date for 'in 5 minutes',
+    _parse_relative_time must compute the correct future time
+    deterministically from the user's message text.
+
+    Bug: gpt-4o-mini generated '2024-02-04T15:55:00Z' for 'in 5 mins'
+    (2 years in the past). Past-date guard discarded it, but then
+    due_at was blank and no reminder was scheduled.
+    """
+    from datetime import datetime, timezone
+    from app.tasks.reminder import _parse_relative_time
+
+    # "in 5 minutes" variants
+    for msg in [
+        "leave for church in 5 mins",
+        "set a reminder in 5 minutes",
+        "remind me in 5 min",
+    ]:
+        result = _parse_relative_time(msg)
+        assert result is not None, f"Should parse '{msg}'"
+        now = datetime.now(timezone.utc)
+        diff = (result - now).total_seconds()
+        assert 290 < diff < 310, f"Expected ~300s for '{msg}', got {diff}"
+
+    # "in an hour"
+    result = _parse_relative_time("call me back in an hour")
+    assert result is not None
+    diff = (result - datetime.now(timezone.utc)).total_seconds()
+    assert 3590 < diff < 3610
+
+    # Non-relative should return None
+    assert _parse_relative_time("buy groceries tomorrow") is None
+    assert _parse_relative_time("hello how are you") is None
+
+
 def test_reminder_handler_schedules_to_redis():
     """
     Regression: handle_reminder must call _schedule_task_reminder when
