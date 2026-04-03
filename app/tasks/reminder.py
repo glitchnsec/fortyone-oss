@@ -35,13 +35,13 @@ import re
 from datetime import timedelta
 
 
-def _parse_relative_time(text: str) -> datetime | None:
+def _parse_relative_time(text: str, user_timezone: str = "America/New_York") -> datetime | None:
     """
     Parse relative time expressions deterministically — no LLM needed.
 
     Handles:
       "in 5 minutes", "in 30 min", "in 1 hour", "in 2 hours",
-      "in an hour", "in half an hour"
+      "in an hour", "in half an hour", "tonight"
 
     Returns a timezone-aware UTC datetime, or None if no match.
     """
@@ -71,14 +71,23 @@ def _parse_relative_time(text: str) -> datetime | None:
     if m:
         return now + timedelta(seconds=int(m.group(1)))
 
-    # "tonight" → 8pm today in UTC (assumes evening = 8pm local, good enough default)
+    # "tonight" → 8pm in the user's timezone
     if re.search(r'\btonight\b', lower):
-        tonight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=24)
-        # Set to 8pm UTC as default "tonight" — will be adjusted by user timezone upstream
-        tonight = now.replace(hour=20, minute=0, second=0, microsecond=0)
-        if tonight <= now:
-            tonight += timedelta(days=1)
-        return tonight
+        try:
+            import zoneinfo
+            user_tz = zoneinfo.ZoneInfo(user_timezone)
+            local_now = now.astimezone(user_tz)
+            tonight_local = local_now.replace(hour=20, minute=0, second=0, microsecond=0)
+            if tonight_local <= local_now:
+                tonight_local += timedelta(days=1)
+            # Convert back to UTC for storage
+            return tonight_local.astimezone(timezone.utc)
+        except Exception:
+            # Fallback: 8pm UTC
+            tonight = now.replace(hour=20, minute=0, second=0, microsecond=0)
+            if tonight <= now:
+                tonight += timedelta(days=1)
+            return tonight
 
     return None
 
@@ -201,9 +210,9 @@ async def handle_reminder(payload: dict) -> dict:
         # date. "in 5 minutes", "in 2 mins", "in an hour" are computed exactly
         # with zero LLM dependency. This is the most reliable path.
         original_body = payload.get("_original_body", "")
-        due_at = _parse_relative_time(original_body) if original_body else None
+        due_at = _parse_relative_time(original_body, user_timezone=tz) if original_body else None
         if due_at is None:
-            due_at = _parse_relative_time(body)
+            due_at = _parse_relative_time(body, user_timezone=tz)
         if due_at:
             logger.info(
                 "REMINDER_RELATIVE_PARSE  original=%r  body=%r  computed=%s",
