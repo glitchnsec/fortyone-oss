@@ -286,10 +286,13 @@ def _build_system_prompt(payload: dict) -> str:
         parts.append(f"\nCurrent persona context: {persona}")
 
     # Add user memories/preferences from context
-    memories = context.get("memories", [])
+    # memories is a dict {key: value} from MemoryStore.get_context_standard/full
+    memories = context.get("memories", {})
     if memories:
-        mem_text = "\n".join(f"- {m.get('key', '')}: {m.get('value', '')}" for m in memories[:10])
-        parts.append(f"\nWhat you know about this user:\n{mem_text}")
+        items = list(memories.items())[:10] if isinstance(memories, dict) else []
+        if items:
+            mem_text = "\n".join(f"- {k}: {v}" for k, v in items)
+            parts.append(f"\nWhat you know about this user:\n{mem_text}")
 
     # D-13: Include profile traits if available in context (injected by tiered context in plan 04-03)
     profile_traits = context.get("profile_traits", [])
