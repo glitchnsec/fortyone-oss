@@ -435,3 +435,31 @@ async def test_unauthenticated_tasks_returns_401(client):
     assert resp.status_code in (401, 403), (
         f"Expected 401 or 403, got {resp.status_code}"
     )
+
+
+# ─── P1. DELETE /api/v1/profile/{id} → 204 ────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delete_profile_entry_returns_204(client):
+    """DELETE /api/v1/profile/{id} removes entry and returns 204."""
+    token = await _register_and_get_token(client, "profile_del@example.com")
+
+    # Create
+    create_resp = await client.post(
+        "/api/v1/profile",
+        json={"section": "preferences", "label": "test_pref", "content": "to be deleted"},
+        headers=_auth(token),
+    )
+    entry_id = create_resp.json()["id"]
+
+    # Delete
+    resp = await client.delete(
+        f"/api/v1/profile/{entry_id}",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 204
+
+    # Verify gone
+    list_resp = await client.get("/api/v1/profile", headers=_auth(token))
+    entry_ids = [e["id"] for e in list_resp.json()["entries"]]
+    assert entry_id not in entry_ids

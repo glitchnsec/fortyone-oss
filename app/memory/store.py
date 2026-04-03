@@ -512,6 +512,18 @@ class MemoryStore:
         await self.db.refresh(entry)
         return entry
 
+    async def delete_profile_entry(self, user_id: str, entry_id: str) -> bool:
+        """Delete a TELOS profile entry. Returns True if deleted."""
+        result = await self.db.execute(
+            select(UserProfile).where(UserProfile.id == entry_id, UserProfile.user_id == user_id)
+        )
+        entry = result.scalar_one_or_none()
+        if not entry:
+            return False
+        await self.db.delete(entry)
+        await self.db.commit()
+        return True
+
     # ─── Semantic Memory ─────────────────────────────────────────────────────────
 
     async def search_memories(

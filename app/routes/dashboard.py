@@ -581,3 +581,16 @@ async def upsert_profile(
         persona_id=body.persona_id,
     )
     return {"id": entry.id, "section": entry.section, "label": entry.label}
+
+
+@router.delete("/profile/{entry_id}", status_code=204)
+async def delete_profile_entry(
+    entry_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Delete a TELOS profile entry."""
+    store = MemoryStore(db)
+    deleted = await store.delete_profile_entry(user.id, entry_id)
+    if not deleted:
+        raise HTTPException(404, "Profile entry not found")
