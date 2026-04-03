@@ -253,3 +253,131 @@ def test_schedule_user_briefings_returns_morning_and_evening():
         assert isinstance(j["scheduled_at"], float)
         assert j["payload"]["source"] == "scheduler"
         assert j["payload"]["reschedule_at"] is True
+
+
+# ─── 21-23. Contract Tests (regression guards for bugfixes) ────────────────
+
+def test_build_system_prompt_with_real_context_shape():
+    """
+    Regression: _build_system_prompt must handle the actual dict shape
+    returned by MemoryStore.get_context_standard — memories is {key: value},
+    not a list of dicts.
+
+    Bug: commit 398c8d7 — TypeError: unhashable type: 'slice' on memories[:10]
+    """
+    from app.tasks.manager import _build_system_prompt
+
+    # This is the exact shape get_context_standard returns
+    realistic_context = {
+        "user": {
+            "id": "test-user-123",
+            "name": "KC",
+            "timezone": "America/New_York",
+            "phone": "+15551234567",
+            "assistant_name": "Marcus",
+            "personality_notes": "Friendly and direct",
+        },
+        "recent_messages": [
+            {"direction": "inbound", "body": "hello", "at": "2026-04-03T10:00:00", "intent": "greeting"},
+            {"direction": "outbound", "body": "Hey KC!", "at": "2026-04-03T10:00:01", "intent": None},
+        ],
+        "memories": {"name": "KC", "timezone": "America/New_York", "work": "software engineer"},
+        "active_tasks": [
+            {"id": "t1", "title": "Buy groceries", "due_at": None, "type": "reminder"},
+        ],
+        "message_count": 2,
+        "profile_traits": [
+            {"section": "preferences", "label": "style", "content": "concise messages"},
+        ],
+    }
+
+    payload = {
+        "context": realistic_context,
+        "persona": "shared",
+    }
+
+    result = _build_system_prompt(payload)
+
+    assert isinstance(result, str), f"Expected string, got {type(result)}"
+    assert "KC" in result, "User name should appear in prompt"
+    assert "software engineer" in result, "Memory value should appear in prompt"
+    assert "concise messages" in result, "Profile trait should appear in prompt"
+
+
+def test_build_system_prompt_with_empty_context():
+    """_build_system_prompt handles empty/missing context without errors."""
+    from app.tasks.manager import _build_system_prompt
+
+    # Minimal payload — no context at all
+    result = _build_system_prompt({"context": {}, "persona": "shared"})
+    assert isinstance(result, str)
+    assert "personal assistant" in result.lower()
+
+    # Context with empty memories dict
+    result2 = _build_system_prompt({
+        "context": {"memories": {}, "recent_messages": [], "profile_traits": []},
+        "persona": "work",
+    })
+    assert isinstance(result2, str)
+    assert "work" in result2.lower()
+
+
+def test_llm_tools_return_includes_type_field():
+    """
+    Regression: llm_tools must include "type": "function" in serialized
+    tool_calls. Without it, OpenRouter/Anthropic rejects the multi-turn
+    tool conversation with "tool_result blocks must have a corresponding
+    tool_use block."
+
+    Bug: commit 29d9261 — 400 from OpenRouter when feeding tool results back.
+
+    This test verifies the return shape contract by checking the mock path
+    (no LLM key needed).
+    """
+    import asyncio
+    from unittest.mock import patch, MagicMock, AsyncMock
+
+    from app.tasks._llm import llm_tools
+
+    # Create a mock response that simulates an LLM returning tool calls
+    mock_choice = MagicMock()
+    mock_choice.content = "Let me search for that."
+    mock_tc = MagicMock()
+    mock_tc.id = "call_abc123"
+    mock_tc.function.name = "web_search"
+    mock_tc.function.arguments = '{"query": "auto body shops"}'
+    mock_choice.tool_calls = [mock_tc]
+
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=mock_choice)]
+    mock_resp.usage = MagicMock(completion_tokens=50)
+
+    async def run():
+        with patch("app.tasks._llm._client") as mock_client, \
+             patch("app.tasks._llm.get_settings") as mock_settings:
+            s = MagicMock()
+            s.has_llm = True
+            s.llm_model_capable = "test-model"
+            mock_settings.return_value = s
+
+            mock_create = AsyncMock(return_value=mock_resp)
+            mock_client.return_value.chat.completions.create = mock_create
+
+            result = await llm_tools(
+                messages=[{"role": "user", "content": "find auto body shops"}],
+                tools=[{"type": "function", "function": {"name": "web_search", "parameters": {}}}],
+                mock_text="fallback",
+                timeout_s=5.0,
+            )
+
+            # Verify tool_calls have the required "type" field
+            assert result["tool_calls"] is not None, "Expected tool_calls in response"
+            for tc in result["tool_calls"]:
+                assert "type" in tc, f"tool_call missing 'type' field: {tc}"
+                assert tc["type"] == "function", f"Expected type='function', got {tc['type']}"
+                assert "id" in tc
+                assert "function" in tc
+                assert "name" in tc["function"]
+                assert "arguments" in tc["function"]
+
+    asyncio.run(run())
