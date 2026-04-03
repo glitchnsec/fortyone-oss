@@ -22,7 +22,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal
-from app.memory.models import Message, User
+from app.memory.models import Message, User, Goal, ActionLog, Persona, UserProfile
+from app.memory.store import MemoryStore
 from app.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1")
@@ -201,3 +202,271 @@ async def delete_connection(
     except httpx.HTTPError as e:
         logger.error("delete connection error: %s", e)
         raise HTTPException(502, "Connections service unavailable")
+
+
+# ─── Request Models ──────────────────────────────────────────────────────────
+
+class GoalCreate(BaseModel):
+    title: str
+    framework: str = "custom"  # okr | smart | custom
+    description: Optional[str] = None
+    target_date: Optional[str] = None  # ISO 8601
+    persona_id: Optional[str] = None
+    parent_goal_id: Optional[str] = None
+    metadata: Optional[dict] = None
+
+
+class GoalUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    target_date: Optional[str] = None
+    status: Optional[str] = None  # active | completed | archived
+    framework: Optional[str] = None
+    metadata_json: Optional[str] = None
+
+
+class PersonaCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+    tone_notes: Optional[str] = None
+
+
+class PersonaUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    tone_notes: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class ProfileEntryCreate(BaseModel):
+    section: str
+    label: str
+    content: str
+    persona_id: Optional[str] = None
+
+
+# ─── Goals ───────────────────────────────────────────────────────────────────
+
+@router.get("/goals")
+async def list_goals(
+    status: str = Query("active"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return goals for the authenticated user, filtered by status."""
+    store = MemoryStore(db)
+    goals = await store.get_goals(user.id, status=status)
+    return {
+        "goals": [
+            {
+                "id": g.id,
+                "title": g.title,
+                "framework": g.framework,
+                "description": g.description,
+                "target_date": g.target_date.isoformat() if g.target_date else None,
+                "status": g.status,
+                "persona_id": g.persona_id,
+                "parent_goal_id": g.parent_goal_id,
+                "version": g.version,
+                "created_at": g.created_at.isoformat(),
+                "updated_at": g.updated_at.isoformat(),
+            }
+            for g in goals
+        ]
+    }
+
+
+@router.post("/goals", status_code=201)
+async def create_goal(
+    body: GoalCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Create a new goal for the authenticated user."""
+    store = MemoryStore(db)
+    from dateutil.parser import parse as parse_date
+    target_date = parse_date(body.target_date) if body.target_date else None
+    goal = await store.create_goal(
+        user_id=user.id,
+        title=body.title,
+        framework=body.framework,
+        description=body.description,
+        target_date=target_date,
+        persona_id=body.persona_id,
+        parent_goal_id=body.parent_goal_id,
+        metadata=body.metadata,
+    )
+    return {"id": goal.id, "title": goal.title, "status": goal.status}
+
+
+@router.patch("/goals/{goal_id}")
+async def update_goal(
+    goal_id: str,
+    body: GoalUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Update a goal's fields. Increments version on each update."""
+    store = MemoryStore(db)
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "target_date" in updates and updates["target_date"]:
+        from dateutil.parser import parse as parse_date
+        updates["target_date"] = parse_date(updates["target_date"])
+    goal = await store.update_goal(user.id, goal_id, **updates)
+    if not goal:
+        raise HTTPException(404, "Goal not found")
+    return {"id": goal.id, "title": goal.title, "status": goal.status, "version": goal.version}
+
+
+@router.delete("/goals/{goal_id}", status_code=204)
+async def delete_goal(
+    goal_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Delete a goal."""
+    store = MemoryStore(db)
+    deleted = await store.delete_goal(user.id, goal_id)
+    if not deleted:
+        raise HTTPException(404, "Goal not found")
+
+
+# ─── Action Log ──────────────────────────────────────────────────────────────
+
+@router.get("/actions")
+async def list_actions(
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return paginated action log timeline for the authenticated user."""
+    store = MemoryStore(db)
+    offset = (page - 1) * limit
+    actions = await store.get_action_log(user.id, limit=limit, offset=offset)
+    return {
+        "actions": [
+            {
+                "id": a.id,
+                "action_type": a.action_type,
+                "description": a.description,
+                "outcome": a.outcome,
+                "trigger": a.trigger,
+                "created_at": a.created_at.isoformat(),
+            }
+            for a in actions
+        ],
+        "page": page,
+        "limit": limit,
+    }
+
+
+# ─── Personas ────────────────────────────────────────────────────────────────
+
+@router.get("/personas")
+async def list_personas(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return all active personas for the authenticated user."""
+    store = MemoryStore(db)
+    personas = await store.get_personas(user.id)
+    return {
+        "personas": [
+            {
+                "id": p.id,
+                "name": p.name,
+                "description": p.description,
+                "tone_notes": p.tone_notes,
+                "is_active": p.is_active,
+                "created_at": p.created_at.isoformat(),
+            }
+            for p in personas
+        ]
+    }
+
+
+@router.post("/personas", status_code=201)
+async def create_persona(
+    body: PersonaCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Create a new persona."""
+    store = MemoryStore(db)
+    persona = await store.create_persona(
+        user_id=user.id, name=body.name,
+        description=body.description, tone_notes=body.tone_notes,
+    )
+    return {"id": persona.id, "name": persona.name}
+
+
+@router.patch("/personas/{persona_id}")
+async def update_persona(
+    persona_id: str,
+    body: PersonaUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Update a persona's fields."""
+    store = MemoryStore(db)
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    persona = await store.update_persona(user.id, persona_id, **updates)
+    if not persona:
+        raise HTTPException(404, "Persona not found")
+    return {"id": persona.id, "name": persona.name}
+
+
+@router.delete("/personas/{persona_id}", status_code=204)
+async def delete_persona(
+    persona_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Delete a persona."""
+    store = MemoryStore(db)
+    deleted = await store.delete_persona(user.id, persona_id)
+    if not deleted:
+        raise HTTPException(404, "Persona not found")
+
+
+# ─── User Profile (TELOS) ───────────────────────────────────────────────────
+
+@router.get("/profile")
+async def get_profile(
+    section: Optional[str] = Query(None),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return TELOS profile entries, optionally filtered by section."""
+    store = MemoryStore(db)
+    entries = await store.get_profile_entries(user.id, section=section)
+    return {
+        "entries": [
+            {
+                "id": e.id,
+                "section": e.section,
+                "label": e.label,
+                "content": e.content,
+                "persona_id": e.persona_id,
+                "created_at": e.created_at.isoformat(),
+            }
+            for e in entries
+        ]
+    }
+
+
+@router.post("/profile", status_code=201)
+async def upsert_profile(
+    body: ProfileEntryCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Create or update a TELOS profile entry."""
+    store = MemoryStore(db)
+    entry = await store.upsert_profile_entry(
+        user_id=user.id, section=body.section,
+        label=body.label, content=body.content,
+        persona_id=body.persona_id,
+    )
+    return {"id": entry.id, "section": entry.section, "label": entry.label}

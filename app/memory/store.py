@@ -331,6 +331,144 @@ class MemoryStore:
         await self.db.commit()
         return True
 
+    # ─── Goals ───────────────────────────────────────────────────────────────
+
+    async def create_goal(
+        self,
+        user_id: str,
+        title: str,
+        framework: str = "custom",
+        description: Optional[str] = None,
+        target_date: Optional[datetime] = None,
+        persona_id: Optional[str] = None,
+        parent_goal_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> "Goal":
+        """Create a new goal (D-06, AGENT-03)."""
+        from app.memory.models import Goal
+        goal = Goal(
+            user_id=user_id,
+            title=title,
+            framework=framework,
+            description=description,
+            target_date=target_date,
+            persona_id=persona_id,
+            parent_goal_id=parent_goal_id,
+            metadata_json=json.dumps(metadata) if metadata else None,
+        )
+        self.db.add(goal)
+        await self.db.commit()
+        await self.db.refresh(goal)
+        return goal
+
+    async def get_goals(
+        self, user_id: str, status: str = "active"
+    ) -> list:
+        """Return goals for a user, optionally filtered by status."""
+        from app.memory.models import Goal
+        query = select(Goal).where(Goal.user_id == user_id)
+        if status != "all":
+            query = query.where(Goal.status == status)
+        query = query.order_by(Goal.created_at.desc())
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def update_goal(
+        self, user_id: str, goal_id: str, **kwargs
+    ) -> "Goal | None":
+        """Update a goal's fields. Increments version on each update."""
+        from app.memory.models import Goal
+        result = await self.db.execute(
+            select(Goal).where(Goal.id == goal_id, Goal.user_id == user_id)
+        )
+        goal = result.scalar_one_or_none()
+        if not goal:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(goal, key) and key not in ("id", "user_id", "created_at"):
+                setattr(goal, key, value)
+        goal.version += 1
+        goal.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(goal)
+        return goal
+
+    async def delete_goal(self, user_id: str, goal_id: str) -> bool:
+        """Delete a goal. Returns True if deleted."""
+        from app.memory.models import Goal
+        result = await self.db.execute(
+            select(Goal).where(Goal.id == goal_id, Goal.user_id == user_id)
+        )
+        goal = result.scalar_one_or_none()
+        if not goal:
+            return False
+        await self.db.delete(goal)
+        await self.db.commit()
+        return True
+
+    # ─── Action Log ──────────────────────────────────────────────────────────
+
+    async def get_action_log(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> list:
+        """Return chronological action log entries for a user with pagination."""
+        from app.memory.models import ActionLog
+        query = (
+            select(ActionLog)
+            .where(ActionLog.user_id == user_id)
+            .order_by(ActionLog.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    # ─── User Profile (TELOS) ────────────────────────────────────────────────
+
+    async def get_profile_entries(self, user_id: str, section: Optional[str] = None) -> list:
+        """Return TELOS profile entries for a user, optionally filtered by section."""
+        from app.memory.models import UserProfile
+        query = select(UserProfile).where(UserProfile.user_id == user_id)
+        if section:
+            query = query.where(UserProfile.section == section)
+        query = query.order_by(UserProfile.section, UserProfile.created_at)
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def upsert_profile_entry(
+        self,
+        user_id: str,
+        section: str,
+        label: str,
+        content: str,
+        persona_id: Optional[str] = None,
+    ) -> "UserProfile":
+        """Create or update a TELOS profile entry (D-12)."""
+        from app.memory.models import UserProfile
+        result = await self.db.execute(
+            select(UserProfile).where(
+                UserProfile.user_id == user_id,
+                UserProfile.section == section,
+                UserProfile.label == label,
+            )
+        )
+        existing = result.scalar_one_or_none()
+        if existing:
+            existing.content = content
+            existing.persona_id = persona_id
+            existing.updated_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            await self.db.refresh(existing)
+            return existing
+        entry = UserProfile(
+            user_id=user_id, section=section, label=label,
+            content=content, persona_id=persona_id,
+        )
+        self.db.add(entry)
+        await self.db.commit()
+        await self.db.refresh(entry)
+        return entry
+
     # ─── Semantic Memory ─────────────────────────────────────────────────────────
 
     async def search_memories(
@@ -574,20 +712,7 @@ class MemoryStore:
 
         return ctx
 
-    # ─── Profile Entries ─────────────────────────────────────────────────────
-
-    async def get_profile_entries(
-        self, user_id: str, section: Optional[str] = None
-    ) -> list[UserProfile]:
-        """Return profile entries for a user, optionally filtered by TELOS section."""
-        stmt = select(UserProfile).where(UserProfile.user_id == user_id)
-        if section:
-            stmt = stmt.where(UserProfile.section == section)
-        stmt = stmt.order_by(UserProfile.updated_at.desc())
-        result = await self.db.execute(stmt)
-        return list(result.scalars().all())
-
-    # ─── Action Log ──────────────────────────────────────────────────────────
+    # ─── Action Log (04-03) ────────────────────────────────────────────────
 
     async def log_action(
         self,
@@ -613,20 +738,7 @@ class MemoryStore:
         await self.db.refresh(entry)
         return entry
 
-    async def get_action_log(
-        self, user_id: str, limit: int = 50, offset: int = 0
-    ) -> list[ActionLog]:
-        """Return recent action log entries for a user."""
-        result = await self.db.execute(
-            select(ActionLog)
-            .where(ActionLog.user_id == user_id)
-            .order_by(ActionLog.created_at.desc())
-            .offset(offset)
-            .limit(limit)
-        )
-        return list(result.scalars().all())
-
-    # ─── Pending Actions ─────────────────────────────────────────────────────
+    # ─── Pending Actions (04-03) ────────────────────────────────────────────
 
     async def create_pending_action(
         self,
