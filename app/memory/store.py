@@ -12,7 +12,7 @@ from typing import Optional
 from sqlalchemy import select, nullslast
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.memory.models import Memory, Message, Task, User
+from app.memory.models import Memory, Message, Task, User, ActionLog, PendingAction, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -487,6 +487,15 @@ class MemoryStore:
         user_result = await self.db.execute(select(User).where(User.id == user_id))
         user = user_result.scalars().first()
 
+        # D-13: Include key profile traits at standard context level
+        profile_entries = await self.get_profile_entries(user_id)
+        key_sections = {"preferences", "mission", "problems"}  # High-signal TELOS sections for standard tier
+        key_traits = [
+            {"section": e.section, "label": e.label, "content": e.content}
+            for e in profile_entries
+            if e.section in key_sections
+        ][:10]  # Cap at 10 entries for token budget
+
         return {
             "user": {
                 "id": user_id,
@@ -516,6 +525,7 @@ class MemoryStore:
                 for t in active_tasks[:5]
             ],
             "message_count": len(recent),
+            "profile_traits": key_traits,
         }
 
     async def get_context_full(
@@ -555,4 +565,116 @@ class MemoryStore:
             for t in active_tasks
         ]
 
+        # D-13: Full TELOS profile at full context level
+        profile_entries = await self.get_profile_entries(user_id)
+        ctx["profile_entries"] = [
+            {"section": e.section, "label": e.label, "content": e.content, "persona_id": e.persona_id}
+            for e in profile_entries
+        ]
+
         return ctx
+
+    # ─── Profile Entries ─────────────────────────────────────────────────────
+
+    async def get_profile_entries(
+        self, user_id: str, section: Optional[str] = None
+    ) -> list[UserProfile]:
+        """Return profile entries for a user, optionally filtered by TELOS section."""
+        stmt = select(UserProfile).where(UserProfile.user_id == user_id)
+        if section:
+            stmt = stmt.where(UserProfile.section == section)
+        stmt = stmt.order_by(UserProfile.updated_at.desc())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    # ─── Action Log ──────────────────────────────────────────────────────────
+
+    async def log_action(
+        self,
+        user_id: str,
+        action_type: str,
+        description: str,
+        outcome: str = "success",
+        trigger: str = "user_request",
+        metadata: dict | None = None,
+    ) -> ActionLog:
+        """Record an action in the audit log (AGENT-06)."""
+        import json as _json
+        entry = ActionLog(
+            user_id=user_id,
+            action_type=action_type,
+            description=description,
+            outcome=outcome,
+            trigger=trigger,
+            metadata_json=_json.dumps(metadata) if metadata else None,
+        )
+        self.db.add(entry)
+        await self.db.commit()
+        await self.db.refresh(entry)
+        return entry
+
+    async def get_action_log(
+        self, user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[ActionLog]:
+        """Return recent action log entries for a user."""
+        result = await self.db.execute(
+            select(ActionLog)
+            .where(ActionLog.user_id == user_id)
+            .order_by(ActionLog.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+        )
+        return list(result.scalars().all())
+
+    # ─── Pending Actions ─────────────────────────────────────────────────────
+
+    async def create_pending_action(
+        self,
+        user_id: str,
+        action_type: str,
+        action_params: dict,
+        risk_level: str,
+        ttl_minutes: int = 30,
+    ) -> PendingAction:
+        """Create a pending action that awaits user confirmation (D-04)."""
+        import json as _json
+        from datetime import timedelta
+        pending = PendingAction(
+            user_id=user_id,
+            action_type=action_type,
+            action_params_json=_json.dumps(action_params),
+            risk_level=risk_level,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=ttl_minutes),
+        )
+        self.db.add(pending)
+        await self.db.commit()
+        await self.db.refresh(pending)
+        return pending
+
+    async def get_pending_action(self, user_id: str) -> PendingAction | None:
+        """Get the most recent pending action for a user (for confirmation flow)."""
+        result = await self.db.execute(
+            select(PendingAction)
+            .where(
+                PendingAction.user_id == user_id,
+                PendingAction.status == "pending",
+                PendingAction.expires_at > datetime.now(timezone.utc),
+            )
+            .order_by(PendingAction.created_at.desc())
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def resolve_pending_action(
+        self, pending_id: str, status: str
+    ) -> PendingAction | None:
+        """Resolve a pending action (confirmed/rejected/expired)."""
+        result = await self.db.execute(
+            select(PendingAction).where(PendingAction.id == pending_id)
+        )
+        pending = result.scalar_one_or_none()
+        if pending:
+            pending.status = status
+            await self.db.commit()
+            await self.db.refresh(pending)
+        return pending
