@@ -90,11 +90,14 @@ async def manager_dispatch(payload: dict) -> dict:
 
         # Execute tool calls and feed results back
         # Append assistant message with tool calls
-        messages.append({
+        # Note: content must be a string (not None) for some providers via OpenRouter
+        assistant_msg = {
             "role": "assistant",
-            "content": content,
             "tool_calls": tool_calls,
-        })
+        }
+        if content:
+            assistant_msg["content"] = content
+        messages.append(assistant_msg)
 
         for tc in tool_calls:
             tool_name = tc["function"]["name"]
