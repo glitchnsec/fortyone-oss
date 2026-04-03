@@ -238,6 +238,49 @@ class MemoryStore:
             return True
         return False
 
+    async def get_tasks(
+        self, user_id: str, status: str = "active"
+    ) -> list[Task]:
+        """Return tasks for a user. status: active, completed, all."""
+        stmt = select(Task).where(Task.user_id == user_id)
+        if status == "active":
+            stmt = stmt.where(Task.completed == False)  # noqa: E712
+        elif status == "completed":
+            stmt = stmt.where(Task.completed == True)  # noqa: E712
+        stmt = stmt.order_by(Task.created_at.desc())
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update_task(
+        self, user_id: str, task_id: str, **kwargs
+    ) -> Optional[Task]:
+        """Update a task's fields. Returns None if not found."""
+        result = await self.db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        )
+        task = result.scalars().first()
+        if not task:
+            return None
+        for key, value in kwargs.items():
+            if hasattr(task, key) and key not in ("id", "user_id", "created_at"):
+                setattr(task, key, value)
+        task.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await self.db.refresh(task)
+        return task
+
+    async def delete_task(self, user_id: str, task_id: str) -> bool:
+        """Delete a task. Returns True if deleted."""
+        result = await self.db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        )
+        task = result.scalars().first()
+        if not task:
+            return False
+        await self.db.delete(task)
+        await self.db.commit()
+        return True
+
     # ─── Messages ────────────────────────────────────────────────────────────
 
     async def store_message(

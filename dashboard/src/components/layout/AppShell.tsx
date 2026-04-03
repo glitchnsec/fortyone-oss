@@ -23,6 +23,7 @@ import {
   Target,
   Clock,
   Users,
+  ListTodo,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -44,6 +45,7 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { label: "Connections", to: "/connections", icon: <Link2 className="h-4 w-4" /> },
   { label: "Conversations", to: "/conversations", icon: <MessageSquare className="h-4 w-4" /> },
+  { label: "Tasks", to: "/tasks", icon: <ListTodo className="h-4 w-4" /> },
   { label: "Goals", to: "/goals", icon: <Target className="h-4 w-4" /> },
   { label: "Activity", to: "/actions", icon: <Clock className="h-4 w-4" /> },
   { label: "Assistant", to: "/settings/assistant", icon: <Bot className="h-4 w-4" /> },

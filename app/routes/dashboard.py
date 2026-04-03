@@ -245,6 +245,117 @@ class ProfileEntryCreate(BaseModel):
     persona_id: Optional[str] = None
 
 
+class TaskCreate(BaseModel):
+    title: str
+    task_type: str = "reminder"  # reminder | follow_up | schedule
+    description: Optional[str] = None
+    due_at: Optional[str] = None  # ISO 8601
+    metadata: Optional[dict] = None
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    due_at: Optional[str] = None
+    task_type: Optional[str] = None
+    completed: Optional[bool] = None
+
+
+# ─── Tasks ──────────────────────────────────────────────────────────────────
+
+@router.get("/tasks")
+async def list_tasks(
+    status: str = Query("active"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return tasks for the authenticated user. status: active, completed, all."""
+    store = MemoryStore(db)
+    tasks = await store.get_tasks(user.id, status=status)
+    return {
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "task_type": t.task_type,
+                "description": t.description,
+                "due_at": t.due_at.isoformat() if t.due_at else None,
+                "completed": t.completed,
+                "created_at": t.created_at.isoformat(),
+                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+            }
+            for t in tasks
+        ]
+    }
+
+
+@router.post("/tasks", status_code=201)
+async def create_task(
+    body: TaskCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Create a new task."""
+    store = MemoryStore(db)
+    from dateutil.parser import parse as parse_date
+    due_at = parse_date(body.due_at) if body.due_at else None
+    task = await store.create_task(
+        user_id=user.id,
+        task_type=body.task_type,
+        title=body.title,
+        description=body.description,
+        due_at=due_at,
+        metadata=body.metadata,
+    )
+    return {"id": task.id, "title": task.title, "task_type": task.task_type}
+
+
+@router.patch("/tasks/{task_id}")
+async def update_task(
+    task_id: str,
+    body: TaskUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Update a task's fields."""
+    store = MemoryStore(db)
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if "due_at" in updates and updates["due_at"]:
+        from dateutil.parser import parse as parse_date
+        updates["due_at"] = parse_date(updates["due_at"])
+    task = await store.update_task(user.id, task_id, **updates)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    return {"id": task.id, "title": task.title, "completed": task.completed}
+
+
+@router.post("/tasks/{task_id}/complete")
+async def complete_task(
+    task_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Mark a task as complete."""
+    store = MemoryStore(db)
+    completed = await store.complete_task(task_id, user.id)
+    if not completed:
+        raise HTTPException(404, "Task not found")
+    return {"id": task_id, "completed": True}
+
+
+@router.delete("/tasks/{task_id}", status_code=204)
+async def delete_task(
+    task_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Delete a task."""
+    store = MemoryStore(db)
+    deleted = await store.delete_task(user.id, task_id)
+    if not deleted:
+        raise HTTPException(404, "Task not found")
+
+
 # ─── Goals ───────────────────────────────────────────────────────────────────
 
 @router.get("/goals")
