@@ -359,6 +359,11 @@ async def update_task(
     task = await store.update_task(user.id, task_id, **updates)
     if not task:
         raise HTTPException(404, "Task not found")
+    # Schedule/reschedule reminder delivery when due_at is updated
+    if task.due_at and "due_at" in updates:
+        from app.tasks.reminder import schedule_task_reminder
+        phone = getattr(user, "phone", "") or ""
+        await schedule_task_reminder(user.id, task.id, task.title, phone, task.due_at)
     return {
         "id": task.id,
         "title": task.title,

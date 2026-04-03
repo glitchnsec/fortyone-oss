@@ -44,12 +44,20 @@ async def scheduler_loop():
     )
     logger.info("Scheduler started — polling every %ds  redis=%s", POLL_INTERVAL, settings.redis_url)
 
+    poll_count = 0
     while True:
         try:
             now = time.time()
             ready = await r.zrangebyscore(
                 "scheduled_jobs", "-inf", now, start=0, num=BATCH_SIZE,
             )
+            poll_count += 1
+            # Heartbeat every 10 polls (~5 min) so logs show the scheduler is alive
+            if poll_count % 10 == 0:
+                pending_total = await r.zcard("scheduled_jobs")
+                logger.info("SCHEDULER_HEARTBEAT  polls=%d  pending_jobs=%d", poll_count, pending_total)
+            if ready:
+                logger.info("SCHEDULER_POLL  found=%d due jobs", len(ready))
             for job_data in ready:
                 removed = await r.zrem("scheduled_jobs", job_data)
                 if removed:  # Atomic claim — prevents duplicate processing
