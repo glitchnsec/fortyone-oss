@@ -71,7 +71,71 @@ def _parse_relative_time(text: str) -> datetime | None:
     if m:
         return now + timedelta(seconds=int(m.group(1)))
 
+    # "tonight" → 8pm today in UTC (assumes evening = 8pm local, good enough default)
+    if re.search(r'\btonight\b', lower):
+        tonight = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(hours=24)
+        # Set to 8pm UTC as default "tonight" — will be adjusted by user timezone upstream
+        tonight = now.replace(hour=20, minute=0, second=0, microsecond=0)
+        if tonight <= now:
+            tonight += timedelta(days=1)
+        return tonight
+
     return None
+
+
+def _parse_with_dateparser(text: str, user_timezone: str = "America/New_York") -> datetime | None:
+    """
+    Parse natural language dates using the dateparser library.
+
+    Handles: "tomorrow at 3pm", "Friday at 6pm", "April 5th at noon",
+    "in 2 hours", "at 8pm", "3:30pm", etc.
+
+    Returns a timezone-aware UTC datetime, or None if no match.
+    """
+    try:
+        import dateparser
+
+        # Extract time-related phrases from the text.
+        # dateparser works best with isolated time expressions, not full sentences.
+        # Try the full text first, then extract common patterns.
+        settings = {
+            "PREFER_DATES_FROM": "future",
+            "TIMEZONE": user_timezone,
+            "RETURN_AS_TIMEZONE_AWARE": True,
+            "TO_TIMEZONE": "UTC",
+        }
+
+        result = dateparser.parse(text, settings=settings)
+        if result:
+            # Ensure timezone-aware
+            if result.tzinfo is None:
+                result = result.replace(tzinfo=timezone.utc)
+            return result
+
+        # Try extracting common time phrases from the sentence
+        import re as _re
+        # Match "at 3pm", "at 8:30pm", "tomorrow at noon", "friday at 6pm"
+        time_phrases = [
+            r'(tomorrow\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
+            r'((?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)?)',
+            r'((?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm))',
+            r'(tomorrow)',
+            r'(tonight)',
+        ]
+        for pattern in time_phrases:
+            m = _re.search(pattern, text.lower())
+            if m:
+                result = dateparser.parse(m.group(1), settings=settings)
+                if result:
+                    if result.tzinfo is None:
+                        result = result.replace(tzinfo=timezone.utc)
+                    return result
+
+        return None
+    except ImportError:
+        return None
+    except Exception:
+        return None
 
 
 def _has_time_reference(text: str) -> bool:
@@ -146,7 +210,28 @@ async def handle_reminder(payload: dict) -> dict:
                 original_body[:60], body[:60], due_at.isoformat(),
             )
 
-        # Only use LLM's date if the relative parser didn't match
+        # TIER 2: dateparser library — handles "tomorrow at 3pm", "Friday at 6pm",
+        # "April 5th at noon", absolute times, etc. deterministically.
+        if due_at is None:
+            parse_text = original_body or body
+            due_at = _parse_with_dateparser(parse_text, user_timezone=tz)
+            if due_at is None and original_body:
+                due_at = _parse_with_dateparser(body, user_timezone=tz)
+            if due_at:
+                now_check = datetime.now(timezone.utc)
+                if due_at < now_check:
+                    logger.warning(
+                        "DATEPARSER_PAST  parsed=%s  now=%s — discarding",
+                        due_at.isoformat(), now_check.isoformat(),
+                    )
+                    due_at = None
+                else:
+                    logger.info(
+                        "REMINDER_DATEPARSER  text=%r  computed=%s",
+                        parse_text[:60], due_at.isoformat(),
+                    )
+
+        # TIER 3: LLM's date — only if both deterministic parsers failed
         if due_at is None and data.get("due_at"):
             try:
                 due_at = datetime.fromisoformat(str(data["due_at"]).replace("Z", "+00:00"))

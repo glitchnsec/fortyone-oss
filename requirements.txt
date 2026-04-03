@@ -21,3 +21,4 @@ bcrypt==4.2.1
 email-validator==2.3.0
 pyyaml==6.0.2
 croniter==3.0.3
+dateparser==1.4.0
