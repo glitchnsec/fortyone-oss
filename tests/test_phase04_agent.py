@@ -43,7 +43,7 @@ def test_greeting_still_regex_fast_path():
 def test_identity_still_regex_fast_path():
     """IDENTITY intent preserved via regex — zero LLM latency."""
     from app.core.intent import classify_intent, IntentType
-    result = classify_intent("what is your name")
+    result = classify_intent("who are you")
     assert result.type == IntentType.IDENTITY, (
         f"Expected IDENTITY, got {result.type}"
     )
