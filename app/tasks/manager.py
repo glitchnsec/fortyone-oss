@@ -144,45 +144,34 @@ async def manager_dispatch(payload: dict) -> dict:
 
             tool_result = await _execute_tool(tool_name, tool_args_raw, payload)
 
-            # Track tool failures for early-exit detection
+            # Track tool failures
             is_failed = "error" in tool_result
             if is_failed:
                 tool_failure_counts[tool_name] = tool_failure_counts.get(tool_name, 0) + 1
-                failed_tools[tool_name] = tool_result.get("user_message", tool_result["error"])
+                user_reason = tool_result.get("user_message", tool_result["error"])
+                failed_tools[tool_name] = user_reason
 
-                if tool_failure_counts[tool_name] >= 2:
-                    logger.warning(
-                        "TOOL_REPEATED_FAILURE  tool=%s  failures=%d  job_id=%s — stopping retries",
-                        tool_name, tool_failure_counts[tool_name], job_id,
-                    )
-                    should_break_early = True
+                # DETERMINISTIC EARLY EXIT on tool failure.
+                # Do NOT give the LLM another round — it will ignore error
+                # instructions and call create_reminder or other inappropriate tools.
+                # Instead, return a hardcoded transparent response immediately.
+                logger.warning(
+                    "TOOL_FAILED_EARLY_EXIT  tool=%s  job_id=%s  reason=%s",
+                    tool_name, job_id, user_reason,
+                )
+                response_text = (
+                    f"I tried to help with that, but {_tool_failure_user_message(tool_name)} "
+                    f"I'll keep this in mind and try again when the capability is available. "
+                    f"In the meantime, is there something else I can help with?"
+                )
+                should_break_early = True
+                break
 
-            # Feed tool result back to LLM — if the tool failed, make the error
-            # explicit so the LLM acknowledges it instead of silently pivoting
-            if is_failed:
-                error_content = json.dumps({
-                    "error": True,
-                    "tool": tool_name,
-                    "message": (
-                        f"The {tool_name} tool is currently unavailable. "
-                        f"You MUST tell the user this capability is not working right now. "
-                        f"Do NOT retry this tool or silently switch to a different approach. "
-                        f"Do NOT create reminders for the user to do what they asked you to do."
-                    ),
-                })
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": error_content,
-                })
-                # Remove failed tool from schemas so LLM can't retry it
-                tools = [t for t in tools if t["function"]["name"] != tool_name]
-            else:
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "content": json.dumps(tool_result),
-                })
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call_id,
+                "content": json.dumps(tool_result),
+            })
 
             # Log the action for AGENT-06
             learn_signals["action_log"] = {
@@ -207,37 +196,9 @@ async def manager_dispatch(payload: dict) -> dict:
             MAX_TOOL_ROUNDS, job_id,
         )
 
-    # If we exited the loop with failures (early break or round exhaustion) and no response yet,
-    # make one final LLM call with failure context so the response is helpful
-    if response_text is None and failed_tools:
-        failure_context = "\n".join(
-            f"- {name}: {reason}" for name, reason in failed_tools.items()
-        )
-        messages.append({
-            "role": "system",
-            "content": (
-                "IMPORTANT: The following tools failed and are currently unavailable. "
-                "Do NOT retry them. Instead, acknowledge the limitation to the user and "
-                "suggest what you can still help with. Do not mention technical details "
-                "like API keys or configuration — just say the capability is unavailable.\n\n"
-                f"Unavailable tools:\n{failure_context}"
-            ),
-        })
-        result = await llm_tools(
-            messages=messages,
-            tools=[],  # No tools — force text response
-            mock_text=(
-                "I wasn't able to search the web right now — that capability isn't "
-                "available at the moment. I can still help with reminders, tasks, or "
-                "answering questions from what I already know."
-            ),
-            timeout_s=10.0,
-        )
-        response_text = result.get("content") or (
-            "I wasn't able to complete that request — some capabilities aren't "
-            "available right now. Let me know if there's something else I can help with."
-        )
-    elif response_text is None:
+    # If we exhausted MAX_TOOL_ROUNDS without any tool failures (all tools succeeded
+    # but the LLM kept calling more), force a final text-only response
+    if response_text is None:
         # Exhausted rounds but no specific tool failures — generic fallback
         result = await llm_tools(
             messages=messages,
@@ -410,6 +371,20 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
         return f"create a calendar event \"{args.get('summary', 'event')}\" at {args.get('start_time', 'the scheduled time')}"
     else:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
+
+
+def _tool_failure_user_message(tool_name: str) -> str:
+    """Map tool names to user-friendly failure explanations. No technical details."""
+    messages = {
+        "web_search": "I can't search the web right now — that feature isn't available at the moment.",
+        "send_email": "I can't send emails right now — the email connection needs to be set up.",
+        "read_emails": "I can't read your emails right now — the email connection needs to be set up.",
+        "list_events": "I can't check your calendar right now — the calendar connection needs to be set up.",
+        "create_event": "I can't create calendar events right now — the calendar connection needs to be set up.",
+        "create_reminder": "I wasn't able to create that reminder.",
+        "list_tasks": "I wasn't able to check your tasks.",
+    }
+    return messages.get(tool_name, f"the {tool_name} tool isn't available right now.")
 
 
 async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> dict:
