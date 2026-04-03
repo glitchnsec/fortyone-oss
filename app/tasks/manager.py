@@ -151,27 +151,41 @@ async def manager_dispatch(payload: dict) -> dict:
                 user_reason = tool_result.get("user_message", tool_result["error"])
                 failed_tools[tool_name] = user_reason
 
-                # DETERMINISTIC EARLY EXIT on tool failure.
-                # Do NOT give the LLM another round — it will ignore error
-                # instructions and call create_reminder or other inappropriate tools.
-                # Instead, return a hardcoded transparent response immediately.
                 logger.warning(
-                    "TOOL_FAILED_EARLY_EXIT  tool=%s  job_id=%s  reason=%s",
+                    "TOOL_FAILED  tool=%s  job_id=%s  reason=%s",
                     tool_name, job_id, user_reason,
                 )
-                response_text = (
-                    f"I tried to help with that, but {_tool_failure_user_message(tool_name)} "
-                    f"I'll keep this in mind and try again when the capability is available. "
-                    f"In the meantime, is there something else I can help with?"
-                )
-                should_break_early = True
-                break
 
-            messages.append({
-                "role": "tool",
-                "tool_call_id": tool_call_id,
-                "content": json.dumps(tool_result),
-            })
+                # Feed a clear error back so the LLM knows the tool failed
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps({
+                        "error": True,
+                        "message": f"The {tool_name} tool is currently unavailable.",
+                    }),
+                })
+
+                # Remove the failed tool so it can't be retried
+                tools = [t for t in tools if t["function"]["name"] != tool_name]
+
+                # CRITICAL: Also remove deflection tools (create_reminder, list_tasks)
+                # when a primary tool fails. The user asked the operator to DO something,
+                # not to be reminded to do it themselves. The LLM will always try to
+                # "help" by creating reminders — block that at the schema level.
+                deflection_tools = {"create_reminder", "list_tasks"}
+                if tool_name not in deflection_tools:
+                    tools = [t for t in tools if t["function"]["name"] not in deflection_tools]
+                    logger.info(
+                        "DEFLECTION_BLOCKED  removed=%s  remaining=%s  job_id=%s",
+                        deflection_tools, [t["function"]["name"] for t in tools], job_id,
+                    )
+            else:
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "content": json.dumps(tool_result),
+                })
 
             # Log the action for AGENT-06
             learn_signals["action_log"] = {
@@ -196,10 +210,9 @@ async def manager_dispatch(payload: dict) -> dict:
             MAX_TOOL_ROUNDS, job_id,
         )
 
-    # If we exhausted MAX_TOOL_ROUNDS without any tool failures (all tools succeeded
-    # but the LLM kept calling more), force a final text-only response
+    # If the loop ended without a response (LLM kept calling tools until limit),
+    # force a final text-only response
     if response_text is None:
-        # Exhausted rounds but no specific tool failures — generic fallback
         result = await llm_tools(
             messages=messages,
             tools=[],  # No tools — force text response
@@ -207,6 +220,17 @@ async def manager_dispatch(payload: dict) -> dict:
             timeout_s=10.0,
         )
         response_text = result.get("content") or "I've been working on your request but need a bit more time."
+
+    # TRANSPARENCY GUARD: If any tools failed during this dispatch,
+    # ensure the response acknowledges the limitation. The LLM often
+    # produces responses that gloss over failures — prepend a clear note.
+    if failed_tools and response_text:
+        failure_summaries = [_tool_failure_user_message(name) for name in failed_tools]
+        failure_note = " ".join(failure_summaries)
+        # Only prepend if the response doesn't already mention the limitation
+        limitation_keywords = ["can't search", "unable to search", "not available", "couldn't search", "unavailable"]
+        if not any(kw in response_text.lower() for kw in limitation_keywords):
+            response_text = f"Heads up: {failure_note}\n\n{response_text}"
 
     # D-12: Passive profile learning — extract profile-relevant facts from conversation
     # Runs asynchronously after response to avoid adding latency
