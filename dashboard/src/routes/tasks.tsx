@@ -9,7 +9,7 @@ import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, CheckCircle2, Clock, Pencil } from "lucide-react";
+import { Loader2, Plus, Trash2, CheckCircle2, Clock, Pencil, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -315,7 +315,16 @@ function TasksPage() {
       ) : (
         <div className="space-y-3">
           {tasks.map((t) => (
-            <Card key={t.id} className={t.completed ? "opacity-60" : ""}>
+            <Card
+              key={t.id}
+              className={
+                t.completed
+                  ? "opacity-60"
+                  : t.due_at && new Date(t.due_at) < new Date()
+                    ? "border-red-300 bg-red-50/50"
+                    : ""
+              }
+            >
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -325,6 +334,12 @@ function TasksPage() {
                     <Badge className={typeBadgeColor[t.task_type] || "bg-gray-100 text-gray-800"}>
                       {t.task_type}
                     </Badge>
+                    {!t.completed && t.due_at && new Date(t.due_at) < new Date() && (
+                      <Badge className="bg-red-100 text-red-800">
+                        <AlertTriangle className="h-3 w-3 mr-1" />
+                        Overdue
+                      </Badge>
+                    )}
                   </div>
                   <div className="flex items-center gap-1">
                     {!t.completed && (

@@ -148,6 +148,7 @@ class Worker:
                 from app.tasks.proactive import (
                     handle_morning_briefing, handle_evening_recap,
                     handle_goal_checkin, handle_weekly_digest,
+                    handle_task_reminder,
                 )
                 if job_type == "morning_briefing":
                     result = await handle_morning_briefing(payload)
@@ -157,6 +158,8 @@ class Worker:
                     result = await handle_goal_checkin(payload)
                 elif job_type == "weekly_digest":
                     result = await handle_weekly_digest(payload)
+                elif job_type == "task_reminder":
+                    result = await handle_task_reminder(payload)
                 else:
                     logger.warning("Unknown proactive job type=%s", job_type)
                     result = {"job_id": job_id, "phone": phone, "response": ""}

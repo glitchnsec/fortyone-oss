@@ -315,6 +315,64 @@ async def handle_weekly_digest(payload: dict) -> dict:
     }
 
 
+async def handle_task_reminder(payload: dict) -> dict:
+    """
+    Deliver a task reminder via SMS when due_at arrives.
+
+    Scheduled by handle_reminder or the dashboard create_task endpoint.
+    Fetches the task from DB to get current title (may have been edited).
+    Marks nothing as complete — the user decides when to mark done.
+    """
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+    task_id = payload.get("task_id", "")
+    phone = payload.get("phone", "")
+    title = payload.get("title", "your task")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+
+        # Fetch current task state (title may have been edited)
+        from sqlalchemy import select
+        from app.memory.models import Task as TaskModel
+        result = await store.db.execute(
+            select(TaskModel).where(TaskModel.id == task_id, TaskModel.user_id == user_id)
+        )
+        task = result.scalar_one_or_none()
+
+        if task and task.completed:
+            # Task was already completed before the reminder fired — skip
+            logger.info("REMINDER_SKIP_COMPLETED  task_id=%s  user=%s", task_id, user_id[:8])
+            return _empty_result(job_id, user_id)
+
+        # Use current title if task still exists
+        reminder_title = task.title if task else title
+
+        response = f"Reminder: {reminder_title}"
+
+        # Log the action
+        await store.log_action(
+            user_id=user_id,
+            action_type="task_reminder",
+            description=f"Delivered reminder: {reminder_title}",
+            outcome="success",
+            trigger="scheduled",
+        )
+
+    await _record_send(user_id)
+
+    return {
+        "job_id": job_id,
+        "phone": phone,
+        "address": phone,
+        "channel": payload.get("channel", "sms"),
+        "response": response,
+    }
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async def _get_user_by_id(store, user_id: str):

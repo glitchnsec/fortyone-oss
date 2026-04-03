@@ -321,6 +321,11 @@ async def create_task(
         due_at=due_at,
         metadata=body.metadata,
     )
+    # Schedule reminder delivery at due_at via Redis sorted set
+    if due_at:
+        from app.tasks.reminder import schedule_task_reminder
+        phone = getattr(user, "phone", "") or ""
+        await schedule_task_reminder(user.id, task.id, task.title, phone, due_at)
     return {"id": task.id, "title": task.title, "task_type": task.task_type}
 
 

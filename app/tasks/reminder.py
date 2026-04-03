@@ -97,6 +97,10 @@ async def handle_reminder(payload: dict) -> dict:
             },
         )
 
+        # Schedule reminder delivery at due_at via Redis sorted set
+        if due_at:
+            await _schedule_task_reminder(user.id, task.id, task.title, phone, due_at)
+
         due_label = ""
         if due_at:
             due_label = due_at.strftime(" — %a %b %-d at %-I:%M %p UTC")
@@ -114,6 +118,47 @@ async def handle_reminder(payload: dict) -> dict:
                 "due_at": due_at.isoformat() if due_at else None,
             },
         }
+
+
+async def schedule_task_reminder(
+    user_id: str, task_id: str, title: str, phone: str, due_at: datetime
+) -> None:
+    """
+    Schedule a task reminder into Redis sorted set for delivery at due_at.
+    The scheduler service picks it up and dispatches to the worker.
+
+    This is the PUBLIC function — called by both handle_reminder and the
+    dashboard create_task endpoint.
+    """
+    await _schedule_task_reminder(user_id, task_id, title, phone, due_at)
+
+
+async def _schedule_task_reminder(
+    user_id: str, task_id: str, title: str, phone: str, due_at: datetime
+) -> None:
+    """Schedule a task_reminder job into Redis sorted set at due_at timestamp."""
+    try:
+        import redis.asyncio as aioredis
+        from app.config import get_settings
+        settings = get_settings()
+        r = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+        payload = json.dumps({
+            "type": "task_reminder",
+            "user_id": user_id,
+            "task_id": task_id,
+            "title": title,
+            "phone": phone,
+            "source": "scheduler",
+        })
+        score = due_at.timestamp()
+        await r.zadd("scheduled_jobs", {payload: score})
+        await r.aclose()
+        logger.info(
+            "REMINDER_SCHEDULED  task_id=%s  user=%s  due_at=%s",
+            task_id, user_id[:8], due_at.isoformat(),
+        )
+    except Exception as exc:
+        logger.error("Failed to schedule reminder: %s", exc)
 
 
 async def handle_preference(payload: dict) -> dict:

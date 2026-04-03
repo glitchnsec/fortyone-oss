@@ -533,3 +533,60 @@ def test_execute_tool_connections_error_returns_error_key():
         )
 
     asyncio.run(run())
+
+
+# ─── 29-31. Task Reminder Scheduling (regression guards) ──────────────────
+
+def test_schedule_task_reminder_function_exists():
+    """
+    Regression: schedule_task_reminder must exist as a public function
+    so both handle_reminder and the dashboard create_task endpoint can
+    schedule reminder delivery into Redis sorted set.
+
+    Bug: Tasks were created with due_at but never scheduled — no SMS
+    delivered when due time arrived.
+    """
+    import inspect
+    from app.tasks.reminder import schedule_task_reminder
+    assert inspect.iscoroutinefunction(schedule_task_reminder)
+
+
+def test_handle_task_reminder_exists_in_proactive():
+    """
+    Regression: handle_task_reminder must exist in proactive.py and be
+    wired into the worker dispatch. Without it, scheduler-sourced
+    task_reminder jobs are silently dropped.
+    """
+    import inspect
+    from app.tasks.proactive import handle_task_reminder
+    assert inspect.iscoroutinefunction(handle_task_reminder)
+
+
+def test_worker_dispatches_task_reminder():
+    """
+    Regression: Worker must dispatch 'task_reminder' job type to
+    handle_task_reminder. Without this, scheduled reminders reach
+    the worker but hit 'Unknown proactive job type'.
+    """
+    with open("app/queue/worker.py") as f:
+        content = f.read()
+    assert "task_reminder" in content, (
+        "worker.py missing task_reminder dispatch"
+    )
+    assert "handle_task_reminder" in content, (
+        "worker.py missing handle_task_reminder import"
+    )
+
+
+def test_reminder_handler_schedules_to_redis():
+    """
+    Regression: handle_reminder must call _schedule_task_reminder when
+    due_at is set. Without this, reminders created via SMS conversation
+    are stored but never delivered.
+    """
+    import inspect
+    from app.tasks import reminder
+    source = inspect.getsource(reminder.handle_reminder)
+    assert "_schedule_task_reminder" in source, (
+        "handle_reminder must call _schedule_task_reminder when due_at is set"
+    )
