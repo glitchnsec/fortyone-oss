@@ -292,3 +292,146 @@ async def test_unauthenticated_goals_returns_401(client):
     assert resp.status_code in (401, 403), (
         f"Expected 401 or 403 for unauthenticated request, got {resp.status_code}"
     )
+
+
+# ─── T1. POST /api/v1/tasks → 201 ─────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_create_task_returns_201(client):
+    """POST /api/v1/tasks creates a task and returns 201 with id."""
+    token = await _register_and_get_token(client, "tasks1@example.com")
+    resp = await client.post(
+        "/api/v1/tasks",
+        json={
+            "title": "Buy groceries",
+            "task_type": "reminder",
+            "description": "Milk, eggs, bread",
+        },
+        headers=_auth(token),
+    )
+    assert resp.status_code == 201, f"Expected 201, got {resp.status_code}: {resp.text}"
+    data = resp.json()
+    assert "id" in data
+    assert data["title"] == "Buy groceries"
+    assert data["task_type"] == "reminder"
+
+
+# ─── T2. GET /api/v1/tasks → 200 ──────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_list_tasks_returns_200(client):
+    """GET /api/v1/tasks returns 200 with tasks list."""
+    token = await _register_and_get_token(client, "tasks2@example.com")
+
+    # Create a task first
+    await client.post(
+        "/api/v1/tasks",
+        json={"title": "Call dentist", "task_type": "follow_up"},
+        headers=_auth(token),
+    )
+
+    resp = await client.get("/api/v1/tasks", headers=_auth(token))
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "tasks" in data
+    assert len(data["tasks"]) >= 1
+    assert data["tasks"][0]["title"] == "Call dentist"
+
+
+# ─── T3. PATCH /api/v1/tasks/{id} → 200 ───────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_update_task_returns_200(client):
+    """PATCH /api/v1/tasks/{id} updates task and returns 200."""
+    token = await _register_and_get_token(client, "tasks3@example.com")
+
+    # Create
+    create_resp = await client.post(
+        "/api/v1/tasks",
+        json={"title": "Original task"},
+        headers=_auth(token),
+    )
+    task_id = create_resp.json()["id"]
+
+    # Update
+    resp = await client.patch(
+        f"/api/v1/tasks/{task_id}",
+        json={"title": "Updated task", "description": "With details now"},
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["title"] == "Updated task"
+
+
+# ─── T4. POST /api/v1/tasks/{id}/complete → 200 ───────────────────────────
+
+@pytest.mark.asyncio
+async def test_complete_task_returns_200(client):
+    """POST /api/v1/tasks/{id}/complete marks task complete."""
+    token = await _register_and_get_token(client, "tasks4@example.com")
+
+    # Create
+    create_resp = await client.post(
+        "/api/v1/tasks",
+        json={"title": "Task to complete"},
+        headers=_auth(token),
+    )
+    task_id = create_resp.json()["id"]
+
+    # Complete
+    resp = await client.post(
+        f"/api/v1/tasks/{task_id}/complete",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["completed"] is True
+
+    # Verify not in active list
+    list_resp = await client.get("/api/v1/tasks?status=active", headers=_auth(token))
+    active_ids = [t["id"] for t in list_resp.json()["tasks"]]
+    assert task_id not in active_ids
+
+    # But appears in completed list
+    completed_resp = await client.get("/api/v1/tasks?status=completed", headers=_auth(token))
+    completed_ids = [t["id"] for t in completed_resp.json()["tasks"]]
+    assert task_id in completed_ids
+
+
+# ─── T5. DELETE /api/v1/tasks/{id} → 204 ──────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_delete_task_returns_204(client):
+    """DELETE /api/v1/tasks/{id} removes task and returns 204."""
+    token = await _register_and_get_token(client, "tasks5@example.com")
+
+    # Create
+    create_resp = await client.post(
+        "/api/v1/tasks",
+        json={"title": "Task to delete"},
+        headers=_auth(token),
+    )
+    task_id = create_resp.json()["id"]
+
+    # Delete
+    resp = await client.delete(
+        f"/api/v1/tasks/{task_id}",
+        headers=_auth(token),
+    )
+    assert resp.status_code == 204
+
+    # Verify gone
+    list_resp = await client.get("/api/v1/tasks?status=all", headers=_auth(token))
+    task_ids = [t["id"] for t in list_resp.json()["tasks"]]
+    assert task_id not in task_ids
+
+
+# ─── T6. Unauthenticated /api/v1/tasks → 401 ─────────────────────────────
+
+@pytest.mark.asyncio
+async def test_unauthenticated_tasks_returns_401(client):
+    """GET /api/v1/tasks without auth token returns 401."""
+    resp = await client.get("/api/v1/tasks")
+    assert resp.status_code in (401, 403), (
+        f"Expected 401 or 403, got {resp.status_code}"
+    )

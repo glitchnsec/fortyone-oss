@@ -299,7 +299,7 @@ async def create_task(
     store = MemoryStore(db)
     from dateutil.parser import parse as parse_date
     due_at = parse_date(body.due_at) if body.due_at else None
-    task = await store.create_task(
+    task = await store.store_task(
         user_id=user.id,
         task_type=body.task_type,
         title=body.title,
