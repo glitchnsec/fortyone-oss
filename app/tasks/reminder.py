@@ -74,6 +74,21 @@ def _parse_relative_time(text: str) -> datetime | None:
     return None
 
 
+def _has_time_reference(text: str) -> bool:
+    """Check if the user's message contains any time-related words."""
+    lower = text.lower()
+    time_patterns = [
+        r'\bin\s+\d+\s*(?:min|hour|sec|hr)',
+        r'\bin\s+(?:a|an)\s+(?:hour|minute)',
+        r'\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)?',
+        r'\btomorrow\b', r'\btonight\b', r'\btoday\b',
+        r'\bnext\s+(?:week|month|hour|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b',
+        r'\bmorning\b', r'\bevening\b', r'\bafternoon\b',
+        r'\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b',
+    ]
+    return any(re.search(p, lower) for p in time_patterns)
+
+
 async def handle_reminder(payload: dict) -> dict:
     job_id: str = payload["job_id"]
     phone: str = payload["phone"]
@@ -143,6 +158,44 @@ async def handle_reminder(payload: dict) -> dict:
                     "REMINDER_RELATIVE_PARSE  body=%r  computed=%s",
                     body[:60], due_at.isoformat(),
                 )
+
+        # If we still have no due_at after LLM + relative parse, signal
+        # failure back to the caller so the manager LLM can ask the user
+        # to clarify — NOT silently claim success.
+        user_wanted_time = bool(data.get("due_at")) or _has_time_reference(body)
+        if due_at is None and user_wanted_time:
+            logger.warning(
+                "REMINDER_DATE_FAILED  body=%r — could not compute a valid future time",
+                body[:60],
+            )
+            task_title = data.get("task", body)
+            # Still store the task (without due_at) so the user can edit it in dashboard
+            task = await store.store_task(
+                user_id=user.id,
+                task_type="reminder",
+                title=task_title,
+                due_at=None,
+                metadata={
+                    "contact": data.get("contact"),
+                    "recurrence": data.get("recurrence", "none"),
+                },
+            )
+            return {
+                "job_id": job_id,
+                "phone": phone,
+                "response": (
+                    f"I saved '{task_title}' as a task, but I couldn't figure out "
+                    f"the exact time. Could you tell me when you'd like to be reminded? "
+                    f"You can also set the time from your dashboard."
+                ),
+                "task_id": task.id,
+                "error": "date_parse_failed",
+                "learn": {
+                    "type": "reminder_created",
+                    "task": task_title,
+                    "due_at": None,
+                },
+            }
 
         task = await store.store_task(
             user_id=user.id,

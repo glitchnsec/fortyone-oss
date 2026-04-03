@@ -470,7 +470,12 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             if tool_args.get("due_at"):
                 reminder_payload["body"] += f" at {tool_args['due_at']}"
             result = await handle_reminder(reminder_payload)
-            return {"result": result.get("response", "Reminder set")}
+            tool_result = {"result": result.get("response", "Reminder set")}
+            # Propagate errors so the manager loop knows the tool partially failed
+            if result.get("error"):
+                tool_result["error"] = result["error"]
+                tool_result["user_message"] = result.get("response", "")
+            return tool_result
 
         elif tool_name == "list_tasks":
             from app.tasks.recall import handle_recall
