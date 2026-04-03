@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, String, Text
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -39,12 +39,16 @@ class User(Base):
     phone_verified = Column(Boolean, default=False)
     assistant_name = Column(String, nullable=True)  # Onboarding step 3 (DASH-02 / D-12)
     personality_notes = Column(Text, nullable=True)  # Free-form personality/tone notes
+    proactive_settings_json = Column(Text, nullable=True)  # JSON: max_daily_messages, quiet_hours, briefing_times, enabled
 
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
     messages = relationship("Message", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("UserSession", back_populates="user", cascade="all, delete-orphan")
     personas = relationship("Persona", back_populates="user", cascade="all, delete-orphan")
+    goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
+    action_logs = relationship("ActionLog", back_populates="user", cascade="all, delete-orphan")
+    profile_entries = relationship("UserProfile", back_populates="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -141,6 +145,86 @@ class Persona(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", back_populates="personas")
+
+
+class Goal(Base):
+    """
+    User goals tracked via OKR, SMART, or custom frameworks.
+    Supports hierarchical goal trees via parent_goal_id.
+    """
+    __tablename__ = "goals"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    persona_id = Column(String, ForeignKey("personas.id"), nullable=True)
+    framework = Column(String, nullable=False, default="custom")  # okr | smart | custom
+    title = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    target_date = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String, default="active")  # active | completed | archived
+    parent_goal_id = Column(String, ForeignKey("goals.id"), nullable=True)
+    metadata_json = Column(Text, nullable=True)
+    version = Column(Integer, default=1)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="goals")
+
+
+class ActionLog(Base):
+    """
+    Audit trail for all actions taken by the proactive agent on behalf of a user.
+    """
+    __tablename__ = "action_log"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    action_type = Column(String, nullable=False)  # email_sent | event_created | search | briefing
+    description = Column(Text, nullable=False)
+    outcome = Column(String, nullable=True)  # success | failed | cancelled | pending
+    trigger = Column(String, nullable=True)  # user_request | scheduled | event_driven
+    metadata_json = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="action_logs")
+
+
+class PendingAction(Base):
+    """
+    Actions awaiting user confirmation before execution.
+    High-risk actions (send_email, create_event) require explicit approval.
+    """
+    __tablename__ = "pending_actions"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    action_type = Column(String, nullable=False)
+    action_params_json = Column(Text, nullable=False)
+    risk_level = Column(String, nullable=False)  # low | medium | high
+    status = Column(String, default="pending")  # pending | confirmed | rejected | expired
+    expires_at = Column(DateTime(timezone=True), nullable=False)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User")
+
+
+class UserProfile(Base):
+    """
+    Structured user profile entries using TELOS framework sections.
+    Each entry is a labeled content snippet within a section.
+    """
+    __tablename__ = "user_profiles"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    section = Column(String, nullable=False)  # TELOS: problems | mission | goals | challenges | wisdom | ideas | predictions | preferences | narratives | history
+    label = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
+    persona_id = Column(String, ForeignKey("personas.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="profile_entries")
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
