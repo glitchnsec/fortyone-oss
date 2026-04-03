@@ -296,9 +296,23 @@ async def create_task(
     db: AsyncSession = Depends(_get_db),
 ):
     """Create a new task."""
+    from datetime import datetime, timezone
     store = MemoryStore(db)
-    from dateutil.parser import parse as parse_date
-    due_at = parse_date(body.due_at) if body.due_at else None
+    due_at = None
+    if body.due_at:
+        from dateutil.parser import parse as parse_date
+        import zoneinfo
+        parsed = parse_date(body.due_at)
+        if parsed.tzinfo is None:
+            user_tz_name = getattr(user, "timezone", None) or "America/New_York"
+            try:
+                user_tz = zoneinfo.ZoneInfo(user_tz_name)
+                parsed = parsed.replace(tzinfo=user_tz)
+            except (KeyError, Exception):
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        if parsed < datetime.now(timezone.utc):
+            raise HTTPException(400, "Due date cannot be in the past")
+        due_at = parsed
     task = await store.store_task(
         user_id=user.id,
         task_type=body.task_type,
@@ -318,15 +332,34 @@ async def update_task(
     db: AsyncSession = Depends(_get_db),
 ):
     """Update a task's fields."""
+    from datetime import datetime, timezone
     store = MemoryStore(db)
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if "due_at" in updates and updates["due_at"]:
         from dateutil.parser import parse as parse_date
-        updates["due_at"] = parse_date(updates["due_at"])
+        import zoneinfo
+        parsed = parse_date(updates["due_at"])
+        # If naive (no timezone from datetime-local input), treat as user's local time
+        if parsed.tzinfo is None:
+            user_tz_name = getattr(user, "timezone", None) or "America/New_York"
+            try:
+                user_tz = zoneinfo.ZoneInfo(user_tz_name)
+                parsed = parsed.replace(tzinfo=user_tz)
+            except (KeyError, Exception):
+                parsed = parsed.replace(tzinfo=timezone.utc)
+        # Guard: reject dates in the past
+        if parsed < datetime.now(timezone.utc):
+            raise HTTPException(400, "Due date cannot be in the past")
+        updates["due_at"] = parsed
     task = await store.update_task(user.id, task_id, **updates)
     if not task:
         raise HTTPException(404, "Task not found")
-    return {"id": task.id, "title": task.title, "completed": task.completed}
+    return {
+        "id": task.id,
+        "title": task.title,
+        "completed": task.completed,
+        "due_at": task.due_at.isoformat() if task.due_at else None,
+    }
 
 
 @router.post("/tasks/{task_id}/complete")
