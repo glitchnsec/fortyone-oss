@@ -368,8 +368,11 @@ def _build_system_prompt(payload: dict) -> str:
         "- If you use a tool, summarize the results naturally for the user.\n"
         "- Never expose raw tool output or JSON to the user.\n"
         "- If a tool fails or is unavailable, tell the user honestly — e.g., 'I can't search the web right now.'\n"
-        "- NEVER create a reminder for the user to do something they asked YOU to handle. "
-        "If you can't complete a task, say so and offer alternatives that YOU can do.\n"
+        "- When the user says 'remind me to...' or 'set a reminder for...', ALWAYS use the create_reminder tool. "
+        "Setting reminders IS your job — you are a personal assistant that manages reminders and tasks.\n"
+        "- However, do NOT create a reminder as a substitute when a different tool fails. "
+        "For example, if web_search fails while the user asked you to find something, "
+        "don't create a reminder for the user to search manually — tell them the search is unavailable instead.\n"
         "- Do not mention technical details like API keys or configuration to the user."
     )
 

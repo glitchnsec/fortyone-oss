@@ -466,11 +466,13 @@ def test_system_prompt_forbids_task_deflection():
 
     result = _build_system_prompt({"context": {}, "persona": "shared"})
 
-    assert "NEVER create a reminder" in result, (
-        "System prompt missing anti-deflection rule"
+    # Anti-deflection: don't create reminders as substitute for failed tools
+    assert "do NOT create a reminder as a substitute" in result or "do not create a reminder as a substitute" in result.lower(), (
+        "System prompt missing anti-deflection rule for tool failure substitution"
     )
-    assert "asked YOU to handle" in result, (
-        "System prompt should reference user's delegation intent"
+    # Pro-reminder: explicitly say reminders ARE your job
+    assert "create_reminder tool" in result or "ALWAYS use the create_reminder" in result, (
+        "System prompt must tell LLM that setting reminders is its job"
     )
     assert "tool fails" in result or "unavailable" in result, (
         "System prompt should instruct transparency about tool failures"
