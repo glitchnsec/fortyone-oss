@@ -491,12 +491,18 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
 
         elif tool_name == "create_reminder":
             from app.tasks.reminder import handle_reminder
+            # Pass the ORIGINAL user message as body so the relative time
+            # parser can find "in 5 mins", "in 2 hours" etc. The LLM's
+            # title and due_at are passed separately via tool_args.
+            original_body = payload.get("body", "")
+            reminder_body = f"remind me to {tool_args.get('title', '')}"
+            if tool_args.get("due_at"):
+                reminder_body += f" at {tool_args['due_at']}"
             reminder_payload = {
                 **payload,
-                "body": f"remind me to {tool_args.get('title', '')}",
+                "body": reminder_body,
+                "_original_body": original_body,  # for relative time fallback
             }
-            if tool_args.get("due_at"):
-                reminder_payload["body"] += f" at {tool_args['due_at']}"
             result = await handle_reminder(reminder_payload)
             tool_result = {"result": result.get("response", "Reminder set")}
             # Propagate errors so the manager loop knows the tool partially failed

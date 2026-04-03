@@ -151,12 +151,17 @@ async def handle_reminder(payload: dict) -> dict:
         # Fallback: if LLM failed to produce a valid future date, try to
         # compute it deterministically from the user's message.
         # This handles "in 5 minutes", "in an hour", "in 30 min", etc.
+        # Try the original user message first (from manager dispatch),
+        # then fall back to the constructed body.
         if due_at is None:
-            due_at = _parse_relative_time(body)
+            original_body = payload.get("_original_body", "")
+            due_at = _parse_relative_time(original_body) if original_body else None
+            if due_at is None:
+                due_at = _parse_relative_time(body)
             if due_at:
                 logger.info(
-                    "REMINDER_RELATIVE_PARSE  body=%r  computed=%s",
-                    body[:60], due_at.isoformat(),
+                    "REMINDER_RELATIVE_PARSE  original=%r  body=%r  computed=%s",
+                    original_body[:60], body[:60], due_at.isoformat(),
                 )
 
         # If we still have no due_at after LLM + relative parse, signal
