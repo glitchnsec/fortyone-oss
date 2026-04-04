@@ -525,6 +525,7 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 **payload,
                 "body": reminder_body,
                 "_original_body": original_body,  # for relative time fallback
+                "_manager_action_type": tool_args.get("action_type"),
             }
             result = await handle_reminder(reminder_payload)
             tool_result = {"result": result.get("response", "Reminder set")}

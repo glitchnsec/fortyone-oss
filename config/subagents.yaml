@@ -110,6 +110,14 @@ subagents:
             due_at:
               type: string
               description: "When to trigger the reminder, in ISO 8601 format. For relative times like 'in 5 minutes', compute from the current time provided in the system prompt. If unsure, leave null and the system will parse it."
+            action_type:
+              type: string
+              enum: ["notify", "execute"]
+              description: >-
+                'notify' if the user wants to be reminded to do something themselves
+                (e.g. 'remind me to call mom'). 'execute' if the user wants the
+                assistant to perform an action at the scheduled time (e.g. 'tell me
+                a joke in 2 mins', 'send me the weather tonight'). Defaults to 'notify'.
           required: ["title"]
         handler: app.tasks.reminder.handle_reminder
         risk_level: low
