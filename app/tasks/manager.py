@@ -67,6 +67,16 @@ async def manager_dispatch(payload: dict) -> dict:
     # Get available tool schemas
     tools = get_tool_schemas()
 
+    # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
+    # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
+    source = payload.get("source", "")
+    if source == "scheduled_execute":
+        tools = [t for t in tools if t["function"]["name"] != "create_reminder"]
+        logger.info(
+            "SCHEDULED_EXECUTE  removed create_reminder tool  job_id=%s",
+            job_id,
+        )
+
     # Manager dispatch loop with tool calling
     from app.tasks._llm import llm_tools
 
@@ -392,6 +402,15 @@ def _build_system_prompt(payload: dict) -> str:
         # "don't create a reminder for the user to search manually — tell them the search is unavailable instead.\n"
         "- Do not mention technical details like API keys or configuration to the user."
     )
+
+    # Scheduled execution context — tell the manager to act, not re-schedule
+    if payload.get("source") == "scheduled_execute":
+        parts.append(
+            "\nIMPORTANT: This is a scheduled task execution. The user asked for this to be "
+            "done at this time. Respond directly to their request — generate the content, "
+            "look up the information, or perform the action they asked for. Do NOT create "
+            "new reminders or schedule anything. Just do it and respond."
+        )
 
     # Add persona context
     if persona and persona != "shared":

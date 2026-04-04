@@ -409,8 +409,8 @@ async def test_task_reminder_execute_fallback_on_redis_failure(db_session):
             "channel": "sms",
         })
 
-    # Fallback to static notification
-    assert result["response"] == "Reminder: tell me a joke"
+    # Fallback to static notification (uses DB task title "call mom", not payload title)
+    assert result["response"] == "Reminder: call mom"
 
 
 # ─── Integration: manager loop prevention ────────────────────────────────────

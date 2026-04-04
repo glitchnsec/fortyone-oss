@@ -351,6 +351,28 @@ async def handle_task_reminder(payload: dict) -> dict:
         # Use current title if task still exists
         reminder_title = task.title if task else title
 
+        # Parse metadata for action_type (Phase 4.1: smart reminder execution)
+        import json as _json
+        metadata = {}
+        if task and task.metadata_json:
+            try:
+                metadata = _json.loads(task.metadata_json)
+            except (ValueError, TypeError):
+                pass
+
+        action_type = metadata.get("action_type", "notify")
+        if action_type not in ("notify", "execute"):
+            action_type = "notify"
+
+        if action_type == "execute":
+            logger.info(
+                "EXECUTE_REMINDER  task_id=%s  user=%s  title=%r",
+                task_id, user_id[:8], reminder_title[:60],
+            )
+            return await _execute_reminder_via_manager(
+                user_id, task_id, reminder_title, phone, payload
+            )
+
         response = f"Reminder: {reminder_title}"
 
         # Log the action
@@ -370,6 +392,98 @@ async def handle_task_reminder(payload: dict) -> dict:
         "address": phone,
         "channel": payload.get("channel", "sms"),
         "response": response,
+    }
+
+
+# ─── Execute reminder re-queue ───────────────────────────────────────────────
+
+async def _execute_reminder_via_manager(
+    user_id: str, task_id: str, title: str, phone: str, original_payload: dict
+) -> dict:
+    """Re-queue a scheduled 'execute' reminder as a NEEDS_MANAGER job.
+
+    Loads user context (memories, profile) from DB so the manager LLM
+    can generate personalized responses (e.g. weather for user's location).
+
+    Uses a fresh Redis connection (not queue_client singleton) because
+    the worker process may not have queue_client connected (Research Pitfall 4).
+    """
+    import uuid
+    import json as _json
+    import redis.asyncio as aioredis
+    from app.config import get_settings
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    settings = get_settings()
+    new_job_id = str(uuid.uuid4())
+
+    # Load user context so manager has memories, personality, location, etc.
+    context = {}
+    try:
+        async with AsyncSessionLocal() as db:
+            store = MemoryStore(db)
+            context = await store.get_context_standard(user_id)
+    except Exception as exc:
+        logger.warning("Failed to load context for execute reminder: %s", exc)
+
+    manager_payload = {
+        "job_id": new_job_id,
+        "intent": "needs_manager",
+        "phone": phone,
+        "address": phone,
+        "channel": original_payload.get("channel", "sms"),
+        "body": title,
+        "user_id": user_id,
+        "persona": "shared",
+        "context": context,
+        "source": "scheduled_execute",
+    }
+
+    try:
+        r = await aioredis.from_url(
+            settings.redis_url, encoding="utf-8", decode_responses=True
+        )
+        await r.xadd(settings.queue_name, {"data": _json.dumps(manager_payload)})
+        await r.aclose()
+        logger.info(
+            "EXECUTE_REMINDER_QUEUED  task_id=%s  new_job_id=%s  title=%r",
+            task_id, new_job_id, title[:60],
+        )
+    except Exception as exc:
+        logger.error("Failed to re-queue execute reminder: %s", exc)
+        # Fallback: send static notification so user isn't left hanging
+        return {
+            "job_id": original_payload.get("job_id", ""),
+            "phone": phone,
+            "address": phone,
+            "channel": original_payload.get("channel", "sms"),
+            "response": f"Reminder: {title}",
+        }
+
+    # Log the action
+    try:
+        async with AsyncSessionLocal() as db:
+            store = MemoryStore(db)
+            await store.log_action(
+                user_id=user_id,
+                action_type="execute_reminder",
+                description=f"Re-queued execute reminder: {title}",
+                outcome="success",
+                trigger="scheduled",
+            )
+    except Exception as exc:
+        logger.warning("Failed to log execute reminder action: %s", exc)
+
+    await _record_send(user_id)
+
+    # Return empty response — the manager job will produce the real one
+    return {
+        "job_id": original_payload.get("job_id", ""),
+        "phone": phone,
+        "address": phone,
+        "channel": original_payload.get("channel", "sms"),
+        "response": "",
     }
 
 
