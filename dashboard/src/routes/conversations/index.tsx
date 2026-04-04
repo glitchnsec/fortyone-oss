@@ -71,7 +71,7 @@ function ConversationsPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-8">
+    <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="mb-6 text-xl font-semibold text-neutral-900">Conversation History</h1>
 
       {isError && (
@@ -84,14 +84,14 @@ function ConversationsPage() {
         <EmptyState />
       ) : (
         <>
-          <div className="rounded-md border border-neutral-200">
+          <div className="overflow-x-auto rounded-md border border-neutral-200">
             <Table>
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-[180px]">Time</TableHead>
-                  <TableHead className="w-[100px]">Direction</TableHead>
+                  <TableHead className="hidden sm:table-cell w-[100px]">Direction</TableHead>
                   <TableHead>Message</TableHead>
-                  <TableHead className="w-[120px]">Intent</TableHead>
+                  <TableHead className="hidden sm:table-cell w-[120px]">Intent</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -100,7 +100,7 @@ function ConversationsPage() {
                     <TableCell className="text-xs text-neutral-500">
                       {formatDate(msg.created_at)}
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       <DirectionBadge direction={msg.direction} />
                     </TableCell>
                     <TableCell className="max-w-xs">
@@ -108,7 +108,7 @@ function ConversationsPage() {
                         {msg.body}
                       </span>
                     </TableCell>
-                    <TableCell>
+                    <TableCell className="hidden sm:table-cell">
                       {msg.intent ? (
                         <IntentBadge intent={msg.intent} />
                       ) : (

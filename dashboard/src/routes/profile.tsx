@@ -167,7 +167,7 @@ function ProfilePage() {
   }, {});
 
   return (
-    <div className="space-y-6">
+    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-6 sm:py-8 space-y-6">
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold tracking-tight">Profile</h1>
@@ -192,7 +192,7 @@ function ProfilePage() {
         <Card>
           <CardContent className="pt-6">
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="section">Section</Label>
                   <Select value={section} onValueChange={setSection}>

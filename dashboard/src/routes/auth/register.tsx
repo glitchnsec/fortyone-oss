@@ -57,7 +57,7 @@ function RegisterPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-white">
+    <div className="min-h-screen flex items-center justify-center bg-white px-4">
       <Card className="w-full max-w-[400px] border border-neutral-200 shadow-sm">
         <CardHeader>
           <h1 className="text-[28px] font-semibold leading-[1.2]">Create your account</h1>

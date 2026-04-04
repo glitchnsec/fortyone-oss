@@ -158,7 +158,7 @@ function GoalsPage() {
   const goals = data?.goals ?? [];
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-8">
+    <div className="mx-auto max-w-4xl px-4 sm:px-6 py-6 sm:py-8">
       <div className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-neutral-900">Goals</h1>
         <Button
@@ -185,7 +185,7 @@ function GoalsPage() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label>Framework</Label>
                   <Select value={framework} onValueChange={setFramework}>
@@ -276,9 +276,9 @@ function GoalsPage() {
       <div className="space-y-3">
         {goals.map((goal) => (
           <Card key={goal.id} className="border border-neutral-200">
-            <CardHeader className="flex flex-row items-start justify-between pb-2">
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
+            <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
+              <div className="flex-1 min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="text-sm font-medium text-neutral-900">{goal.title}</h3>
                   <Badge variant="outline" className="text-xs">
                     {goal.framework.toUpperCase()}

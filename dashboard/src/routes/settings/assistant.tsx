@@ -86,7 +86,7 @@ function AssistantSettingsPage() {
   };
 
   return (
-    <div className="mx-auto max-w-2xl px-6 py-8">
+    <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="mb-6 text-xl font-semibold text-neutral-900">Assistant Settings</h1>
 
       <form onSubmit={handleSubmit} className="space-y-6">

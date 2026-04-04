@@ -69,7 +69,7 @@ function ActionsPage() {
   const hasMore = actions.length === limit;
 
   return (
-    <div className="mx-auto max-w-3xl px-6 py-8">
+    <div className="mx-auto max-w-3xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="mb-6 text-xl font-semibold text-neutral-900">Activity</h1>
 
       {isLoading && (
