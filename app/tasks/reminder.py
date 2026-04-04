@@ -18,7 +18,11 @@ REMINDER_SYSTEM = (
     "You are a reminder extraction assistant. "
     "Extract structured reminder data from the user's message and return JSON with these fields: "
     "task (string), due_at (ISO 8601 UTC string or null), recurrence ('none'|'daily'|'weekly'|'monthly'), "
-    "contact (string or null), confirmation (one casual friendly sentence confirming the reminder). "
+    "contact (string or null), "
+    "action_type ('notify' if the user wants to be reminded to do something themselves, "
+    "'execute' if the user wants ME to do something at that time — e.g. 'tell me a joke', "
+    "'send me the weather', 'text me a fun fact'), "
+    "confirmation (one casual friendly sentence confirming the reminder). "
     "Return valid JSON only. If time is relative (e.g. 'tomorrow at 3pm'), convert to absolute UTC. "
     "If time is ambiguous, pick the most sensible interpretation and mention it."
 )
@@ -199,8 +203,19 @@ async def handle_reminder(payload: dict) -> dict:
         "due_at": mock_due.isoformat(),
         "recurrence": "none",
         "contact": None,
+        "action_type": "notify",
         "confirmation": f"Got it! I'll remind you about that.",
     }, model=_s.llm_model_capable)
+
+    # Normalize action_type from LLM extraction
+    action_type = data.get("action_type", "notify")
+    if action_type not in ("notify", "execute"):
+        action_type = "notify"
+
+    # Manager's classification (with full conversation context) takes precedence
+    manager_override = payload.get("_manager_action_type")
+    if manager_override in ("notify", "execute"):
+        action_type = manager_override
 
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
@@ -273,6 +288,7 @@ async def handle_reminder(payload: dict) -> dict:
                 metadata={
                     "contact": data.get("contact"),
                     "recurrence": data.get("recurrence", "none"),
+                    "action_type": action_type,
                 },
             )
             return {
@@ -300,6 +316,7 @@ async def handle_reminder(payload: dict) -> dict:
             metadata={
                 "contact": data.get("contact"),
                 "recurrence": data.get("recurrence", "none"),
+                "action_type": action_type,
             },
         )
 
