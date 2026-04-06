@@ -151,6 +151,7 @@ class Worker:
                     handle_task_reminder,
                     handle_profile_nudge, handle_smart_checkin,
                     handle_insight_observation,
+                    handle_goal_coaching,
                 )
                 if job_type == "morning_briefing":
                     result = await handle_morning_briefing(payload)
@@ -168,6 +169,8 @@ class Worker:
                     result = await handle_smart_checkin(payload)
                 elif job_type == "insight_observation":
                     result = await handle_insight_observation(payload)
+                elif job_type == "goal_coaching":
+                    result = await handle_goal_coaching(payload)
                 else:
                     logger.warning("Unknown proactive job type=%s", job_type)
                     result = {"job_id": job_id, "phone": phone, "response": ""}

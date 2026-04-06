@@ -380,6 +380,16 @@ def _build_system_prompt(payload: dict) -> str:
     except ImportError:
         pass
 
+    from datetime import datetime, timezone as tz
+    import zoneinfo
+    user_tz_name = context.get("timezone", "UTC")
+    try:
+        user_tz = zoneinfo.ZoneInfo(user_tz_name)
+        now_local = datetime.now(user_tz)
+        parts.append(f"Current time: {now_local.strftime('%Y-%m-%d %H:%M %Z')} ({user_tz_name})")
+    except Exception:
+        parts.append(f"Current time: {datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+
     parts.append(
         "You are a VERY capable and wise personal assistant manager. Your the best at understanding the user's needs and you help them achieve their fullest potential. "
         "You can respond directly to simple questions "
@@ -410,6 +420,23 @@ def _build_system_prompt(payload: dict) -> str:
             "done at this time. Respond directly to their request — generate the content, "
             "look up the information, or perform the action they asked for. Do NOT create "
             "new reminders or schedule anything. Just do it and respond."
+        )
+
+    # Scheduled goal coaching context (D-09, D-10)
+    if source == "scheduled_coaching":
+        parts.append(
+            "\nIMPORTANT: This is a scheduled goal coaching session. You are helping the user "
+            "achieve their goals. Use web search to research strategies if needed. Be specific, "
+            "actionable, and encouraging. Reference the goal details provided. Do NOT create "
+            "reminders -- focus on coaching and advice."
+        )
+
+    # Scheduled smart check-in context (D-03: calendar-aware check-ins)
+    if source == "scheduled_checkin":
+        parts.append(
+            "\nIMPORTANT: This is a scheduled check-in. Generate a thoughtful, personalized "
+            "message. Use calendar and task tools to gather context about the user's day. "
+            "Be warm, specific, and helpful -- not generic. Reference calendar events if available."
         )
 
     # Add persona context

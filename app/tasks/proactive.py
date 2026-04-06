@@ -4,11 +4,12 @@ Proactive job handlers -- process scheduled jobs from the scheduler service.
 Handlers:
   - handle_morning_briefing: summarize upcoming tasks, goals, calendar for the day
   - handle_evening_recap: summarize what was accomplished today
-  - handle_goal_checkin: surface suggestions related to active goals
+  - handle_goal_checkin: surface suggestions related to active goals (deprecated, see handle_goal_coaching)
   - handle_weekly_digest: weekly SMS summary of actions taken (D-10)
   - handle_profile_nudge: detect incomplete profile fields, send friendly nudges (D-02)
   - handle_smart_checkin: re-queue through manager for tool-assisted check-in (D-03)
   - handle_insight_observation: surface patterns from accumulated memories (D-02)
+  - handle_goal_coaching: full coaching loop via manager tool-calling (D-09, D-10)
 
 All handlers:
   - Record actions via store.log_action (AGENT-06)
@@ -168,7 +169,12 @@ async def handle_evening_recap(payload: dict) -> dict:
 
 
 async def handle_goal_checkin(payload: dict) -> dict:
-    """Goal check-in -- surface progress and suggestions for active goals (AGENT-04)."""
+    """Goal check-in -- surface progress and suggestions for active goals (AGENT-04).
+
+    DEPRECATED: Superseded by handle_goal_coaching which uses the manager's
+    tool-calling system for richer, research-backed coaching (D-09, D-10).
+    Kept for backward compatibility with pre-pool scheduled jobs.
+    """
     user_id = payload.get("user_id", "")
     job_id = payload.get("job_id", "")
 
@@ -730,6 +736,166 @@ async def handle_insight_observation(payload: dict) -> dict:
         "channel": payload.get("channel", "sms"),
         "response": insight,
     }
+
+
+# ─── Goal coaching handler (D-09, D-10) ───────────────────────────────────
+
+
+# Coaching states cycle: research -> plan -> check_in -> follow_up -> research
+_COACHING_STATES = ["research", "plan", "check_in", "follow_up"]
+
+
+async def handle_goal_coaching(payload: dict) -> dict:
+    """
+    Full goal coaching loop via manager tool-calling (D-09, D-10).
+
+    Selects the most relevant active goal, reads coaching state from
+    metadata_json, builds a coaching-specific body prompt, and re-queues
+    through the manager with source=scheduled_coaching for tool access
+    (web search, calendar, email).
+
+    Coaching state machine cycles: research -> plan -> check_in -> follow_up.
+    State is persisted in goal.metadata_json under the "coaching" key.
+    """
+    import json as _json
+
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+    phone = payload.get("phone", "")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            return _empty_result(job_id, user_id)
+
+        phone = phone or getattr(user, "phone", "")
+
+        goals = await store.get_goals(user_id, status="active")
+        if not goals:
+            logger.info("GOAL_COACHING_SKIP  user=%s  reason=no_active_goals", user_id[:8])
+            return _empty_result(job_id, user_id)
+
+        # Select the most relevant goal for coaching:
+        # 1. Prefer goals with approaching target_date (within 14 days)
+        # 2. Otherwise pick the most recently updated goal
+        now = datetime.now(timezone.utc)
+        approaching = [
+            g for g in goals
+            if g.target_date and (g.target_date - now) <= timedelta(days=14)
+        ]
+        if approaching:
+            # Pick the one with the soonest target_date
+            goal = min(approaching, key=lambda g: g.target_date)
+        else:
+            # Pick the most recently updated goal
+            goal = max(goals, key=lambda g: (g.updated_at or g.created_at or now))
+
+        # Read coaching state from metadata_json
+        metadata = {}
+        if goal.metadata_json:
+            try:
+                metadata = _json.loads(goal.metadata_json)
+            except (ValueError, TypeError):
+                pass
+
+        coaching = metadata.get("coaching", {"state": "research"})
+        state = coaching.get("state", "research")
+        steps = coaching.get("steps", [])
+        current_step = coaching.get("current_step", 0)
+
+        # Build target date string
+        target_str = (
+            goal.target_date.strftime("%Y-%m-%d") if goal.target_date else "no specific deadline"
+        )
+
+        # Build coaching-specific body prompt based on state
+        if state == "research":
+            body_prompt = (
+                f"Research strategies and best practices for achieving this goal: "
+                f"'{goal.title}'. Description: {goal.description or 'No description'}. "
+                f"Use web search to find actionable advice. Target date: {target_str}."
+            )
+        elif state == "plan":
+            research_results = coaching.get("research_results", "")
+            body_prompt = (
+                f"Based on previous research, create a step-by-step action plan for: "
+                f"'{goal.title}'. Break it into 3-5 concrete next steps the user can "
+                f"take this week. {f'Previous research: {research_results[:500]}' if research_results else ''}"
+            )
+        elif state == "check_in":
+            step_text = steps[current_step] if current_step < len(steps) else "their current step"
+            body_prompt = (
+                f"Check in on progress for goal: '{goal.title}'. "
+                f"Current step: {step_text}. "
+                f"Ask how it's going and offer encouragement or adjustment."
+            )
+        elif state == "follow_up":
+            body_prompt = (
+                f"The user may be stuck on their goal '{goal.title}'. "
+                f"Research alternative approaches and suggest a pivot or different strategy."
+            )
+        else:
+            body_prompt = (
+                f"Provide coaching for the user's goal: '{goal.title}'. "
+                f"Description: {goal.description or 'No description'}. Target: {target_str}."
+            )
+
+    # Re-queue via manager with coaching source
+    result = await _requeue_via_manager(
+        user_id=user_id,
+        phone=phone,
+        channel=payload.get("channel", "sms"),
+        body_prompt=body_prompt,
+        source_tag="scheduled_coaching",
+        payload=payload,
+        action_type="goal_coaching",
+    )
+
+    # Advance coaching state after re-queue
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        # Re-read goal to avoid stale state
+        from sqlalchemy import select as sa_select
+        from app.memory.models import Goal as GoalModel
+        goal_result = await db.execute(
+            sa_select(GoalModel).where(GoalModel.id == goal.id)
+        )
+        fresh_goal = goal_result.scalar_one_or_none()
+        if fresh_goal:
+            meta = {}
+            if fresh_goal.metadata_json:
+                try:
+                    meta = _json.loads(fresh_goal.metadata_json)
+                except (ValueError, TypeError):
+                    pass
+
+            coaching_data = meta.get("coaching", {"state": "research"})
+            current_state = coaching_data.get("state", "research")
+
+            # Advance state: research -> plan -> check_in -> follow_up -> research
+            try:
+                idx = _COACHING_STATES.index(current_state)
+                next_state = _COACHING_STATES[(idx + 1) % len(_COACHING_STATES)]
+            except ValueError:
+                next_state = "research"
+
+            coaching_data["state"] = next_state
+            coaching_data["last_coaching_at"] = now.isoformat()
+            meta["coaching"] = coaching_data
+            fresh_goal.metadata_json = _json.dumps(meta)
+            fresh_goal.updated_at = now
+            await db.commit()
+
+            logger.info(
+                "GOAL_COACHING  user=%s  goal=%s  state=%s->%s",
+                user_id[:8], goal.title[:40], current_state, next_state,
+            )
+
+    return result
 
 
 # ─── Shared re-queue helper ────────────────────────────────────────────────
