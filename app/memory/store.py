@@ -62,6 +62,35 @@ class MemoryStore:
             user.timezone = tz
             await self.db.commit()
 
+    # ─── Proactive Users ────────────────────────────────────────────────────
+
+    async def get_proactive_users(self) -> list[tuple[str, str, str | None]]:
+        """
+        Return all users where proactive messaging is not explicitly disabled.
+
+        Returns list of (user_id, timezone, proactive_settings_json) tuples.
+        Default is enabled — only users with proactive_settings_json containing
+        "enabled": false are excluded.
+        """
+        result = await self.db.execute(select(User))
+        users = list(result.scalars().all())
+        proactive_users = []
+        for user in users:
+            settings_json = user.proactive_settings_json
+            if settings_json:
+                try:
+                    settings = json.loads(settings_json)
+                    if settings.get("enabled") is False:
+                        continue
+                except (json.JSONDecodeError, TypeError):
+                    pass  # treat malformed JSON as enabled
+            proactive_users.append((
+                user.id,
+                user.timezone or "America/New_York",
+                settings_json,
+            ))
+        return proactive_users
+
     # ─── Memory ──────────────────────────────────────────────────────────────
 
     async def store_memory(

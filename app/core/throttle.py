@@ -6,18 +6,22 @@ Safety rails per D-11 and Known Pitfall 4:
   - check_idempotency(): prevent duplicate jobs (SET NX)
   - record_proactive_send(): increment counters after send
   - check_dead_man_switch(): if hourly limit exceeded, disable proactive for user
+  - is_quiet_hours(): check if current time is within user's quiet period
 
 All state is in Redis — survives process restarts and works across scheduler + worker.
 """
+import json
 import logging
 import time
+from datetime import datetime
 
 import redis.asyncio as aioredis
+import zoneinfo
 
 logger = logging.getLogger(__name__)
 
 # Defaults — can be overridden per-user via proactive_settings_json
-DEFAULT_MAX_PER_HOUR = 2
+DEFAULT_MAX_PER_HOUR = 10
 DEFAULT_MAX_PER_DAY = 5
 DEAD_MAN_SWITCH_THRESHOLD = 5  # If >5 in 1 hour, something is wrong
 
@@ -94,3 +98,48 @@ async def check_dead_man_switch(r: aioredis.Redis, user_id: str) -> bool:
         return False
 
     return True
+
+
+def is_quiet_hours(
+    user_timezone: str,
+    settings_json: str | None,
+    _override_hour: int | None = None,
+) -> bool:
+    """
+    Return True if current local time is within user's quiet hours.
+
+    Default quiet hours: 10 PM - 7 AM (22:00 - 07:00).
+    Handles midnight wraparound (e.g., 22-7 means hour >= 22 OR hour < 7).
+
+    Args:
+        user_timezone: IANA timezone string (e.g. "America/New_York")
+        settings_json: JSON string from user.proactive_settings_json (nullable)
+        _override_hour: For testing — override the current hour
+    """
+    # Parse quiet hours from settings or use defaults
+    start_hour = 22
+    end_hour = 7
+    if settings_json:
+        try:
+            settings = json.loads(settings_json)
+            quiet = settings.get("quiet_hours", {})
+            start_hour = quiet.get("start", 22)
+            end_hour = quiet.get("end", 7)
+        except (json.JSONDecodeError, TypeError):
+            pass  # use defaults
+
+    # Determine current hour in user's timezone
+    if _override_hour is not None:
+        hour = _override_hour
+    else:
+        tz = zoneinfo.ZoneInfo(user_timezone)
+        now_local = datetime.now(tz)
+        hour = now_local.hour
+
+    # Handle midnight wraparound
+    if start_hour > end_hour:
+        # e.g. 22-7: quiet if hour >= 22 OR hour < 7
+        return hour >= start_hour or hour < end_hour
+    else:
+        # e.g. 0-7: quiet if 0 <= hour < 7
+        return start_hour <= hour < end_hour
