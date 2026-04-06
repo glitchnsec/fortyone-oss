@@ -516,6 +516,7 @@ async def handle_profile_nudge(payload: dict) -> dict:
         from app.config import get_settings
         settings = get_settings()
 
+        nudge_count = 0  # default if Redis is unavailable
         try:
             r = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
             nudge_count_key = f"proactive:nudge_count:{user_id}"
