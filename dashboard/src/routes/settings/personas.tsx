@@ -47,6 +47,18 @@ interface PersonasResponse {
   personas: Persona[];
 }
 
+interface Connection {
+  id: string;
+  provider: string;
+  status: string;
+  persona_id: string | null;
+  capabilities?: Record<string, boolean>;
+}
+
+interface ConnectionsResponse {
+  connections: Connection[];
+}
+
 // ---- Page ----
 
 function PersonasSettingsPage() {
@@ -68,6 +80,29 @@ function PersonasSettingsPage() {
     queryKey: ["personas"],
     queryFn: () =>
       fetchWithAuth("/api/v1/personas").then((r) => r.json()) as Promise<PersonasResponse>,
+  });
+
+  const { data: connectionsData } = useQuery<ConnectionsResponse>({
+    queryKey: ["connections"],
+    queryFn: () =>
+      fetchWithAuth("/api/v1/connections").then((r) => r.json()) as Promise<ConnectionsResponse>,
+  });
+
+  const assignConnectionMutation = useMutation({
+    mutationFn: async ({ connId, personaId }: { connId: string; personaId: string | null }) => {
+      const res = await fetchWithAuth(`/api/v1/connections/${connId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ persona_id: personaId }),
+      });
+      if (!res.ok) throw new Error("Failed to assign connection.");
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Connection assigned.");
+      queryClient.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   const createMutation = useMutation({
@@ -156,6 +191,11 @@ function PersonasSettingsPage() {
   };
 
   const personas = data?.personas ?? [];
+  const allConnections = connectionsData?.connections ?? [];
+  const unassignedConnections = allConnections.filter((c) => c.persona_id === null || c.persona_id === undefined);
+
+  const getPersonaConnections = (personaId: string) =>
+    allConnections.filter((c) => c.persona_id === personaId);
 
   return (
     <div className="mx-auto max-w-2xl px-4 sm:px-6 py-6 sm:py-8">
@@ -340,10 +380,78 @@ function PersonasSettingsPage() {
                   </div>
                 </div>
               )}
+              {/* Connections assigned to this persona */}
+              {editingId !== persona.id && allConnections.length > 0 && (
+                <div className="mt-3 border-t border-neutral-100 pt-3">
+                  <p className="text-xs font-medium text-neutral-500 mb-2">
+                    Connections ({getPersonaConnections(persona.id).length})
+                  </p>
+                  {getPersonaConnections(persona.id).length === 0 ? (
+                    <p className="text-xs text-neutral-400">No connections assigned.</p>
+                  ) : (
+                    getPersonaConnections(persona.id).map((conn) => (
+                      <div key={conn.id} className="flex items-center justify-between py-1">
+                        <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
+                        <select
+                          className="text-xs border rounded px-2 py-1"
+                          value={conn.persona_id ?? ""}
+                          onChange={(e) =>
+                            assignConnectionMutation.mutate({
+                              connId: conn.id,
+                              personaId: e.target.value || null,
+                            })
+                          }
+                        >
+                          <option value="">Shared</option>
+                          {personas.map((p) => (
+                            <option key={p.id} value={p.id}>
+                              {p.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/* Unassigned connections (Shared) */}
+      {unassignedConnections.length > 0 && personas.length > 0 && (
+        <Card className="mt-6 border border-neutral-200">
+          <CardContent className="pt-4 pb-4">
+            <p className="text-sm font-medium text-neutral-700 mb-2">Shared Connections</p>
+            <p className="text-xs text-neutral-400 mb-3">
+              These connections are available to all personas.
+            </p>
+            {unassignedConnections.map((conn) => (
+              <div key={conn.id} className="flex items-center justify-between py-1">
+                <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
+                <select
+                  className="text-xs border rounded px-2 py-1"
+                  value=""
+                  onChange={(e) =>
+                    assignConnectionMutation.mutate({
+                      connId: conn.id,
+                      personaId: e.target.value || null,
+                    })
+                  }
+                >
+                  <option value="">Shared</option>
+                  {personas.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }
