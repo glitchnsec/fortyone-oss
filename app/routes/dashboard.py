@@ -15,7 +15,7 @@ import logging
 from typing import Optional
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -184,6 +184,33 @@ async def initiate_connection(
         return resp.json()
     except httpx.HTTPError as e:
         logger.error("initiate error: %s", e)
+        raise HTTPException(502, "Connections service unavailable")
+
+
+@router.patch("/connections/{conn_id}")
+async def update_connection(
+    conn_id: str,
+    request: Request,
+    user: User = Depends(get_current_user),
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Update a connection (e.g. persona assignment): proxy PATCH with ownership check."""
+    body = await request.json()
+    try:
+        # Verify ownership: fetch user's connections and check conn_id belongs to them
+        verify_resp = await client.get(f"/connections/{user.id}")
+        if verify_resp.status_code == 200:
+            connections = verify_resp.json().get("connections", [])
+            owned_ids = {c["id"] for c in connections}
+            if conn_id not in owned_ids:
+                raise HTTPException(403, "Not your connection")
+        resp = await client.patch(f"/connections/{conn_id}", json=body)
+        resp.raise_for_status()
+        return resp.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error("update connection error: %s", e)
         raise HTTPException(502, "Connections service unavailable")
 
 

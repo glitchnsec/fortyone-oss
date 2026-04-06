@@ -1,6 +1,8 @@
-"""List and delete user connections."""
+"""List, update, and delete user connections."""
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
@@ -9,6 +11,10 @@ from app.providers.google import get_provider
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+class ConnectionUpdate(BaseModel):
+    persona_id: str | None = None  # null means "shared"
 
 
 async def _get_db():
@@ -29,6 +35,7 @@ async def list_connections(user_id: str, db: AsyncSession = Depends(_get_db)):
             "id": c.id,
             "provider": c.provider,
             "status": c.status,
+            "persona_id": c.persona_id,
             "capabilities": {
                 "can_read_email": manifest.can_read_email,
                 "can_send_email": manifest.can_send_email,
@@ -48,3 +55,21 @@ async def delete_connection(conn_id: str, db: AsyncSession = Depends(_get_db)):
     await db.delete(conn)
     await db.commit()
     logger.info("Connection deleted id=%s", conn_id)
+
+
+@router.patch("/connections/{conn_id}")
+async def update_connection(
+    conn_id: str,
+    body: ConnectionUpdate,
+    db: AsyncSession = Depends(_get_db),
+):
+    """Update a connection's persona assignment."""
+    result = await db.execute(select(Connection).where(Connection.id == conn_id))
+    conn = result.scalar_one_or_none()
+    if not conn:
+        raise HTTPException(404, "Connection not found")
+    conn.persona_id = body.persona_id
+    conn.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    logger.info("Connection updated id=%s persona_id=%s", conn_id, body.persona_id)
+    return {"id": conn.id, "provider": conn.provider, "persona_id": conn.persona_id}
