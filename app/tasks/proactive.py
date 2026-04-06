@@ -6,6 +6,9 @@ Handlers:
   - handle_evening_recap: summarize what was accomplished today
   - handle_goal_checkin: surface suggestions related to active goals
   - handle_weekly_digest: weekly SMS summary of actions taken (D-10)
+  - handle_profile_nudge: detect incomplete profile fields, send friendly nudges (D-02)
+  - handle_smart_checkin: re-queue through manager for tool-assisted check-in (D-03)
+  - handle_insight_observation: surface patterns from accumulated memories (D-02)
 
 All handlers:
   - Record actions via store.log_action (AGENT-06)
@@ -322,6 +325,9 @@ async def handle_task_reminder(payload: dict) -> dict:
     Scheduled by handle_reminder or the dashboard create_task endpoint.
     Fetches the task from DB to get current title (may have been edited).
     Marks nothing as complete — the user decides when to mark done.
+
+    For recurring reminders (daily/weekly/monthly), computes the next due_at
+    and re-schedules the reminder so it fires again.
     """
     user_id = payload.get("user_id", "")
     job_id = payload.get("job_id", "")
@@ -351,7 +357,7 @@ async def handle_task_reminder(payload: dict) -> dict:
         # Use current title if task still exists
         reminder_title = task.title if task else title
 
-        # Parse metadata for action_type (Phase 4.1: smart reminder execution)
+        # Parse metadata for action_type and recurrence
         import json as _json
         metadata = {}
         if task and task.metadata_json:
@@ -363,6 +369,25 @@ async def handle_task_reminder(payload: dict) -> dict:
         action_type = metadata.get("action_type", "notify")
         if action_type not in ("notify", "execute"):
             action_type = "notify"
+
+        # Re-schedule recurring reminders BEFORE dispatching (so it happens
+        # even if the execute path or send fails)
+        recurrence = metadata.get("recurrence", "none")
+        if recurrence != "none" and task and task.due_at:
+            next_due = _compute_next_occurrence(task.due_at, recurrence)
+            if next_due:
+                # Update the task's due_at in the DB to the next occurrence
+                task.due_at = next_due
+                task.updated_at = datetime.now(timezone.utc)
+                await db.commit()
+
+                # Schedule the next reminder delivery
+                from app.tasks.reminder import schedule_task_reminder
+                await schedule_task_reminder(user_id, task_id, reminder_title, phone, next_due)
+                logger.info(
+                    "RECURRING_RESCHEDULE  task_id=%s  user=%s  recurrence=%s  next=%s",
+                    task_id, user_id[:8], recurrence, next_due.isoformat(),
+                )
 
         if action_type == "execute":
             logger.info(
@@ -395,18 +420,340 @@ async def handle_task_reminder(payload: dict) -> dict:
     }
 
 
-# ─── Execute reminder re-queue ───────────────────────────────────────────────
+def _compute_next_occurrence(current_due: datetime, recurrence: str) -> datetime | None:
+    """
+    Compute the next occurrence for a recurring reminder.
 
-async def _execute_reminder_via_manager(
-    user_id: str, task_id: str, title: str, phone: str, original_payload: dict
+    Adds the recurrence interval to current_due. If the result is in the past
+    (e.g. the scheduler was down), advances forward until the next future time.
+
+    Returns None for unrecognized recurrence values.
+    """
+    intervals = {
+        "daily": timedelta(days=1),
+        "weekly": timedelta(weeks=1),
+        "monthly": None,  # handled separately (variable days)
+    }
+
+    if recurrence not in intervals:
+        return None
+
+    now = datetime.now(timezone.utc)
+
+    if recurrence == "monthly":
+        # Add one month — handle variable month lengths
+        year = current_due.year
+        month = current_due.month + 1
+        if month > 12:
+            month = 1
+            year += 1
+        # Clamp day to the max for that month
+        import calendar
+        max_day = calendar.monthrange(year, month)[1]
+        day = min(current_due.day, max_day)
+        next_due = current_due.replace(year=year, month=month, day=day)
+        # If still in the past, keep advancing
+        while next_due <= now:
+            month += 1
+            if month > 12:
+                month = 1
+                year += 1
+            max_day = calendar.monthrange(year, month)[1]
+            day = min(current_due.day, max_day)
+            next_due = current_due.replace(year=year, month=month, day=day)
+        return next_due
+
+    delta = intervals[recurrence]
+    next_due = current_due + delta
+    # If scheduler was down, advance until we're in the future
+    while next_due <= now:
+        next_due += delta
+    return next_due
+
+
+# ─── New proactive handlers (Phase 4.2, D-02, D-03) ────────────────────────
+
+
+async def handle_profile_nudge(payload: dict) -> dict:
+    """
+    Profile completion nudge -- detect incomplete profile fields and
+    send a friendly, conversational nudge to encourage the user to fill them in.
+
+    Completeness scoring checks user fields + TELOS profile sections.
+    Spacing logic prevents nagging: 1st nudge day 1, 2nd day 3, 3rd day 7, then weekly.
+    Stops nudging once profile is > 80% complete.
+    """
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            return _empty_result(job_id, user_id)
+
+        # Compute profile completeness
+        entries = await store.get_profile_entries(user_id)
+        score, missing = _profile_completeness(user, entries)
+
+        # If profile is good enough, no nudge needed
+        if score > 0.8:
+            logger.info("PROFILE_NUDGE_SKIP  user=%s  score=%.2f  reason=complete_enough", user_id[:8], score)
+            return _empty_result(job_id, user_id)
+
+        # Check nudge spacing via Redis
+        import redis.asyncio as aioredis
+        import time as _time
+        from app.config import get_settings
+        settings = get_settings()
+
+        try:
+            r = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+            nudge_count_key = f"proactive:nudge_count:{user_id}"
+            last_nudge_key = f"proactive:last_nudge:{user_id}"
+
+            nudge_count = int(await r.get(nudge_count_key) or 0)
+            last_nudge_ts = float(await r.get(last_nudge_key) or 0)
+
+            now = _time.time()
+            # Spacing: 1st=0 days, 2nd=3 days, 3rd=7 days, then weekly
+            spacing_days = [0, 3, 7] + [7] * 100  # weekly after 3rd
+            required_gap_seconds = spacing_days[min(nudge_count, len(spacing_days) - 1)] * 86400
+
+            if last_nudge_ts > 0 and (now - last_nudge_ts) < required_gap_seconds:
+                logger.info(
+                    "PROFILE_NUDGE_SKIP  user=%s  reason=too_soon  nudge_count=%d  gap_needed=%dd",
+                    user_id[:8], nudge_count, required_gap_seconds // 86400,
+                )
+                await r.aclose()
+                return _empty_result(job_id, user_id)
+
+            # Nudge is allowed -- update tracking
+            await r.incr(nudge_count_key)
+            await r.set(last_nudge_key, str(now))
+            await r.aclose()
+        except Exception as exc:
+            logger.warning("Profile nudge Redis check failed: %s", exc)
+
+        # Pick 1-2 specific missing fields to ask about
+        nudge_fields = missing[:2]
+
+        from app.tasks._llm import llm_text
+        from app.core.identity import identity_preamble
+
+        system = identity_preamble(
+            assistant_name=getattr(user, "assistant_name", None),
+            personality_notes=getattr(user, "personality_notes", None),
+        )
+
+        field_descriptions = {
+            "name": "their name",
+            "timezone": "their timezone or location",
+            "assistant_name": "a custom name for you (the assistant)",
+            "personality_notes": "how they'd like you to communicate",
+            "has_preferences": "their preferences and likes",
+            "has_goals_profile": "their goals or projects they're working on",
+            "has_challenges": "challenges or obstacles they're facing",
+        }
+        missing_desc = ", ".join(field_descriptions.get(f, f) for f in nudge_fields)
+
+        nudge_text = await llm_text(
+            system=(
+                system + "\nYou are sending a casual, friendly nudge to learn more about the user. "
+                "Sound like a curious friend, NOT a form or survey. Keep it short (1-2 sentences). "
+                "Do NOT list items. Pick ONE thing to ask about naturally."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"I'd like to know more about the user. They haven't shared: {missing_desc}. "
+                    f"This is nudge #{nudge_count + 1}. Write a warm, natural-sounding message "
+                    f"asking about one of these. Example tone: 'Hey! I realized I don't know "
+                    f"much about what you're working towards. Want to share any goals?'"
+                ),
+            }],
+            mock_text=f"Hey! I'd love to learn more about you. Can you tell me about {missing_desc}?",
+            timeout_s=10.0,
+        )
+
+        await store.log_action(
+            user_id=user_id,
+            action_type="profile_nudge",
+            description=f"Sent profile nudge (score={score:.2f}, missing={','.join(nudge_fields)})",
+            outcome="success",
+            trigger="scheduled",
+        )
+
+    await _record_send(user_id)
+
+    return {
+        "job_id": job_id,
+        "phone": getattr(user, "phone", ""),
+        "address": getattr(user, "phone", ""),
+        "channel": payload.get("channel", "sms"),
+        "response": nudge_text,
+    }
+
+
+async def handle_smart_checkin(payload: dict) -> dict:
+    """
+    Smart day check-in -- re-queues through the manager for tool access (D-03).
+
+    Rather than generating a generic check-in via direct LLM call, this handler
+    re-queues as a needs_manager job with source=scheduled_checkin so the manager
+    can use tools (calendar, tasks, web search) to generate a contextual,
+    personalized check-in message.
+    """
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+    phone = payload.get("phone", "")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            return _empty_result(job_id, user_id)
+        phone = phone or getattr(user, "phone", "")
+
+    body_prompt = (
+        "Generate a thoughtful check-in for the user. Consider their calendar events today, "
+        "active tasks, and recent interactions. Be specific and helpful, not generic. "
+        "If you have calendar access, mention upcoming meetings. If not, reference their "
+        "tasks and goals. Keep it warm and actionable."
+    )
+
+    result = await _requeue_via_manager(
+        user_id=user_id,
+        phone=phone,
+        channel=payload.get("channel", "sms"),
+        body_prompt=body_prompt,
+        source_tag="scheduled_checkin",
+        payload=payload,
+        action_type="smart_checkin",
+    )
+    return result
+
+
+async def handle_insight_observation(payload: dict) -> dict:
+    """
+    Insight observation -- surface ONE interesting pattern from accumulated
+    memories that the user might not have noticed themselves (D-02).
+
+    Gates on 15+ memories minimum -- below that, not enough data for
+    meaningful pattern recognition.
+    """
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            return _empty_result(job_id, user_id)
+
+        # Gate: need at least 15 memories for meaningful insights
+        memories = await store.get_memories(user_id)
+        if len(memories) < 15:
+            logger.info(
+                "INSIGHT_SKIP  user=%s  reason=insufficient_memories  count=%d  min=15",
+                user_id[:8], len(memories),
+            )
+            return _empty_result(job_id, user_id)
+
+        # Load profile entries and recent actions for richer context
+        profile_entries = await store.get_profile_entries(user_id)
+        recent_actions = await store.get_action_log(user_id, limit=20)
+
+        from app.tasks._llm import llm_text
+        from app.core.identity import identity_preamble
+
+        system = identity_preamble(
+            assistant_name=getattr(user, "assistant_name", None),
+            personality_notes=getattr(user, "personality_notes", None),
+        )
+
+        memory_summary = "\n".join(
+            f"- {m.key}: {m.value}" for m in memories[:30]
+        )
+        profile_summary = "\n".join(
+            f"- [{e.section}] {e.label}: {e.content}" for e in profile_entries[:15]
+        )
+        action_summary = "\n".join(
+            f"- {a.action_type}: {a.description}" for a in recent_actions[:10]
+        )
+
+        insight = await llm_text(
+            system=(
+                system + "\nBased on everything you know about this user, surface ONE interesting "
+                "insight, pattern, or observation they might not have noticed themselves. "
+                "Be specific and reference actual data. Examples: noting scheduling patterns, "
+                "preference trends, goal alignment observations. Keep it under 100 words."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Here's what I know about this user:\n\n"
+                    f"Memories:\n{memory_summary}\n\n"
+                    f"Profile:\n{profile_summary}\n\n"
+                    f"Recent actions:\n{action_summary}\n\n"
+                    f"Surface one interesting insight or pattern."
+                ),
+            }],
+            mock_text="I've noticed you tend to set reminders in the evening but your most productive "
+                      "tasks happen in the morning. Maybe scheduling key work earlier could help!",
+            timeout_s=10.0,
+        )
+
+        await store.log_action(
+            user_id=user_id,
+            action_type="insight_observation",
+            description=f"Surfaced insight from {len(memories)} memories",
+            outcome="success",
+            trigger="scheduled",
+        )
+
+    await _record_send(user_id)
+
+    return {
+        "job_id": job_id,
+        "phone": getattr(user, "phone", ""),
+        "address": getattr(user, "phone", ""),
+        "channel": payload.get("channel", "sms"),
+        "response": insight,
+    }
+
+
+# ─── Shared re-queue helper ────────────────────────────────────────────────
+
+
+async def _requeue_via_manager(
+    user_id: str,
+    phone: str,
+    channel: str,
+    body_prompt: str,
+    source_tag: str,
+    payload: dict,
+    action_type: str = "requeue_manager",
 ) -> dict:
-    """Re-queue a scheduled 'execute' reminder as a NEEDS_MANAGER job.
+    """Re-queue a proactive job as a NEEDS_MANAGER job for tool-assisted processing.
 
-    Loads user context (memories, profile) from DB so the manager LLM
-    can generate personalized responses (e.g. weather for user's location).
+    Shared helper used by handle_smart_checkin, handle_goal_coaching (Plan 03),
+    and _execute_reminder_via_manager. Loads user context, builds a manager
+    payload, and XADD-s to the Redis stream.
 
     Uses a fresh Redis connection (not queue_client singleton) because
     the worker process may not have queue_client connected (Research Pitfall 4).
+
+    Returns an empty response dict -- the manager job produces the real response.
     """
     import uuid
     import json as _json
@@ -425,19 +772,19 @@ async def _execute_reminder_via_manager(
             store = MemoryStore(db)
             context = await store.get_context_standard(user_id)
     except Exception as exc:
-        logger.warning("Failed to load context for execute reminder: %s", exc)
+        logger.warning("Failed to load context for %s re-queue: %s", source_tag, exc)
 
     manager_payload = {
         "job_id": new_job_id,
         "intent": "needs_manager",
         "phone": phone,
         "address": phone,
-        "channel": original_payload.get("channel", "sms"),
-        "body": title,
+        "channel": channel,
+        "body": body_prompt,
         "user_id": user_id,
         "persona": "shared",
         "context": context,
-        "source": "scheduled_execute",
+        "source": source_tag,
     }
 
     try:
@@ -447,18 +794,17 @@ async def _execute_reminder_via_manager(
         await r.xadd(settings.queue_name, {"data": _json.dumps(manager_payload)})
         await r.aclose()
         logger.info(
-            "EXECUTE_REMINDER_QUEUED  task_id=%s  new_job_id=%s  title=%r",
-            task_id, new_job_id, title[:60],
+            "REQUEUE_VIA_MANAGER  source=%s  new_job_id=%s  user=%s",
+            source_tag, new_job_id, user_id[:8],
         )
     except Exception as exc:
-        logger.error("Failed to re-queue execute reminder: %s", exc)
-        # Fallback: send static notification so user isn't left hanging
+        logger.error("Failed to re-queue via manager (source=%s): %s", source_tag, exc)
         return {
-            "job_id": original_payload.get("job_id", ""),
+            "job_id": payload.get("job_id", ""),
             "phone": phone,
             "address": phone,
-            "channel": original_payload.get("channel", "sms"),
-            "response": f"Reminder: {title}",
+            "channel": channel,
+            "response": "",
         }
 
     # Log the action
@@ -467,27 +813,70 @@ async def _execute_reminder_via_manager(
             store = MemoryStore(db)
             await store.log_action(
                 user_id=user_id,
-                action_type="execute_reminder",
-                description=f"Re-queued execute reminder: {title}",
+                action_type=action_type,
+                description=f"Re-queued as needs_manager (source={source_tag})",
                 outcome="success",
                 trigger="scheduled",
             )
     except Exception as exc:
-        logger.warning("Failed to log execute reminder action: %s", exc)
+        logger.warning("Failed to log %s action: %s", action_type, exc)
 
     await _record_send(user_id)
 
     # Return empty response — the manager job will produce the real one
     return {
-        "job_id": original_payload.get("job_id", ""),
+        "job_id": payload.get("job_id", ""),
         "phone": phone,
         "address": phone,
-        "channel": original_payload.get("channel", "sms"),
+        "channel": channel,
         "response": "",
     }
 
 
+# ─── Execute reminder re-queue ───────────────────────────────────────────────
+
+async def _execute_reminder_via_manager(
+    user_id: str, task_id: str, title: str, phone: str, original_payload: dict
+) -> dict:
+    """Re-queue a scheduled 'execute' reminder as a NEEDS_MANAGER job.
+
+    Delegates to _requeue_via_manager for the actual re-queue logic.
+    """
+    return await _requeue_via_manager(
+        user_id=user_id,
+        phone=phone,
+        channel=original_payload.get("channel", "sms"),
+        body_prompt=title,
+        source_tag="scheduled_execute",
+        payload=original_payload,
+        action_type="execute_reminder",
+    )
+
+
 # ─── Helpers ─────────────────────────────────────────────────────────────────
+
+
+def _profile_completeness(user, entries: list) -> tuple[float, list[str]]:
+    """Compute profile completeness score and list of missing fields.
+
+    Checks user-level fields (name, timezone, assistant_name, personality_notes)
+    and TELOS profile sections (preferences, goals, challenges).
+
+    Returns (0.0-1.0 score, list of missing field names).
+    """
+    checks = {
+        "name": bool(user and user.name),
+        "timezone": bool(user and user.timezone and user.timezone != "America/New_York"),
+        "assistant_name": bool(user and getattr(user, "assistant_name", None)),
+        "personality_notes": bool(user and getattr(user, "personality_notes", None)),
+        "has_preferences": any(getattr(e, "section", "") == "preferences" for e in entries),
+        "has_goals_profile": any(getattr(e, "section", "") == "goals" for e in entries),
+        "has_challenges": any(getattr(e, "section", "") == "challenges" for e in entries),
+    }
+    score = sum(checks.values()) / len(checks) if checks else 0.0
+    missing = [k for k, v in checks.items() if not v]
+    return score, missing
+
 
 async def _get_user_by_id(store, user_id: str):
     """Look up user by ID. Returns None if not found."""
