@@ -95,6 +95,7 @@ app = FastAPI(
 
 # ── Routes ────────────────────────────────────────────────────────────────────
 
+from app.routes.admin import router as admin_router        # noqa: E402
 from app.routes.auth import router as auth_router          # noqa: E402
 from app.routes.dashboard import router as dashboard_router  # noqa: E402
 from app.routes.personas import router as personas_router  # noqa: E402
@@ -103,6 +104,7 @@ from app.routes.slack import router as slack_router        # noqa: E402
 
 # Auth + dashboard routers must be registered BEFORE any static/catch-all mounts
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
+app.include_router(admin_router, tags=["Admin"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(personas_router)
 app.include_router(sms_router, prefix="/sms", tags=["SMS"])

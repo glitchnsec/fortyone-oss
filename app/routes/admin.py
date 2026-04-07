@@ -340,3 +340,246 @@ async def hard_purge_user(
     await db.commit()
     logger.info("USER_HARD_PURGED user_id=%s by_admin=%s", user_id, admin.id)
     return {"status": "purged"}
+
+
+# ─── Analytics Cache ────────────────────────────────────────────────────────
+
+_analytics_cache: dict[str, tuple[float, Any]] = {}
+_CACHE_TTL = 60  # seconds
+
+
+async def _cached(key: str, range_key: str, db: AsyncSession, query_fn):
+    """Return cached result or call query_fn and cache the result."""
+    cache_key = f"{key}:{range_key}"
+    now = time.time()
+    if cache_key in _analytics_cache:
+        cached_at, data = _analytics_cache[cache_key]
+        if now - cached_at < _CACHE_TTL:
+            return data
+    data = await query_fn(db)
+    _analytics_cache[cache_key] = (now, data)
+    return data
+
+
+def _parse_range(range_param: str) -> Optional[datetime]:
+    """Convert range string to a UTC cutoff datetime, or None for 'all'."""
+    days_map = {"7d": 7, "30d": 30, "90d": 90, "all": None}
+    days = days_map.get(range_param, 30)
+    if days is None:
+        return None
+    return datetime.now(timezone.utc) - timedelta(days=days)
+
+
+def _apply_cutoff(stmt, column, cutoff: Optional[datetime]):
+    """Apply a time cutoff filter to a SQLAlchemy statement."""
+    if cutoff is not None:
+        stmt = stmt.where(column >= cutoff)
+    return stmt
+
+
+# ─── Analytics Endpoints ────────────────────────────────────────────────────
+
+
+@router.get("/analytics/overview")
+async def analytics_overview(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Overview stats: total users, active today, messages today, pending tasks."""
+    async def _query(db: AsyncSession):
+        today_midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        total_users = (await db.execute(
+            select(func.count()).select_from(User).where(User.deleted_at.is_(None))
+        )).scalar_one()
+
+        active_today = (await db.execute(
+            select(func.count()).select_from(User).where(
+                User.last_seen_at >= today_midnight,
+                User.deleted_at.is_(None),
+            )
+        )).scalar_one()
+
+        messages_today = (await db.execute(
+            select(func.count()).select_from(Message).where(
+                Message.created_at >= today_midnight,
+            )
+        )).scalar_one()
+
+        pending_tasks = (await db.execute(
+            select(func.count()).select_from(Task).where(
+                Task.completed == False,  # noqa: E712
+            )
+        )).scalar_one()
+
+        return {
+            "total_users": total_users,
+            "active_today": active_today,
+            "messages_today": messages_today,
+            "pending_tasks": pending_tasks,
+        }
+
+    return await _cached("overview", range, db, _query)
+
+
+@router.get("/analytics/signups")
+async def analytics_signups(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Signups per day time series."""
+    cutoff = _parse_range(range)
+
+    async def _query(db: AsyncSession):
+        stmt = (
+            select(
+                cast(User.created_at, Date).label("date"),
+                func.count().label("count"),
+            )
+            .where(User.deleted_at.is_(None))
+        )
+        stmt = _apply_cutoff(stmt, User.created_at, cutoff)
+        stmt = stmt.group_by(cast(User.created_at, Date)).order_by("date")
+        result = await db.execute(stmt)
+        return {"data": [{"date": str(row.date), "count": row.count} for row in result]}
+
+    return await _cached("signups", range, db, _query)
+
+
+@router.get("/analytics/active-users")
+async def analytics_active_users(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Active users per day (DAU). WAU/MAU computed client-side from daily data."""
+    cutoff = _parse_range(range)
+
+    async def _query(db: AsyncSession):
+        stmt = (
+            select(
+                cast(User.last_seen_at, Date).label("date"),
+                func.count(distinct(User.id)).label("dau"),
+            )
+            .where(User.deleted_at.is_(None))
+        )
+        stmt = _apply_cutoff(stmt, User.last_seen_at, cutoff)
+        stmt = stmt.group_by(cast(User.last_seen_at, Date)).order_by("date")
+        result = await db.execute(stmt)
+        return {"data": [{"date": str(row.date), "dau": row.dau} for row in result]}
+
+    return await _cached("active_users", range, db, _query)
+
+
+@router.get("/analytics/messages")
+async def analytics_messages(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Messages per day time series."""
+    cutoff = _parse_range(range)
+
+    async def _query(db: AsyncSession):
+        stmt = select(
+            cast(Message.created_at, Date).label("date"),
+            func.count().label("count"),
+        )
+        stmt = _apply_cutoff(stmt, Message.created_at, cutoff)
+        stmt = stmt.group_by(cast(Message.created_at, Date)).order_by("date")
+        result = await db.execute(stmt)
+        return {"data": [{"date": str(row.date), "count": row.count} for row in result]}
+
+    return await _cached("messages", range, db, _query)
+
+
+@router.get("/analytics/intents")
+async def analytics_intents(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Top 10 intents by message count."""
+    cutoff = _parse_range(range)
+
+    async def _query(db: AsyncSession):
+        stmt = (
+            select(
+                Message.intent,
+                func.count().label("count"),
+            )
+            .where(Message.intent.isnot(None))
+        )
+        stmt = _apply_cutoff(stmt, Message.created_at, cutoff)
+        stmt = stmt.group_by(Message.intent).order_by(func.count().desc()).limit(10)
+        result = await db.execute(stmt)
+        return {"data": [{"intent": row.intent, "count": row.count} for row in result]}
+
+    return await _cached("intents", range, db, _query)
+
+
+@router.get("/analytics/channels")
+async def analytics_channels(
+    range: str = Query("30d"),
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Channel breakdown: distinct users per channel."""
+    cutoff = _parse_range(range)
+
+    async def _query(db: AsyncSession):
+        stmt = select(
+            Message.channel,
+            func.count(distinct(Message.user_id)).label("user_count"),
+        )
+        stmt = _apply_cutoff(stmt, Message.created_at, cutoff)
+        stmt = stmt.group_by(Message.channel)
+        result = await db.execute(stmt)
+        return {"data": [{"channel": row.channel or "unknown", "user_count": row.user_count} for row in result]}
+
+    return await _cached("channels", range, db, _query)
+
+
+# ─── System Health ──────────────────────────────────────────────────────────
+
+
+@router.get("/health")
+async def admin_health(
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """System health: Redis status + queue depth, DB status, worker pending jobs."""
+    import redis.asyncio as aioredis
+
+    settings = get_settings()
+
+    # Redis check
+    redis_status = {"status": "error", "queue_depth": 0}
+    try:
+        r = aioredis.from_url(settings.redis_url, decode_responses=True)
+        await r.ping()
+        # Queue depth — use llen since the queue is a Redis list (LPUSH/BRPOP pattern)
+        queue_depth = await r.llen(settings.queue_name)
+        redis_status = {"status": "ok", "queue_depth": queue_depth}
+        await r.aclose()
+    except Exception as e:
+        logger.warning("admin_health redis_check=error err=%s", e)
+
+    # DB check
+    db_status = {"status": "error"}
+    try:
+        await db.execute(select(func.count()).select_from(User))
+        db_status = {"status": "ok"}
+    except Exception as e:
+        logger.warning("admin_health db_check=error err=%s", e)
+
+    # Worker pending jobs
+    worker_status = {"pending_jobs": redis_status.get("queue_depth", 0)}
+
+    return {
+        "redis": redis_status,
+        "database": db_status,
+        "worker": worker_status,
+    }
