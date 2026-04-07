@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.config import get_settings
-from app.core.tools import get_tool_schemas, get_tool_risk
+from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -64,8 +64,13 @@ async def manager_dispatch(payload: dict) -> dict:
     # Current user message
     messages.append({"role": "user", "content": body})
 
-    # Get available tool schemas
+    # Get available tool schemas (built-in + user's custom agents)
     tools = get_tool_schemas()
+    # Append user's custom agent tools — do NOT mutate the cached list
+    if user_id:
+        custom_schemas = await get_custom_agent_schemas(user_id)
+        if custom_schemas:
+            tools = tools + custom_schemas
 
     # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
     # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
@@ -700,6 +705,10 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 )
                 return {"result": f"Goals ({status_filter}):\n{goal_list}"}
 
+        # Custom agent dispatch — check if tool_name matches a user's custom agent
+        elif tool_name.startswith("custom_"):
+            return await _execute_custom_agent(tool_name, tool_args, payload)
+
         else:
             return {"error": f"Unknown tool: {tool_name}"}
 
@@ -757,3 +766,94 @@ async def _call_connections_tool(
         return {"error": "Connection service unavailable. I'll try again later."}
     except Exception as exc:
         return {"error": f"Service error: {str(exc)[:200]}"}
+
+
+async def _execute_custom_agent(tool_name: str, tool_args: dict, payload: dict) -> dict:
+    """Execute a user-defined custom agent by type."""
+    import json as _json
+    from app.database import AsyncSessionLocal
+    from app.memory.models import CustomAgent
+    from sqlalchemy import select
+
+    user_id = payload.get("user_id", "")
+
+    # Find the custom agent by matching the slugified tool name
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(CustomAgent).where(
+                CustomAgent.user_id == user_id,
+                CustomAgent.enabled == True,
+            )
+        )
+        agents = result.scalars().all()
+
+    # Match by slugified name
+    agent = None
+    for a in agents:
+        slug = f"custom_{a.name.lower().replace(' ', '_').replace('-', '_')}"
+        if slug == tool_name:
+            agent = a
+            break
+
+    if not agent:
+        return {"error": f"Custom agent not found: {tool_name}"}
+
+    try:
+        config = _json.loads(agent.config_json)
+    except _json.JSONDecodeError:
+        return {"error": "Invalid agent configuration"}
+
+    if agent.agent_type == "webhook":
+        return await _execute_webhook_agent(config, tool_args)
+    elif agent.agent_type == "prompt":
+        return await _execute_prompt_agent(config, tool_args, payload.get("body", ""))
+    elif agent.agent_type == "yaml_script":
+        return {
+            "error": "sandbox_required",
+            "user_message": "This agent requires the sandbox feature (coming soon).",
+        }
+    else:
+        return {"error": f"Unknown agent type: {agent.agent_type}"}
+
+
+async def _execute_webhook_agent(config: dict, tool_args: dict) -> dict:
+    """Execute a webhook-type custom agent by POSTing to configured URL."""
+    import httpx
+    url = config.get("url", "")
+    if not url:
+        return {"error": "Webhook URL not configured"}
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=tool_args)
+            if resp.status_code == 200:
+                try:
+                    return {"result": resp.json()}
+                except Exception:
+                    return {"result": resp.text}
+            return {"error": f"Webhook returned {resp.status_code}: {resp.text[:200]}"}
+    except httpx.TimeoutException:
+        return {"error": "Webhook timed out after 10 seconds"}
+    except Exception as e:
+        logger.error("Webhook agent error url=%s err=%s", url, e)
+        return {"error": f"Webhook call failed: {str(e)[:100]}"}
+
+
+async def _execute_prompt_agent(config: dict, tool_args: dict, user_message: str) -> dict:
+    """Execute a prompt-type custom agent by running LLM with custom system prompt."""
+    import json as _json
+    system_prompt = config.get("system_prompt", "")
+    if not system_prompt:
+        return {"error": "System prompt not configured"}
+    from app.tasks._llm import llm_text
+    user_input = _json.dumps(tool_args) if tool_args else user_message
+    try:
+        result = await llm_text(
+            system=system_prompt,
+            user=user_input,
+            mock_text="Custom agent response unavailable.",
+            timeout=10.0,
+        )
+        return {"result": result}
+    except Exception as e:
+        logger.error("Prompt agent error err=%s", e)
+        return {"error": f"Prompt agent failed: {str(e)[:100]}"}
