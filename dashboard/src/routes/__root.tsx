@@ -1,8 +1,10 @@
 import { createRootRouteWithContext, Outlet, redirect, useRouterState } from "@tanstack/react-router";
-import { type QueryClient } from "@tanstack/react-query";
-import { type AuthContext } from "../lib/auth.tsx";
+import { type QueryClient, useQuery } from "@tanstack/react-query";
+import { type AuthContext, useAuth } from "../lib/auth.tsx";
 import { Toaster } from "../components/ui/sonner";
 import { AppShell } from "../components/layout/AppShell";
+import { MigrationDialog } from "../components/MigrationDialog";
+import { fetchWithAuth } from "../lib/api";
 
 export const Route = createRootRouteWithContext<{ queryClient: QueryClient; auth: AuthContext }>()({
   beforeLoad({ context, location }) {
@@ -51,7 +53,39 @@ function RootLayout() {
   return (
     <AppShell>
       <Outlet />
+      <MigrationDialogWrapper />
       <Toaster />
     </AppShell>
   );
+}
+
+/**
+ * Wrapper that fetches connections + personas and conditionally renders
+ * the migration dialog when there are unassigned connections (persona_id === null).
+ * Only renders when the user is authenticated.
+ */
+function MigrationDialogWrapper() {
+  const { isAuthenticated } = useAuth();
+
+  const { data: connectionsData } = useQuery({
+    queryKey: ["connections"],
+    queryFn: () => fetchWithAuth("/api/v1/connections").then((r) => r.json()),
+    enabled: isAuthenticated,
+  });
+
+  const { data: personasData } = useQuery({
+    queryKey: ["personas"],
+    queryFn: () => fetchWithAuth("/api/v1/personas").then((r) => r.json()),
+    enabled: isAuthenticated,
+  });
+
+  const connections = connectionsData?.connections ?? [];
+  const personas = personasData?.personas ?? [];
+  const unassigned = connections.filter(
+    (c: { persona_id: string | null }) => !c.persona_id
+  );
+
+  if (unassigned.length === 0 || personas.length === 0) return null;
+
+  return <MigrationDialog connections={unassigned} personas={personas} />;
 }
