@@ -469,19 +469,40 @@ function PersonasSettingsPage() {
                       ))}
                     </div>
                   )}
-                  {/* Add Connection button -- per D-03, accent colored */}
-                  <Button
-                    size="sm"
-                    className="bg-blue-600 hover:bg-blue-700 min-h-[44px] w-full"
-                    onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
-                    disabled={connectingPersonaId === persona.id}
-                  >
-                    {connectingPersonaId === persona.id ? (
-                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
+                  {/* Add / Reconnect button -- per D-01, one connection per provider per persona */}
+                  {(() => {
+                    const existingGoogle = getPersonaConnections(persona.id).find(
+                      (c) => c.provider === "google" && c.status === "connected"
+                    );
+                    return existingGoogle ? (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="min-h-[44px] w-full"
+                        onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
+                        disabled={connectingPersonaId === persona.id}
+                      >
+                        {connectingPersonaId === persona.id ? (
+                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reconnecting...</>
+                        ) : (
+                          <>Reconnect Google</>
+                        )}
+                      </Button>
                     ) : (
-                      <><Plus className="mr-2 h-4 w-4" />Add Connection</>
-                    )}
-                  </Button>
+                      <Button
+                        size="sm"
+                        className="bg-blue-600 hover:bg-blue-700 min-h-[44px] w-full"
+                        onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
+                        disabled={connectingPersonaId === persona.id}
+                      >
+                        {connectingPersonaId === persona.id ? (
+                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
+                        ) : (
+                          <><Plus className="mr-2 h-4 w-4" />Add Connection</>
+                        )}
+                      </Button>
+                    );
+                  })()}
                 </div>
               )}
             </CardContent>
