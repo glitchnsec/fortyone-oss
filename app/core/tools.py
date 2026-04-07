@@ -96,3 +96,52 @@ def get_tool_risk(tool_name: str) -> str:
     if not TOOL_RISK:
         load_subagents()
     return TOOL_RISK.get(tool_name, "high")  # Default to high if unknown
+
+
+async def get_custom_agent_schemas(user_id: str) -> list[dict]:
+    """Return OpenAI-format tool schemas for a user's enabled custom agents.
+
+    Called per-request in the worker — not cached globally since custom agents
+    are per-user. Tool names are prefixed with 'custom_' to avoid collisions
+    with built-in tools.
+    """
+    from app.database import AsyncSessionLocal
+    from app.memory.models import CustomAgent
+    from sqlalchemy import select
+    import json
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(CustomAgent).where(
+                CustomAgent.user_id == user_id,
+                CustomAgent.enabled == True,
+            )
+        )
+        agents = result.scalars().all()
+
+    schemas = []
+    for agent in agents:
+        # Tool name: custom_{slugified_name}
+        tool_name = f"custom_{agent.name.lower().replace(' ', '_').replace('-', '_')}"
+
+        # Parse parameters schema or use empty object
+        params: dict = {"type": "object", "properties": {}}
+        if agent.parameters_schema_json:
+            try:
+                params = json.loads(agent.parameters_schema_json)
+            except json.JSONDecodeError:
+                pass
+
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": tool_name,
+                "description": agent.description or f"Custom agent: {agent.name}",
+                "parameters": params,
+            },
+        })
+
+        # Register risk level so get_tool_risk works for custom tools
+        TOOL_RISK[tool_name] = agent.risk_level or "low"
+
+    return schemas
