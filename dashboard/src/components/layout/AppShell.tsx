@@ -26,6 +26,7 @@ import {
   Users,
   ListTodo,
   Menu,
+  Zap,
 } from "lucide-react";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
@@ -59,6 +60,7 @@ const NAV_ITEMS: NavItem[] = [
   { label: "Assistant", to: "/settings/assistant", icon: <Bot className="h-4 w-4" /> },
   { label: "Personas", to: "/settings/personas", icon: <Users className="h-4 w-4" /> },
   { label: "Account", to: "/settings/account", icon: <UserCircle className="h-4 w-4" /> },
+  { label: "Proactive", to: "/settings/proactive", icon: <Zap className="h-4 w-4" /> },
 ];
 
 function SidebarNav({
