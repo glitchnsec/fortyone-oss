@@ -71,7 +71,8 @@ async def manager_dispatch(payload: dict) -> dict:
     # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
     source = payload.get("source", "")
     if source == "scheduled_execute":
-        tools = [t for t in tools if t["function"]["name"] != "create_reminder"]
+        tools = [t for t in tools if t["function"]
+                 ["name"] != "create_reminder"]
         logger.info(
             "SCHEDULED_EXECUTE  removed create_reminder tool  job_id=%s",
             job_id,
@@ -386,9 +387,11 @@ def _build_system_prompt(payload: dict) -> str:
     try:
         user_tz = zoneinfo.ZoneInfo(user_tz_name)
         now_local = datetime.now(user_tz)
-        parts.append(f"Current time: {now_local.strftime('%Y-%m-%d %H:%M %Z')} ({user_tz_name})")
+        parts.append(
+            f"Current time: {now_local.strftime('%Y-%m-%d %H:%M %Z')} ({user_tz_name})")
     except Exception:
-        parts.append(f"Current time: {datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M UTC')}")
+        parts.append(
+            f"Current time: {datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M UTC')}")
 
     parts.append(
         "You are a VERY capable and wise personal assistant manager. Your the best at understanding the user's needs and you help them achieve their fullest potential. "
@@ -414,6 +417,7 @@ def _build_system_prompt(payload: dict) -> str:
     )
 
     # Scheduled execution context — tell the manager to act, not re-schedule
+    source = payload.get("source", "")
     if payload.get("source") == "scheduled_execute":
         parts.append(
             "\nIMPORTANT: This is a scheduled task execution. The user asked for this to be "
@@ -591,6 +595,110 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             from app.tasks.recall import handle_recall
             result = await handle_recall(payload)
             return {"result": result.get("response", "No tasks found")}
+
+        elif tool_name == "upsert_profile":
+            from app.database import AsyncSessionLocal
+            from app.memory.store import MemoryStore
+            async with AsyncSessionLocal() as db:
+                store = MemoryStore(db)
+                entry = await store.upsert_profile_entry(
+                    user_id=user_id,
+                    section=tool_args.get("section", "preferences"),
+                    label=tool_args.get("label", ""),
+                    content=tool_args.get("content", ""),
+                )
+                return {
+                    "result": f"Saved to profile: [{entry.section}] {entry.label}",
+                    "section": entry.section,
+                    "label": entry.label,
+                }
+
+        elif tool_name == "update_user_field":
+            field = tool_args.get("field", "")
+            value = tool_args.get("value", "")
+            allowed_fields = {"name", "timezone", "assistant_name", "personality_notes"}
+            if field not in allowed_fields:
+                return {"error": "invalid_input", "user_message": f"Cannot update field '{field}'. Allowed: {', '.join(sorted(allowed_fields))}"}
+            from app.database import AsyncSessionLocal
+            from app.memory.store import MemoryStore
+            from app.memory.models import User as UserModel
+            from sqlalchemy import select as sa_select
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(UserModel).where(UserModel.id == user_id)
+                )
+                user = result.scalar_one_or_none()
+                if not user:
+                    return {"error": "User not found"}
+                setattr(user, field, value)
+                await db.commit()
+                return {"result": f"Updated {field} to '{value}'"}
+
+        elif tool_name == "create_goal":
+            from app.database import AsyncSessionLocal
+            from app.memory.store import MemoryStore
+            target_date = None
+            if tool_args.get("target_date"):
+                from dateutil.parser import parse as parse_date
+                try:
+                    target_date = parse_date(tool_args["target_date"])
+                except (ValueError, TypeError):
+                    return {"error": "date_parse_failed", "user_message": "Could not parse the target date. Please use ISO 8601 format (e.g. 2026-06-01)."}
+            async with AsyncSessionLocal() as db:
+                store = MemoryStore(db)
+                goal = await store.create_goal(
+                    user_id=user_id,
+                    title=tool_args.get("title", ""),
+                    description=tool_args.get("description"),
+                    target_date=target_date,
+                    framework=tool_args.get("framework", "custom"),
+                )
+                return {
+                    "result": f"Goal created: '{goal.title}'",
+                    "goal_id": goal.id,
+                }
+
+        elif tool_name == "update_goal":
+            from app.database import AsyncSessionLocal
+            from app.memory.store import MemoryStore
+            goal_id = tool_args.pop("goal_id", "")
+            if not goal_id:
+                return {"error": "invalid_input", "user_message": "goal_id is required"}
+            # Parse target_date if provided
+            if "target_date" in tool_args and tool_args["target_date"]:
+                from dateutil.parser import parse as parse_date
+                try:
+                    tool_args["target_date"] = parse_date(tool_args["target_date"])
+                except (ValueError, TypeError):
+                    return {"error": "date_parse_failed", "user_message": "Could not parse the target date."}
+            # Remove None/empty values
+            update_kwargs = {k: v for k, v in tool_args.items() if v is not None and v != ""}
+            async with AsyncSessionLocal() as db:
+                store = MemoryStore(db)
+                goal = await store.update_goal(
+                    user_id=user_id,
+                    goal_id=goal_id,
+                    **update_kwargs,
+                )
+                if not goal:
+                    return {"error": "Goal not found or access denied"}
+                return {"result": f"Goal updated: '{goal.title}' (status: {goal.status})"}
+
+        elif tool_name == "list_goals":
+            from app.database import AsyncSessionLocal
+            from app.memory.store import MemoryStore
+            status_filter = tool_args.get("status", "active")
+            async with AsyncSessionLocal() as db:
+                store = MemoryStore(db)
+                goals = await store.get_goals(user_id, status=status_filter)
+                if not goals:
+                    return {"result": f"No {status_filter} goals found."}
+                goal_list = "\n".join(
+                    f"- {g.title} (id: {g.id}, status: {g.status}"
+                    f"{', target: ' + g.target_date.strftime('%Y-%m-%d') if g.target_date else ''})"
+                    for g in goals[:10]
+                )
+                return {"result": f"Goals ({status_filter}):\n{goal_list}"}
 
         else:
             return {"error": f"Unknown tool: {tool_name}"}

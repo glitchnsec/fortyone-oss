@@ -9,13 +9,94 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as TasksRouteImport } from './routes/tasks'
+import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as GoalsRouteImport } from './routes/goals'
+import { Route as ActionsRouteImport } from './routes/actions'
+import { Route as AdminRouteRouteImport } from './routes/admin/route'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as OnboardingIndexRouteImport } from './routes/onboarding/index'
+import { Route as ConversationsIndexRouteImport } from './routes/conversations/index'
+import { Route as ConnectionsIndexRouteImport } from './routes/connections/index'
+import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as SettingsPersonasRouteImport } from './routes/settings/personas'
+import { Route as SettingsAssistantRouteImport } from './routes/settings/assistant'
+import { Route as SettingsAccountRouteImport } from './routes/settings/account'
+import { Route as ConnectionsCallbackRouteImport } from './routes/connections/callback'
 import { Route as AuthRegisterRouteImport } from './routes/auth/register'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AdminHealthRouteImport } from './routes/admin/health'
+import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
+import { Route as AdminUsersUserIdRouteImport } from './routes/admin/users/$userId'
 
+const TasksRoute = TasksRouteImport.update({
+  id: '/tasks',
+  path: '/tasks',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProfileRoute = ProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GoalsRoute = GoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ActionsRoute = ActionsRouteImport.update({
+  id: '/actions',
+  path: '/actions',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRouteRoute = AdminRouteRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OnboardingIndexRoute = OnboardingIndexRouteImport.update({
+  id: '/onboarding/',
+  path: '/onboarding/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConversationsIndexRoute = ConversationsIndexRouteImport.update({
+  id: '/conversations/',
+  path: '/conversations/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectionsIndexRoute = ConnectionsIndexRouteImport.update({
+  id: '/connections/',
+  path: '/connections/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const SettingsPersonasRoute = SettingsPersonasRouteImport.update({
+  id: '/settings/personas',
+  path: '/settings/personas',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAssistantRoute = SettingsAssistantRouteImport.update({
+  id: '/settings/assistant',
+  path: '/settings/assistant',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsAccountRoute = SettingsAccountRouteImport.update({
+  id: '/settings/account',
+  path: '/settings/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ConnectionsCallbackRoute = ConnectionsCallbackRouteImport.update({
+  id: '/connections/callback',
+  path: '/connections/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRegisterRoute = AuthRegisterRouteImport.update({
@@ -28,44 +109,266 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminHealthRoute = AdminHealthRouteImport.update({
+  id: '/health',
+  path: '/health',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminUsersIndexRoute = AdminUsersIndexRouteImport.update({
+  id: '/users/',
+  path: '/users/',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
+const AdminUsersUserIdRoute = AdminUsersUserIdRouteImport.update({
+  id: '/users/$userId',
+  path: '/users/$userId',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteRouteWithChildren
+  '/actions': typeof ActionsRoute
+  '/goals': typeof GoalsRoute
+  '/profile': typeof ProfileRoute
+  '/tasks': typeof TasksRoute
+  '/admin/health': typeof AdminHealthRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
+  '/connections/callback': typeof ConnectionsCallbackRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistant': typeof SettingsAssistantRoute
+  '/settings/personas': typeof SettingsPersonasRoute
+  '/admin/': typeof AdminIndexRoute
+  '/connections/': typeof ConnectionsIndexRoute
+  '/conversations/': typeof ConversationsIndexRoute
+  '/onboarding/': typeof OnboardingIndexRoute
+  '/admin/users/$userId': typeof AdminUsersUserIdRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/actions': typeof ActionsRoute
+  '/goals': typeof GoalsRoute
+  '/profile': typeof ProfileRoute
+  '/tasks': typeof TasksRoute
+  '/admin/health': typeof AdminHealthRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
+  '/connections/callback': typeof ConnectionsCallbackRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistant': typeof SettingsAssistantRoute
+  '/settings/personas': typeof SettingsPersonasRoute
+  '/admin': typeof AdminIndexRoute
+  '/connections': typeof ConnectionsIndexRoute
+  '/conversations': typeof ConversationsIndexRoute
+  '/onboarding': typeof OnboardingIndexRoute
+  '/admin/users/$userId': typeof AdminUsersUserIdRoute
+  '/admin/users': typeof AdminUsersIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRouteRouteWithChildren
+  '/actions': typeof ActionsRoute
+  '/goals': typeof GoalsRoute
+  '/profile': typeof ProfileRoute
+  '/tasks': typeof TasksRoute
+  '/admin/health': typeof AdminHealthRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
+  '/connections/callback': typeof ConnectionsCallbackRoute
+  '/settings/account': typeof SettingsAccountRoute
+  '/settings/assistant': typeof SettingsAssistantRoute
+  '/settings/personas': typeof SettingsPersonasRoute
+  '/admin/': typeof AdminIndexRoute
+  '/connections/': typeof ConnectionsIndexRoute
+  '/conversations/': typeof ConversationsIndexRoute
+  '/onboarding/': typeof OnboardingIndexRoute
+  '/admin/users/$userId': typeof AdminUsersUserIdRoute
+  '/admin/users/': typeof AdminUsersIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth/login' | '/auth/register'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/actions'
+    | '/goals'
+    | '/profile'
+    | '/tasks'
+    | '/admin/health'
+    | '/auth/login'
+    | '/auth/register'
+    | '/connections/callback'
+    | '/settings/account'
+    | '/settings/assistant'
+    | '/settings/personas'
+    | '/admin/'
+    | '/connections/'
+    | '/conversations/'
+    | '/onboarding/'
+    | '/admin/users/$userId'
+    | '/admin/users/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth/login' | '/auth/register'
-  id: '__root__' | '/' | '/auth/login' | '/auth/register'
+  to:
+    | '/'
+    | '/actions'
+    | '/goals'
+    | '/profile'
+    | '/tasks'
+    | '/admin/health'
+    | '/auth/login'
+    | '/auth/register'
+    | '/connections/callback'
+    | '/settings/account'
+    | '/settings/assistant'
+    | '/settings/personas'
+    | '/admin'
+    | '/connections'
+    | '/conversations'
+    | '/onboarding'
+    | '/admin/users/$userId'
+    | '/admin/users'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/actions'
+    | '/goals'
+    | '/profile'
+    | '/tasks'
+    | '/admin/health'
+    | '/auth/login'
+    | '/auth/register'
+    | '/connections/callback'
+    | '/settings/account'
+    | '/settings/assistant'
+    | '/settings/personas'
+    | '/admin/'
+    | '/connections/'
+    | '/conversations/'
+    | '/onboarding/'
+    | '/admin/users/$userId'
+    | '/admin/users/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRouteRoute: typeof AdminRouteRouteWithChildren
+  ActionsRoute: typeof ActionsRoute
+  GoalsRoute: typeof GoalsRoute
+  ProfileRoute: typeof ProfileRoute
+  TasksRoute: typeof TasksRoute
   AuthLoginRoute: typeof AuthLoginRoute
   AuthRegisterRoute: typeof AuthRegisterRoute
+  ConnectionsCallbackRoute: typeof ConnectionsCallbackRoute
+  SettingsAccountRoute: typeof SettingsAccountRoute
+  SettingsAssistantRoute: typeof SettingsAssistantRoute
+  SettingsPersonasRoute: typeof SettingsPersonasRoute
+  ConnectionsIndexRoute: typeof ConnectionsIndexRoute
+  ConversationsIndexRoute: typeof ConversationsIndexRoute
+  OnboardingIndexRoute: typeof OnboardingIndexRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/tasks': {
+      id: '/tasks'
+      path: '/tasks'
+      fullPath: '/tasks'
+      preLoaderRoute: typeof TasksRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/profile': {
+      id: '/profile'
+      path: '/profile'
+      fullPath: '/profile'
+      preLoaderRoute: typeof ProfileRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/goals': {
+      id: '/goals'
+      path: '/goals'
+      fullPath: '/goals'
+      preLoaderRoute: typeof GoalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/actions': {
+      id: '/actions'
+      path: '/actions'
+      fullPath: '/actions'
+      preLoaderRoute: typeof ActionsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/onboarding/': {
+      id: '/onboarding/'
+      path: '/onboarding'
+      fullPath: '/onboarding/'
+      preLoaderRoute: typeof OnboardingIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/conversations/': {
+      id: '/conversations/'
+      path: '/conversations'
+      fullPath: '/conversations/'
+      preLoaderRoute: typeof ConversationsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connections/': {
+      id: '/connections/'
+      path: '/connections'
+      fullPath: '/connections/'
+      preLoaderRoute: typeof ConnectionsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/settings/personas': {
+      id: '/settings/personas'
+      path: '/settings/personas'
+      fullPath: '/settings/personas'
+      preLoaderRoute: typeof SettingsPersonasRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/assistant': {
+      id: '/settings/assistant'
+      path: '/settings/assistant'
+      fullPath: '/settings/assistant'
+      preLoaderRoute: typeof SettingsAssistantRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings/account': {
+      id: '/settings/account'
+      path: '/settings/account'
+      fullPath: '/settings/account'
+      preLoaderRoute: typeof SettingsAccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/connections/callback': {
+      id: '/connections/callback'
+      path: '/connections/callback'
+      fullPath: '/connections/callback'
+      preLoaderRoute: typeof ConnectionsCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth/register': {
@@ -82,13 +385,64 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/health': {
+      id: '/admin/health'
+      path: '/health'
+      fullPath: '/admin/health'
+      preLoaderRoute: typeof AdminHealthRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/': {
+      id: '/admin/users/'
+      path: '/users'
+      fullPath: '/admin/users/'
+      preLoaderRoute: typeof AdminUsersIndexRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
+    '/admin/users/$userId': {
+      id: '/admin/users/$userId'
+      path: '/users/$userId'
+      fullPath: '/admin/users/$userId'
+      preLoaderRoute: typeof AdminUsersUserIdRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
   }
 }
 
+interface AdminRouteRouteChildren {
+  AdminHealthRoute: typeof AdminHealthRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+  AdminUsersUserIdRoute: typeof AdminUsersUserIdRoute
+  AdminUsersIndexRoute: typeof AdminUsersIndexRoute
+}
+
+const AdminRouteRouteChildren: AdminRouteRouteChildren = {
+  AdminHealthRoute: AdminHealthRoute,
+  AdminIndexRoute: AdminIndexRoute,
+  AdminUsersUserIdRoute: AdminUsersUserIdRoute,
+  AdminUsersIndexRoute: AdminUsersIndexRoute,
+}
+
+const AdminRouteRouteWithChildren = AdminRouteRoute._addFileChildren(
+  AdminRouteRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRouteRoute: AdminRouteRouteWithChildren,
+  ActionsRoute: ActionsRoute,
+  GoalsRoute: GoalsRoute,
+  ProfileRoute: ProfileRoute,
+  TasksRoute: TasksRoute,
   AuthLoginRoute: AuthLoginRoute,
   AuthRegisterRoute: AuthRegisterRoute,
+  ConnectionsCallbackRoute: ConnectionsCallbackRoute,
+  SettingsAccountRoute: SettingsAccountRoute,
+  SettingsAssistantRoute: SettingsAssistantRoute,
+  SettingsPersonasRoute: SettingsPersonasRoute,
+  ConnectionsIndexRoute: ConnectionsIndexRoute,
+  ConversationsIndexRoute: ConversationsIndexRoute,
+  OnboardingIndexRoute: OnboardingIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

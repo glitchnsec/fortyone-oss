@@ -16,7 +16,7 @@ async def handle_web_search(payload: dict) -> dict:
     """Search the web via Brave Search API and return formatted results."""
     job_id = payload.get("job_id", "")
     phone = payload.get("phone", "")
-    message = payload.get("message", "")
+    message = payload.get("body", "") or payload.get("message", "")
 
     s = get_settings()
 

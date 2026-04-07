@@ -40,6 +40,7 @@ logging.basicConfig(
 POLL_INTERVAL = 30  # seconds
 BATCH_SIZE = 50
 USER_CACHE_TTL = 300  # 5 minutes — avoid DB hit every poll
+STALE_JOB_THRESHOLD = 6 * 3600  # 6 hours — discard pool jobs older than this
 
 # Job types managed by the pool (NOT task_reminder)
 POOL_JOB_TYPES = {
@@ -93,21 +94,33 @@ async def scheduler_loop():
                     logger.error("POOL_PLAN_ERROR user=%s err=%s", user_id[:8], exc)
 
             # ── Phase 2: Dispatch ────────────────────────────────────────
-            ready = await r.zrangebyscore(
+            ready_with_scores = await r.zrangebyscore(
                 "scheduled_jobs", "-inf", now, start=0, num=BATCH_SIZE,
+                withscores=True,
             )
             poll_count += 1
             # Heartbeat every 10 polls (~5 min) so logs show the scheduler is alive
             if poll_count % 10 == 0:
                 pending_total = await r.zcard("scheduled_jobs")
                 logger.info("SCHEDULER_HEARTBEAT  polls=%d  pending_jobs=%d", poll_count, pending_total)
-            if ready:
-                logger.info("SCHEDULER_POLL  found=%d due jobs", len(ready))
-            for job_data in ready:
+            if ready_with_scores:
+                logger.info("SCHEDULER_POLL  found=%d due jobs", len(ready_with_scores))
+            for job_data, score in ready_with_scores:
                 removed = await r.zrem("scheduled_jobs", job_data)
                 if removed:  # Atomic claim — prevents duplicate processing
                     payload = json.loads(job_data)
                     payload["source"] = "scheduler"
+
+                    # Discard stale pool jobs — prevents morning dispatch of
+                    # evening jobs that accumulated during scheduler downtime.
+                    job_type = payload.get("type", "unknown")
+                    if job_type in POOL_JOB_TYPES and (now - score) > STALE_JOB_THRESHOLD:
+                        logger.warning(
+                            "SCHEDULER_DISCARD_STALE type=%s user=%s age_hours=%.1f",
+                            job_type, payload.get("user_id", "")[:8],
+                            (now - score) / 3600,
+                        )
+                        continue
 
                     # Rate limit check before dispatching
                     from app.core.throttle import check_rate_limit, check_dead_man_switch
@@ -154,7 +167,11 @@ async def scheduler_loop():
                         idem_key = f"proactive:{user_id}:task_reminder:{payload.get('task_id', 'unknown')}:{day_bucket}"
                     else:
                         # Per-user-per-day for recurring proactive jobs
-                        idem_key = f"proactive:{user_id}:{job_type}:{int(now // 86400)}"
+                        # Use category (pool name) for idempotency, not handler_type,
+                        # so categories sharing a handler (e.g. day_checkin and
+                        # afternoon_followup both use smart_checkin) don't collide.
+                        idem_category = payload.get("category", job_type)
+                        idem_key = f"proactive:{user_id}:{idem_category}:{int(now // 86400)}"
                     is_new = await check_idempotency(r, idem_key)
                     if not is_new:
                         logger.info("SCHEDULER_SKIP duplicate idem_key=%s", idem_key)

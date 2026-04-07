@@ -121,3 +121,37 @@ async def test_handler_returns_required_fields():
     assert "job_id" in result
     assert "phone" in result
     assert "response" in result
+
+
+@pytest.mark.asyncio
+async def test_body_key_used_by_manager_dispatch():
+    """Manager dispatch passes query as 'body', not 'message' — both must work."""
+    manager_payload = {
+        "job_id": "mgr-456",
+        "phone": "+15551234567",
+        "body": "current president of Nigeria",
+        "message": "Who's the current president of Nigeria?",
+    }
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "web": {"results": [
+            {"title": "President", "description": "Bola Tinubu", "url": "https://example.com"},
+        ]}
+    }
+    mock_response.raise_for_status = MagicMock()
+
+    with patch("app.tasks.web_search.get_settings") as mock_settings:
+        mock_settings.return_value = MagicMock(brave_api_key="test-key")
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get.return_value = mock_response
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            result = await handle_web_search(manager_payload)
+
+    # Verify it used "body" (the extracted query), not "message" (full user text)
+    call_args = mock_client.get.call_args
+    assert call_args[1]["params"]["q"] == "current president of Nigeria"
+    assert "President" in result["response"]

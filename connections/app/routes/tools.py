@@ -47,24 +47,24 @@ class CalendarCreateInput(BaseModel):
     persona_id: str | None = None
 
 
-@router.post("/gmail/read")
+@router.post("/gmail/read_emails")
 async def gmail_read(body: GmailReadInput, db: AsyncSession = Depends(_get_db)):
     emails = await read_emails(body.user_id, body.max_results, db, persona_id=body.persona_id)
     return {"emails": emails}
 
 
-@router.post("/gmail/send")
+@router.post("/gmail/send_email")
 async def gmail_send(body: GmailSendInput, db: AsyncSession = Depends(_get_db)):
     return await send_email(body.user_id, body.to, body.subject, body.body, db, persona_id=body.persona_id)
 
 
-@router.post("/calendar/events")
+@router.post("/calendar/list_events")
 async def calendar_events(body: CalendarListInput, db: AsyncSession = Depends(_get_db)):
     events = await list_events(body.user_id, body.max_results, db, persona_id=body.persona_id)
     return {"events": events}
 
 
-@router.post("/calendar/create")
+@router.post("/calendar/create_event")
 async def calendar_create(body: CalendarCreateInput, db: AsyncSession = Depends(_get_db)):
     return await create_event(
         body.user_id, body.summary, body.start_datetime,

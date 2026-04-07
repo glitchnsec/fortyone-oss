@@ -89,8 +89,8 @@ DEFAULT_CATEGORIES = [
     ProactiveCategory(
         name="goal_coaching",
         handler_type="goal_coaching",
-        window_start_hour=10.0,
-        window_end_hour=16.0,
+        window_start_hour=11.0,   # Widened: was 10-4, now 11-5 (afternoon focus)
+        window_end_hour=17.0,
         base_weight=5,
         weight_fn=_goal_coaching_weight,
         requires="has_goals",
@@ -98,17 +98,17 @@ DEFAULT_CATEGORIES = [
     ProactiveCategory(
         name="day_checkin",
         handler_type="smart_checkin",
-        window_start_hour=11.0,
-        window_end_hour=15.0,
-        base_weight=4,
+        window_start_hour=13.0,   # Shifted later: was 11-3, now 1-5 PM (afternoon)
+        window_end_hour=17.0,
+        base_weight=5,            # Bumped weight from 4 to 5 for better selection odds
         weight_fn=_day_checkin_weight,
         requires="always",
     ),
     ProactiveCategory(
         name="profile_nudge",
         handler_type="profile_nudge",
-        window_start_hour=10.0,
-        window_end_hour=14.0,
+        window_start_hour=12.0,   # Shifted later: was 10-2, now 12-4 PM
+        window_end_hour=16.0,
         base_weight=3,
         weight_fn=_profile_nudge_weight,
         requires="incomplete_profile",
@@ -116,11 +116,20 @@ DEFAULT_CATEGORIES = [
     ProactiveCategory(
         name="insight_observation",
         handler_type="insight_observation",
-        window_start_hour=12.0,
-        window_end_hour=17.0,
+        window_start_hour=14.0,   # Shifted later: was 12-5, now 2-6 PM
+        window_end_hour=18.0,
         base_weight=3,
         weight_fn=_insight_weight,
         requires="has_memories",
+    ),
+    # New: afternoon follow-up — lightweight check-in for the second half of the day
+    ProactiveCategory(
+        name="afternoon_followup",
+        handler_type="smart_checkin",
+        window_start_hour=14.5,   # 2:30 PM
+        window_end_hour=16.5,     # 4:30 PM
+        base_weight=4,
+        requires="always",
     ),
 ]
 
@@ -258,14 +267,25 @@ def compute_jitter_time(
     Return a Unix timestamp for a random moment within the category's time window.
 
     Uses minute-level granularity + random seconds for uniform distribution
-    across the entire window.
+    across the window. Clamps start to current time if the window is partially
+    elapsed, ensuring the returned timestamp is always in the future.
     """
     tz = zoneinfo.ZoneInfo(user_timezone)
     if date is None:
         date = datetime.now(tz)
 
-    start_minutes = int(window_start_hour * 60)
+    # Clamp window start to current time so we never produce past timestamps
+    current_hour = date.hour + date.minute / 60.0
+    effective_start = max(window_start_hour, current_hour)
+
+    start_minutes = int(effective_start * 60)
     end_minutes = int(window_end_hour * 60)
+
+    # If the effective window is empty (current time past end), caller should
+    # have already skipped this category. Defensive fallback: use end_minutes.
+    if start_minutes > end_minutes:
+        start_minutes = end_minutes
+
     chosen_minute = random.randint(start_minutes, end_minutes)
 
     chosen_dt = date.replace(
@@ -331,8 +351,8 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     # Compute user state for weight evaluation
     user_state = await compute_user_state(store, user_id)
 
-    # Select 2-4 categories (D-06)
-    target_count = random.randint(2, 4)
+    # Select 3-5 categories (D-06, widened from 2-4 for better day coverage)
+    target_count = random.randint(3, 5)
     selected = select_categories(DEFAULT_CATEGORIES, user_state, target_count=target_count)
 
     if not selected:
@@ -347,7 +367,17 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     phone = user.phone if user else ""
 
     scheduled_names = []
+    current_hour = today.hour + today.minute / 60.0
     for cat in selected:
+        # Skip categories whose time window has already passed today.
+        # This prevents scheduling past-timestamp jobs that would fire immediately.
+        if cat.window_end_hour <= current_hour:
+            logger.info(
+                "POOL_SKIP_PAST_WINDOW user=%s category=%s window_end=%.1f current=%.1f",
+                user_id[:8], cat.name, cat.window_end_hour, current_hour,
+            )
+            continue
+
         jitter_ts = compute_jitter_time(
             cat.window_start_hour, cat.window_end_hour, user_timezone, today,
         )
@@ -364,6 +394,7 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
         # ZADD to scheduled_jobs
         payload = {
             "type": cat.handler_type,
+            "category": cat.name,  # Used for idempotency (distinct from handler_type)
             "user_id": user_id,
             "channel": "sms",
             "phone": phone,

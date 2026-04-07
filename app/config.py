@@ -3,7 +3,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # Twilio
     twilio_account_sid: str = ""
@@ -54,9 +55,10 @@ class Settings(BaseSettings):
 
     # External services
     connections_service_url: str = "http://connections:8001"
-    twilio_verify_service_sid: str = ""    # For SMS OTP verification (plan 02-05)
+    # For SMS OTP verification (plan 02-05)
+    twilio_verify_service_sid: str = ""
     brave_api_key: str = ""                # For Brave Search (plan 02-07)
-    dashboard_url: str = "http://localhost:5173"  # Redirect target post-OAuth
+    dashboard_url: str = "http://localhost:8000"  # Redirect target post-OAuth
 
     # Race timeout: wait for worker before sending ACK (UAT showed 2.4s typical)
     race_timeout_s: float = 8.0

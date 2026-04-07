@@ -133,3 +133,116 @@ subagents:
           required: []
         handler: app.tasks.recall.handle_recall
         risk_level: low
+
+  - name: profile_agent
+    description: "Update user profile information and TELOS entries"
+    tools:
+      - name: upsert_profile
+        description: >-
+          Save or update a piece of information about the user in their profile.
+          Use this when the user shares personal facts, preferences, goals,
+          challenges, or biographical details — especially in response to a
+          profile nudge or during onboarding. Sections: preferences, mission,
+          goals, challenges, wisdom, ideas, predictions, history, narratives,
+          problems.
+        parameters:
+          type: object
+          properties:
+            section:
+              type: string
+              description: "TELOS profile section (e.g. preferences, goals, challenges, mission, history)"
+              enum: ["preferences", "mission", "goals", "challenges", "wisdom", "ideas", "predictions", "history", "narratives", "problems"]
+            label:
+              type: string
+              description: "Short label for this entry (e.g. 'favorite cuisine', 'career goal')"
+            content:
+              type: string
+              description: "The information to save"
+          required: ["section", "label", "content"]
+        handler: app.memory.store.MemoryStore.upsert_profile_entry
+        risk_level: low
+      - name: update_user_field
+        description: >-
+          Update a top-level user field like name, timezone, assistant_name, or
+          personality_notes. Use when the user tells you their name, location/timezone,
+          what they want to call you, or how they want you to communicate.
+        parameters:
+          type: object
+          properties:
+            field:
+              type: string
+              description: "The user field to update"
+              enum: ["name", "timezone", "assistant_name", "personality_notes"]
+            value:
+              type: string
+              description: "The new value for the field"
+          required: ["field", "value"]
+        handler: app.memory.store.update_user_field
+        risk_level: low
+
+  - name: goal_agent
+    description: "Create and manage user goals"
+    tools:
+      - name: create_goal
+        description: >-
+          Create a new goal for the user. Use when the user shares something
+          they want to achieve, a project they're working on, or a target
+          they want to hit. Goals can have optional deadlines and descriptions.
+        parameters:
+          type: object
+          properties:
+            title:
+              type: string
+              description: "Goal title — use the user's own words"
+            description:
+              type: string
+              description: "Optional detailed description of the goal"
+            target_date:
+              type: string
+              description: "Optional target date in ISO 8601 format (e.g. 2026-06-01)"
+            framework:
+              type: string
+              description: "Goal framework (default: custom)"
+              default: "custom"
+          required: ["title"]
+        handler: app.memory.store.MemoryStore.create_goal
+        risk_level: low
+      - name: update_goal
+        description: >-
+          Update an existing goal — change its title, description, status, or
+          target date. Use when the user wants to modify a goal, mark it
+          complete, or update progress.
+        parameters:
+          type: object
+          properties:
+            goal_id:
+              type: string
+              description: "The ID of the goal to update"
+            title:
+              type: string
+              description: "New title (optional)"
+            description:
+              type: string
+              description: "New description (optional)"
+            status:
+              type: string
+              description: "New status: active, completed, paused, abandoned"
+              enum: ["active", "completed", "paused", "abandoned"]
+            target_date:
+              type: string
+              description: "New target date in ISO 8601 format (optional)"
+          required: ["goal_id"]
+        handler: app.memory.store.MemoryStore.update_goal
+        risk_level: low
+      - name: list_goals
+        description: "List the user's goals, optionally filtered by status"
+        parameters:
+          type: object
+          properties:
+            status:
+              type: string
+              description: "Filter by status: active, completed, paused, abandoned, all (default: active)"
+              default: "active"
+          required: []
+        handler: app.memory.store.MemoryStore.get_goals
+        risk_level: low

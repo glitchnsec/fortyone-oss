@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8001/oauth/callback/google"
-    dashboard_url: str = "http://localhost:5173"
+    dashboard_url: str = "http://localhost:8000"
 
 
 @lru_cache

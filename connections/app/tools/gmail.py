@@ -19,7 +19,10 @@ GMAIL_BASE = "https://gmail.googleapis.com/gmail/v1/users/me"
 async def _get_fresh_token(conn: Connection, token: OAuthToken, db: AsyncSession) -> str:
     """Return a valid access token. Refreshes if expired. Sets needs_reauth if refresh fails."""
     now = datetime.now(timezone.utc)
-    if token.expires_at and token.expires_at > now:
+    expires_at = token.expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    if expires_at and expires_at > now:
         return decrypt(token.access_token_enc)
     # Attempt refresh
     try:

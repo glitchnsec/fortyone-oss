@@ -26,7 +26,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Confidence threshold below which the assistant should ask for clarification
-CLARIFICATION_THRESHOLD = 0.6
+CLARIFICATION_THRESHOLD = 0.4
 
 # Work signals — strong indicators that the message is work context
 _WORK_SIGNALS = [
