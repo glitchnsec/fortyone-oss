@@ -3,6 +3,9 @@
  *
  * CRUD operations via /api/v1/personas.
  * Create form for new personas. Inline editing. Delete with confirmation.
+ * Primary connection management surface (D-03): each persona card shows its
+ * connections with status badges, disconnect action, and "Add Connection" button
+ * that initiates OAuth with persona_id.
  */
 import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
@@ -65,6 +68,7 @@ function PersonasSettingsPage() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [connectingPersonaId, setConnectingPersonaId] = useState<string | null>(null);
 
   // Create form state
   const [name, setName] = useState("");
@@ -88,21 +92,36 @@ function PersonasSettingsPage() {
       fetchWithAuth("/api/v1/connections").then((r) => r.json()) as Promise<ConnectionsResponse>,
   });
 
-  const assignConnectionMutation = useMutation({
-    mutationFn: async ({ connId, personaId }: { connId: string; personaId: string | null }) => {
-      const res = await fetchWithAuth(`/api/v1/connections/${connId}`, {
-        method: "PATCH",
+  const initiateConnectionMutation = useMutation({
+    mutationFn: async ({ provider, personaId }: { provider: string; personaId: string }) => {
+      const res = await fetchWithAuth("/api/v1/connections/initiate", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ persona_id: personaId }),
+        body: JSON.stringify({ provider, persona_id: personaId }),
       });
-      if (!res.ok) throw new Error("Failed to assign connection.");
-      return res.json();
+      if (!res.ok) throw new Error("Failed to initiate connection");
+      return res.json() as Promise<{ auth_url?: string }>;
+    },
+    onMutate: (vars) => setConnectingPersonaId(vars.personaId),
+    onSuccess: (data) => {
+      if (data.auth_url) window.location.href = data.auth_url;
+    },
+    onError: () => {
+      setConnectingPersonaId(null);
+      toast.error("Connection failed. Please try again.");
+    },
+  });
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (connId: string) => {
+      const res = await fetchWithAuth(`/api/v1/connections/${connId}`, { method: "DELETE" });
+      if (!res.ok && res.status !== 204) throw new Error("Delete failed");
     },
     onSuccess: () => {
-      toast.success("Connection assigned.");
+      toast.success("Connection disconnected.");
       queryClient.invalidateQueries({ queryKey: ["connections"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: () => toast.error("Failed to disconnect. Please try again."),
   });
 
   const createMutation = useMutation({
@@ -192,7 +211,6 @@ function PersonasSettingsPage() {
 
   const personas = data?.personas ?? [];
   const allConnections = connectionsData?.connections ?? [];
-  const unassignedConnections = allConnections.filter((c) => c.persona_id === null || c.persona_id === undefined);
 
   const getPersonaConnections = (personaId: string) =>
     allConnections.filter((c) => c.persona_id === personaId);
@@ -380,78 +398,96 @@ function PersonasSettingsPage() {
                   </div>
                 </div>
               )}
-              {/* Connections assigned to this persona */}
-              {editingId !== persona.id && allConnections.length > 0 && (
+              {/* Connection management per persona (D-03) */}
+              {editingId !== persona.id && (
                 <div className="mt-3 border-t border-neutral-100 pt-3">
                   <p className="text-xs font-medium text-neutral-500 mb-2">
                     Connections ({getPersonaConnections(persona.id).length})
                   </p>
                   {getPersonaConnections(persona.id).length === 0 ? (
-                    <p className="text-xs text-neutral-400">No connections assigned.</p>
+                    <p className="text-xs text-neutral-400 mb-2">
+                      No connections. Add a connection so your assistant can take action for this persona.
+                    </p>
                   ) : (
-                    getPersonaConnections(persona.id).map((conn) => (
-                      <div key={conn.id} className="flex items-center justify-between py-1">
-                        <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
-                        <select
-                          className="text-xs border rounded px-2 py-1"
-                          value={conn.persona_id ?? ""}
-                          onChange={(e) =>
-                            assignConnectionMutation.mutate({
-                              connId: conn.id,
-                              personaId: e.target.value || null,
-                            })
-                          }
-                        >
-                          <option value="">Shared</option>
-                          {personas.map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                        </select>
-                      </div>
-                    ))
+                    <div className="space-y-2 mb-2">
+                      {getPersonaConnections(persona.id).map((conn) => (
+                        <div key={conn.id} className="flex items-center justify-between py-1.5 px-2 rounded bg-neutral-50">
+                          <div className="flex items-center gap-2">
+                            <div className="flex h-6 w-6 items-center justify-center rounded bg-white border border-neutral-200 text-xs font-semibold text-neutral-600">
+                              {conn.provider.charAt(0).toUpperCase()}
+                            </div>
+                            <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
+                            {/* Status badge */}
+                            {conn.status === "connected" && (
+                              <Badge className="bg-green-100 text-green-700 hover:bg-green-100 text-xs">Connected</Badge>
+                            )}
+                            {conn.status === "needs_reauth" && (
+                              <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100 text-xs">Needs reauth</Badge>
+                            )}
+                            {conn.status === "error" && (
+                              <Badge className="bg-red-100 text-red-700 hover:bg-red-100 text-xs">Error</Badge>
+                            )}
+                          </div>
+                          {/* Disconnect action */}
+                          {conn.status === "connected" && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <button className="text-xs text-neutral-400 hover:text-red-600 underline-offset-2 hover:underline">
+                                  Disconnect {conn.provider}
+                                </button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Disconnect {conn.provider}?</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Your assistant will lose access to {conn.provider} for your {persona.name} persona. You can reconnect at any time.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => disconnectMutation.mutate(conn.id)}
+                                    className="bg-red-600 hover:bg-red-700"
+                                  >
+                                    Disconnect {conn.provider}
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                          {(conn.status === "needs_reauth" || conn.status === "error") && (
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="h-7 text-xs"
+                              onClick={() => initiateConnectionMutation.mutate({ provider: conn.provider, personaId: persona.id })}
+                            >
+                              Reconnect
+                            </Button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
+                  {/* Add Connection button -- per D-03, accent colored */}
+                  <Button
+                    size="sm"
+                    className="bg-blue-600 hover:bg-blue-700 min-h-[44px] w-full"
+                    onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
+                    disabled={connectingPersonaId === persona.id}
+                  >
+                    {connectingPersonaId === persona.id ? (
+                      <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
+                    ) : (
+                      <><Plus className="mr-2 h-4 w-4" />Add Connection</>
+                    )}
+                  </Button>
                 </div>
               )}
             </CardContent>
           </Card>
         ))}
       </div>
-
-      {/* Unassigned connections (Shared) */}
-      {unassignedConnections.length > 0 && personas.length > 0 && (
-        <Card className="mt-6 border border-neutral-200">
-          <CardContent className="pt-4 pb-4">
-            <p className="text-sm font-medium text-neutral-700 mb-2">Shared Connections</p>
-            <p className="text-xs text-neutral-400 mb-3">
-              These connections are available to all personas.
-            </p>
-            {unassignedConnections.map((conn) => (
-              <div key={conn.id} className="flex items-center justify-between py-1">
-                <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
-                <select
-                  className="text-xs border rounded px-2 py-1"
-                  value=""
-                  onChange={(e) =>
-                    assignConnectionMutation.mutate({
-                      connId: conn.id,
-                      personaId: e.target.value || null,
-                    })
-                  }
-                >
-                  <option value="">Shared</option>
-                  {personas.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
