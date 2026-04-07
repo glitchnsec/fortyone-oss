@@ -168,6 +168,7 @@ async def list_connections(
 
 class InitiateBody(BaseModel):
     provider: str
+    persona_id: str  # UUID — required per D-01 for per-persona connections
 
 
 @router.post("/connections/initiate")
@@ -179,7 +180,8 @@ async def initiate_connection(
     """Initiate OAuth flow: proxy to connections service oauth initiate endpoint."""
     try:
         resp = await client.get(
-            f"/oauth/initiate/{body.provider}", params={"user_id": user.id}
+            f"/oauth/initiate/{body.provider}",
+            params={"user_id": user.id, "persona_id": body.persona_id},
         )
         resp.raise_for_status()
         return resp.json()

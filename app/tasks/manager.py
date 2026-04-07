@@ -518,6 +518,8 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
         return {"error": f"Invalid tool arguments: {tool_args_raw[:100]}"}
 
     user_id = payload.get("user_id", "")
+    persona_id = payload.get("persona_id")
+    persona_name = payload.get("persona", "shared")
 
     try:
         if tool_name == "web_search":
@@ -540,22 +542,26 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
 
         elif tool_name == "read_emails":
             return await _call_connections_tool(
-                "gmail", "read_emails", user_id, tool_args
+                "gmail", "read_emails", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "send_email":
             return await _call_connections_tool(
-                "gmail", "send_email", user_id, tool_args
+                "gmail", "send_email", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "list_events":
             return await _call_connections_tool(
-                "calendar", "list_events", user_id, tool_args
+                "calendar", "list_events", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "create_event":
             return await _call_connections_tool(
-                "calendar", "create_event", user_id, tool_args
+                "calendar", "create_event", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "create_reminder":
@@ -596,11 +602,23 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
 
 
 async def _call_connections_tool(
-    service: str, action: str, user_id: str, params: dict
+    service: str, action: str, user_id: str, params: dict,
+    persona_id: str | None = None,
+    persona_name: str | None = None,
 ) -> dict:
-    """Call the connections service via HTTP (per research: maintain service isolation)."""
+    """Call the connections service via HTTP (per research: maintain service isolation).
+
+    persona_id is forwarded to the connections service so it can look up
+    per-persona credentials.  persona_name is used only for the D-07
+    fallback message when the active persona lacks a connection.
+    """
     import httpx
     settings = get_settings()
+
+    # Build payload — include persona_id when available
+    payload = {"user_id": user_id, **params}
+    if persona_id:
+        payload["persona_id"] = persona_id
 
     try:
         async with httpx.AsyncClient(
@@ -608,12 +626,22 @@ async def _call_connections_tool(
         ) as client:
             resp = await client.post(
                 f"/tools/{service}/{action}",
-                json={"user_id": user_id, **params},
+                json=payload,
             )
             if resp.status_code == 401:
                 return {
                     "error": "needs_reauth",
                     "message": "Your connection needs reauthorization. Visit your dashboard to reconnect.",
+                }
+            # D-07: Fallback when active persona lacks this connection
+            if resp.status_code == 404:
+                display_name = persona_name or "your current persona"
+                return {
+                    "error": "no_persona_connection",
+                    "message": (
+                        f"Your {display_name} persona doesn't have this service connected. "
+                        "Check your other personas or connect it from your dashboard settings."
+                    ),
                 }
             resp.raise_for_status()
             return resp.json()
