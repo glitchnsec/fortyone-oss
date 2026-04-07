@@ -20,9 +20,11 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy.orm import selectinload
+
 from app.config import get_settings
 from app.database import AsyncSessionLocal
-from app.memory.models import User
+from app.memory.models import Role, User
 from app.middleware.auth import get_current_user as _get_current_user
 from app.models.auth import UserSession
 
@@ -58,10 +60,10 @@ def _hash_token(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
-def _create_access_token(user_id: str) -> str:
+def _create_access_token(user_id: str, role: str = "user") -> str:
     s = get_settings()
     exp = datetime.now(timezone.utc) + timedelta(minutes=s.access_token_expire_minutes)
-    return jwt.encode({"sub": user_id, "exp": exp}, s.jwt_secret, algorithm=s.jwt_algorithm)
+    return jwt.encode({"sub": user_id, "role": role, "exp": exp}, s.jwt_secret, algorithm=s.jwt_algorithm)
 
 
 async def _get_db():
@@ -110,7 +112,7 @@ async def register(body: RegisterInput, response: Response, db: AsyncSession = D
         await db.refresh(user)
 
     # Auto-login: issue tokens so the user is authenticated immediately after registration
-    access_token = _create_access_token(user.id)
+    access_token = _create_access_token(user.id, role="user")
     raw_refresh = secrets.token_urlsafe(64)
     s = get_settings()
     exp = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
@@ -127,11 +129,19 @@ async def register(body: RegisterInput, response: Response, db: AsyncSession = D
 @router.post("/login")
 async def login(body: LoginInput, response: Response, db: AsyncSession = Depends(_get_db)):
     """Validate credentials. Returns {access_token} in body; sets refresh_token httpOnly cookie."""
-    result = await db.execute(select(User).where(User.email == body.email))
+    result = await db.execute(
+        select(User).options(selectinload(User.role)).where(User.email == body.email)
+    )
     user = result.scalar_one_or_none()
     if not user or not _verify_password(body.password, user.password_hash or ""):
         raise HTTPException(401, "Email or password is incorrect. Try again or reset your password.")
-    access_token = _create_access_token(user.id)
+    # Reject deleted or suspended accounts
+    if user.deleted_at:
+        raise HTTPException(403, "Account deleted")
+    if user.suspended_at:
+        raise HTTPException(403, "Account suspended")
+    role_name = user.role.name if user.role else "user"
+    access_token = _create_access_token(user.id, role=role_name)
     raw_refresh = secrets.token_urlsafe(64)
     s = get_settings()
     exp = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
@@ -166,6 +176,18 @@ async def refresh(
     if not session_row or session_row.expires_at.replace(tzinfo=None) < now_utc:
         raise HTTPException(401, "Your session has expired. Please sign in again.")
     user_id = session_row.user_id
+    # Load user with role to include role claim in token and check status
+    user_result = await db.execute(
+        select(User).options(selectinload(User.role)).where(User.id == user_id)
+    )
+    user = user_result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(401, "User not found")
+    if user.deleted_at:
+        raise HTTPException(403, "Account deleted")
+    if user.suspended_at:
+        raise HTTPException(403, "Account suspended")
+    role_name = user.role.name if user.role else "user"
     # Rotate: delete old session, create new one
     await db.execute(delete(UserSession).where(UserSession.token_hash == h))
     raw_new = secrets.token_urlsafe(64)
@@ -173,7 +195,7 @@ async def refresh(
     exp = datetime.now(timezone.utc) + timedelta(days=s.refresh_token_expire_days)
     db.add(UserSession(user_id=user_id, token_hash=_hash_token(raw_new), expires_at=exp))
     await db.commit()
-    new_access = _create_access_token(user_id)
+    new_access = _create_access_token(user_id, role=role_name)
     response.set_cookie(
         "refresh_token",
         raw_new,

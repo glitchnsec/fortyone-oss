@@ -54,6 +54,7 @@ async def get_me(user: User = Depends(get_current_user)):
         "phone_verified": user.phone_verified,
         "assistant_name": user.assistant_name,
         "personality_notes": getattr(user, "personality_notes", None),
+        "role": user.role.name if user.role else "user",
     }
 
 

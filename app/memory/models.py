@@ -23,6 +23,16 @@ def _uuid() -> str:
     return str(uuid.uuid4())
 
 
+class Role(Base):
+    """System roles: 'user' and 'admin'. Seeded by migration 006."""
+    __tablename__ = "roles"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    name = Column(String, unique=True, nullable=False)
+
+    users = relationship("User", back_populates="role")
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -40,6 +50,14 @@ class User(Base):
     assistant_name = Column(String, nullable=True)  # Onboarding step 3 (DASH-02 / D-12)
     personality_notes = Column(Text, nullable=True)  # Free-form personality/tone notes
     proactive_settings_json = Column(Text, nullable=True)  # JSON: max_daily_messages, quiet_hours, briefing_times, enabled
+
+    # Role-based access control (migration 006)
+    role_id = Column(String, ForeignKey("roles.id"), nullable=True)
+    role = relationship("Role", back_populates="users")
+
+    # Soft-delete and suspension (migration 006)
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
+    suspended_at = Column(DateTime(timezone=True), nullable=True)
 
     memories = relationship("Memory", back_populates="user", cascade="all, delete-orphan")
     tasks = relationship("Task", back_populates="user", cascade="all, delete-orphan")
