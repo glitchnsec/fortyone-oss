@@ -239,6 +239,15 @@ class MessagePipeline:
             )
             return
 
+        # ── RESOLVE persona_id (name → UUID for connections service) ─────────
+        persona_id = None
+        if persona_name != "shared" and user_personas:
+            matched_persona = next(
+                (p for p in user_personas if p.name == persona_name), None
+            )
+            if matched_persona:
+                persona_id = matched_persona.id
+
         # ── THINK / ACT — tiered context assembly ────────────────────────────
         if intent.type in _FULL_CONTEXT_INTENTS:
             context = await self.store.get_context_full(
@@ -261,6 +270,7 @@ class MessagePipeline:
             "context":  context,
             "user_id":  user.id,
             "persona":  persona_name,
+            "persona_id": persona_id,  # UUID for connection lookup
         })
 
         logger.info(
