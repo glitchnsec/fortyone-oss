@@ -20,6 +20,7 @@ async def _get_db():
 class GmailReadInput(BaseModel):
     user_id: str
     max_results: int = 10
+    persona_id: str | None = None
 
 
 class GmailSendInput(BaseModel):
@@ -27,11 +28,13 @@ class GmailSendInput(BaseModel):
     to: str
     subject: str
     body: str
+    persona_id: str | None = None
 
 
 class CalendarListInput(BaseModel):
     user_id: str
     max_results: int = 10
+    persona_id: str | None = None
 
 
 class CalendarCreateInput(BaseModel):
@@ -41,22 +44,23 @@ class CalendarCreateInput(BaseModel):
     end_datetime: str
     timezone_str: str = "UTC"
     description: Optional[str] = ""
+    persona_id: str | None = None
 
 
 @router.post("/gmail/read")
 async def gmail_read(body: GmailReadInput, db: AsyncSession = Depends(_get_db)):
-    emails = await read_emails(body.user_id, body.max_results, db)
+    emails = await read_emails(body.user_id, body.max_results, db, persona_id=body.persona_id)
     return {"emails": emails}
 
 
 @router.post("/gmail/send")
 async def gmail_send(body: GmailSendInput, db: AsyncSession = Depends(_get_db)):
-    return await send_email(body.user_id, body.to, body.subject, body.body, db)
+    return await send_email(body.user_id, body.to, body.subject, body.body, db, persona_id=body.persona_id)
 
 
 @router.post("/calendar/events")
 async def calendar_events(body: CalendarListInput, db: AsyncSession = Depends(_get_db)):
-    events = await list_events(body.user_id, body.max_results, db)
+    events = await list_events(body.user_id, body.max_results, db, persona_id=body.persona_id)
     return {"events": events}
 
 
@@ -64,5 +68,6 @@ async def calendar_events(body: CalendarListInput, db: AsyncSession = Depends(_g
 async def calendar_create(body: CalendarCreateInput, db: AsyncSession = Depends(_get_db)):
     return await create_event(
         body.user_id, body.summary, body.start_datetime,
-        body.end_datetime, body.timezone_str, body.description or "", db
+        body.end_datetime, body.timezone_str, body.description or "", db,
+        persona_id=body.persona_id,
     )

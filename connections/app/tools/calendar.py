@@ -12,10 +12,11 @@ logger = logging.getLogger(__name__)
 CAL_BASE = "https://www.googleapis.com/calendar/v3/calendars/primary"
 
 
-async def _get_connection(user_id: str, db: AsyncSession):
-    result = await db.execute(
-        select(Connection).where(Connection.user_id == user_id, Connection.provider == "google")
-    )
+async def _get_connection(user_id: str, db: AsyncSession, persona_id: str | None = None):
+    query = select(Connection).where(Connection.user_id == user_id, Connection.provider == "google")
+    if persona_id:
+        query = query.where(Connection.persona_id == persona_id)
+    result = await db.execute(query)
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(404, "No Google connection found")
@@ -25,10 +26,10 @@ async def _get_connection(user_id: str, db: AsyncSession):
     return conn, tok
 
 
-async def list_events(user_id: str, max_results: int = 10, db: AsyncSession = None) -> list:
+async def list_events(user_id: str, max_results: int = 10, db: AsyncSession = None, persona_id: str | None = None) -> list:
     """Return upcoming calendar events."""
     from datetime import datetime, timezone
-    conn, token = await _get_connection(user_id, db)
+    conn, token = await _get_connection(user_id, db, persona_id=persona_id)
     access_token = await _get_fresh_token(conn, token, db)
     now = datetime.now(timezone.utc).isoformat()
     async with httpx.AsyncClient() as client:
@@ -59,9 +60,10 @@ async def create_event(
     timezone_str: str = "UTC",
     description: str = "",
     db: AsyncSession = None,
+    persona_id: str | None = None,
 ) -> dict:
     """Create a calendar event on behalf of the user."""
-    conn, token = await _get_connection(user_id, db)
+    conn, token = await _get_connection(user_id, db, persona_id=persona_id)
     access_token = await _get_fresh_token(conn, token, db)
     async with httpx.AsyncClient() as client:
         resp = await client.post(

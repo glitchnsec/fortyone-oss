@@ -23,8 +23,11 @@ async def _get_db():
 
 
 @router.get("/connections/{user_id}")
-async def list_connections(user_id: str, db: AsyncSession = Depends(_get_db)):
-    result = await db.execute(select(Connection).where(Connection.user_id == user_id))
+async def list_connections(user_id: str, persona_id: str | None = None, db: AsyncSession = Depends(_get_db)):
+    query = select(Connection).where(Connection.user_id == user_id)
+    if persona_id:
+        query = query.where(Connection.persona_id == persona_id)
+    result = await db.execute(query)
     conns = result.scalars().all()
     out = []
     for c in conns:

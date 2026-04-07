@@ -63,7 +63,7 @@ async def test_oauth_initiate_returns_auth_url(client):
         s.google_redirect_uri = "http://localhost:8001/oauth/callback/google"
         mock_settings.return_value = s
 
-        resp = await client.get("/oauth/initiate/google?user_id=test-user-123")
+        resp = await client.get("/oauth/initiate/google?user_id=test-user-123&persona_id=persona-work")
         assert resp.status_code == 200
         data = resp.json()
         assert "auth_url" in data
@@ -81,7 +81,7 @@ async def test_oauth_initiate_includes_required_params(client):
         s.google_redirect_uri = "http://localhost:8001/oauth/callback/google"
         mock_settings.return_value = s
 
-        resp = await client.get("/oauth/initiate/google?user_id=user-1")
+        resp = await client.get("/oauth/initiate/google?user_id=user-1&persona_id=persona-work")
         url = resp.json()["auth_url"]
         assert "client_id=my-client-id" in url
         assert "redirect_uri=" in url
@@ -102,7 +102,7 @@ async def test_oauth_initiate_empty_client_id_produces_broken_url(client):
         s.google_redirect_uri = "http://localhost:8001/oauth/callback/google"
         mock_settings.return_value = s
 
-        resp = await client.get("/oauth/initiate/google?user_id=user-1")
+        resp = await client.get("/oauth/initiate/google?user_id=user-1&persona_id=persona-work")
         url = resp.json()["auth_url"]
         # This URL contains client_id= (empty) — Google will reject it
         assert "client_id=" in url

@@ -45,11 +45,12 @@ async def _get_fresh_token(conn: Connection, token: OAuthToken, db: AsyncSession
         raise HTTPException(401, "Your Google connection needs reauthorization. Reconnect to restore full access.")
 
 
-async def _get_connection(user_id: str, db: AsyncSession):
-    """Fetch Connection + OAuthToken for user. Raises 404 if not connected."""
-    result = await db.execute(
-        select(Connection).where(Connection.user_id == user_id, Connection.provider == "google")
-    )
+async def _get_connection(user_id: str, db: AsyncSession, persona_id: str | None = None):
+    """Fetch Connection + OAuthToken for user. Optionally scoped by persona_id. Raises 404 if not connected."""
+    query = select(Connection).where(Connection.user_id == user_id, Connection.provider == "google")
+    if persona_id:
+        query = query.where(Connection.persona_id == persona_id)
+    result = await db.execute(query)
     conn = result.scalar_one_or_none()
     if not conn:
         raise HTTPException(404, "No Google connection found for this user")
@@ -60,9 +61,9 @@ async def _get_connection(user_id: str, db: AsyncSession):
     return conn, token
 
 
-async def read_emails(user_id: str, max_results: int = 10, db: AsyncSession = None) -> list:
+async def read_emails(user_id: str, max_results: int = 10, db: AsyncSession = None, persona_id: str | None = None) -> list:
     """Return list of recent email summaries."""
-    conn, token = await _get_connection(user_id, db)
+    conn, token = await _get_connection(user_id, db, persona_id=persona_id)
     access_token = await _get_fresh_token(conn, token, db)
     async with httpx.AsyncClient() as client:
         # List message IDs
@@ -92,9 +93,9 @@ async def read_emails(user_id: str, max_results: int = 10, db: AsyncSession = No
         return results
 
 
-async def send_email(user_id: str, to: str, subject: str, body: str, db: AsyncSession = None) -> dict:
+async def send_email(user_id: str, to: str, subject: str, body: str, db: AsyncSession = None, persona_id: str | None = None) -> dict:
     """Send an email on behalf of the user."""
-    conn, token = await _get_connection(user_id, db)
+    conn, token = await _get_connection(user_id, db, persona_id=persona_id)
     access_token = await _get_fresh_token(conn, token, db)
     msg = MIMEText(body)
     msg["to"] = to
