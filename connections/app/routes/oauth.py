@@ -23,11 +23,11 @@ async def _get_db():
 
 
 @router.get("/oauth/initiate/{provider}")
-async def initiate_oauth(provider: str, user_id: str, db: AsyncSession = Depends(_get_db)):
+async def initiate_oauth(provider: str, user_id: str, persona_id: str, db: AsyncSession = Depends(_get_db)):
     p = get_provider(provider)
     s = get_settings()
     state = secrets.token_urlsafe(32)
-    db.add(OAuthState(state=state, user_id=user_id))
+    db.add(OAuthState(state=state, user_id=user_id, persona_id=persona_id))
     await db.commit()
     client = AsyncOAuth2Client(
         client_id=s.google_client_id,
@@ -49,6 +49,7 @@ async def oauth_callback(provider: str, code: str, state: str, db: AsyncSession 
     if not state_row:
         raise HTTPException(400, "Invalid OAuth state")
     user_id = state_row.user_id
+    persona_id = state_row.persona_id
     await db.execute(delete(OAuthState).where(OAuthState.state == state))
 
     s = get_settings()
@@ -69,16 +70,20 @@ async def oauth_callback(provider: str, code: str, state: str, db: AsyncSession 
     expires_in = token_data.get("expires_in")
     granted_scopes = token_data.get("scope", "")
 
-    # Upsert: remove old connection for this user+provider before creating new one
+    # Upsert: remove old connection for this user+provider+persona before creating new one
     old = await db.execute(
-        select(Connection).where(Connection.user_id == user_id, Connection.provider == provider)
+        select(Connection).where(
+            Connection.user_id == user_id,
+            Connection.provider == provider,
+            Connection.persona_id == persona_id,
+        )
     )
     old_conn = old.scalar_one_or_none()
     if old_conn:
         await db.delete(old_conn)
         await db.commit()
 
-    conn = Connection(user_id=user_id, provider=provider, status="connected", granted_scopes=granted_scopes)
+    conn = Connection(user_id=user_id, provider=provider, persona_id=persona_id, status="connected", granted_scopes=granted_scopes)
     db.add(conn)
     await db.flush()  # get conn.id
 
@@ -91,4 +96,4 @@ async def oauth_callback(provider: str, code: str, state: str, db: AsyncSession 
     ))
     await db.commit()
     logger.info("OAuth connected user_id=%s provider=%s", user_id, provider)
-    return RedirectResponse(f"{s.dashboard_url}/connections?connected={provider}")
+    return RedirectResponse(f"{s.dashboard_url}/connections?connected={provider}&persona_id={persona_id}")

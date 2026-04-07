@@ -27,6 +27,17 @@ def _run_startup_migrations(sync_conn):
                 logger.info("STARTUP_MIGRATION connections.persona_id already exists — skipping")
         else:
             logger.info("STARTUP_MIGRATION connections table not found — create_all will handle it")
+
+        # Add persona_id to oauth_states (added for per-persona connections)
+        if inspector.has_table("oauth_states"):
+            columns = {c["name"] for c in inspector.get_columns("oauth_states")}
+            if "persona_id" not in columns:
+                sync_conn.execute(text("ALTER TABLE oauth_states ADD COLUMN persona_id VARCHAR"))
+                logger.info("STARTUP_MIGRATION added oauth_states.persona_id column")
+            else:
+                logger.info("STARTUP_MIGRATION oauth_states.persona_id already exists — skipping")
+        else:
+            logger.info("STARTUP_MIGRATION oauth_states table not found — create_all will handle it")
     except Exception as exc:
         logger.error("STARTUP_MIGRATION failed: %s", exc, exc_info=True)
 

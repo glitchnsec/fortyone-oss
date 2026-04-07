@@ -41,4 +41,5 @@ class OAuthState(Base):
     __tablename__ = "oauth_states"
     state = Column(String, primary_key=True)       # CSRF token
     user_id = Column(String, nullable=False)
+    persona_id = Column(String, nullable=True)     # which persona initiated this OAuth flow
     created_at = Column(DateTime(timezone=True), default=_utcnow)
