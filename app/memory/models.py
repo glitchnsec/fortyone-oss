@@ -69,6 +69,7 @@ class User(Base):
     action_logs = relationship("ActionLog", back_populates="user", cascade="all, delete-orphan")
     profile_entries = relationship("UserProfile", back_populates="user", cascade="all, delete-orphan")
     proactive_preferences = relationship("ProactivePreference", back_populates="user", cascade="all, delete-orphan")
+    custom_agents = relationship("CustomAgent", back_populates="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -269,6 +270,25 @@ class ProactivePreference(Base):
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", back_populates="proactive_preferences")
+
+
+class CustomAgent(Base):
+    """User-defined custom agents: webhook, prompt, or YAML/script types."""
+    __tablename__ = "custom_agents"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    description = Column(Text, nullable=True)
+    agent_type = Column(String, nullable=False)  # webhook | prompt | yaml_script
+    config_json = Column(Text, nullable=False)   # type-specific JSON config
+    parameters_schema_json = Column(Text, nullable=True)  # OpenAI function parameters JSON
+    risk_level = Column(String, default="low")   # low | medium | high
+    enabled = Column(Boolean, default=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="custom_agents")
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
