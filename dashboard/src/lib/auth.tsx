@@ -3,8 +3,9 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from "
 export interface AuthContext {
   isAuthenticated: boolean;
   userId: string | null;
+  role: string | null;
   initialized: boolean; // true once the mount refresh attempt has resolved
-  login: (accessToken: string, userId: string) => void;
+  login: (accessToken: string, userId: string, role?: string) => void;
   logout: () => void;
 }
 
@@ -19,6 +20,7 @@ export const setAccessToken = (t: string | null) => {
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [userId, setUserId] = useState<string | null>(null);
+  const [role, setRole] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
 
   // CRITICAL: On mount, attempt to restore the session from the httpOnly refresh cookie.
@@ -37,8 +39,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             credentials: "include",
           });
           if (me.ok) {
-            const { user_id } = await me.json() as { user_id: string };
-            setUserId(user_id);
+            const data = await me.json() as { user_id: string; role?: string };
+            setUserId(data.user_id);
+            setRole(data.role ?? "user");
           }
         }
       } catch {
@@ -49,18 +52,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })();
   }, []);
 
-  const login = (accessToken: string, uid: string) => {
+  const login = (accessToken: string, uid: string, userRole?: string) => {
     setAccessToken(accessToken);
     setUserId(uid);
+    setRole(userRole ?? "user");
   };
 
   const logout = () => {
     setAccessToken(null);
     setUserId(null);
+    setRole(null);
   };
 
   return (
-    <Ctx.Provider value={{ isAuthenticated: !!userId, userId, initialized, login, logout }}>
+    <Ctx.Provider value={{ isAuthenticated: !!userId, userId, role, initialized, login, logout }}>
       {children}
     </Ctx.Provider>
   );

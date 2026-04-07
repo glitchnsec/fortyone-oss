@@ -26,8 +26,20 @@ function RootLayout() {
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const isAuth = pathname.startsWith("/auth");
   const isOnboarding = pathname.startsWith("/onboarding");
+  const isAdmin = pathname.startsWith("/admin");
 
+  // Auth and onboarding pages render without any shell
   if (isAuth || isOnboarding) {
+    return (
+      <>
+        <Outlet />
+        <Toaster />
+      </>
+    );
+  }
+
+  // Admin routes render without the user AppShell — AdminShell will wrap its own routes (Plan 03)
+  if (isAdmin) {
     return (
       <>
         <Outlet />
