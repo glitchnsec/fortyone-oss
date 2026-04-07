@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import AsyncSessionLocal
-from app.memory.models import Message, User, Goal, ActionLog, Persona, UserProfile
+from app.memory.models import Message, User, Goal, ActionLog, Persona, UserProfile, ProactivePreference
 from app.memory.store import MemoryStore
 from app.middleware.auth import get_current_user
 
@@ -665,3 +665,148 @@ async def delete_profile_entry(
     deleted = await store.delete_profile_entry(user.id, entry_id)
     if not deleted:
         raise HTTPException(404, "Profile entry not found")
+
+
+# ─── Proactive Preferences ──────────────────────────────────────────────────
+
+CATEGORY_DESCRIPTIONS = {
+    "morning_briefing": "Daily morning briefing with your schedule and priorities",
+    "evening_recap": "End-of-day summary of accomplishments and tomorrow's outlook",
+    "weekly_digest": "Weekly summary of goals, tasks, and highlights (Sundays)",
+    "goal_coaching": "Check-ins on goal progress with suggestions",
+    "day_checkin": "Midday check-in to see how your day is going",
+    "profile_nudge": "Gentle prompts to complete your profile",
+    "insight_observation": "Observations and patterns from your activity",
+    "afternoon_followup": "Afternoon follow-up on earlier conversations",
+}
+
+DEFAULT_GLOBAL_SETTINGS = {
+    "max_daily_messages": 5,
+    "quiet_hours_start": 22,
+    "quiet_hours_end": 7,
+    "enabled": True,
+}
+
+
+class CategoryPrefIn(BaseModel):
+    name: str
+    enabled: bool = True
+    window_start_hour: Optional[float] = None
+    window_end_hour: Optional[float] = None
+
+
+class GlobalSettingsIn(BaseModel):
+    max_daily_messages: int = 5
+    quiet_hours_start: int = 22
+    quiet_hours_end: int = 7
+    enabled: bool = True
+
+
+class ProactivePreferencesIn(BaseModel):
+    categories: list[CategoryPrefIn] = []
+    global_settings: GlobalSettingsIn = GlobalSettingsIn()
+
+
+@router.get("/proactive-preferences")
+async def get_proactive_preferences(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Return all proactive categories merged with user overrides + global settings."""
+    import json as _json
+    from app.core.proactive_pool import DEFAULT_CATEGORIES
+
+    # Fetch user overrides
+    result = await db.execute(
+        select(ProactivePreference).where(ProactivePreference.user_id == user.id)
+    )
+    overrides = {p.category_name: p for p in result.scalars().all()}
+
+    # Build merged category list
+    categories = []
+    for cat in DEFAULT_CATEGORIES:
+        override = overrides.get(cat.name)
+        has_override = override is not None
+        categories.append({
+            "name": cat.name,
+            "description": CATEGORY_DESCRIPTIONS.get(cat.name, ""),
+            "default_window_start": cat.window_start_hour,
+            "default_window_end": cat.window_end_hour,
+            "enabled": override.enabled if has_override else True,
+            "window_start_hour": override.window_start_hour if has_override and override.window_start_hour is not None else cat.window_start_hour,
+            "window_end_hour": override.window_end_hour if has_override and override.window_end_hour is not None else cat.window_end_hour,
+            "has_override": has_override,
+        })
+
+    # Parse global settings from User.proactive_settings_json
+    global_settings = dict(DEFAULT_GLOBAL_SETTINGS)
+    if user.proactive_settings_json:
+        try:
+            global_settings.update(_json.loads(user.proactive_settings_json))
+        except (_json.JSONDecodeError, TypeError):
+            pass
+
+    return {"categories": categories, "global_settings": global_settings}
+
+
+@router.put("/proactive-preferences")
+async def update_proactive_preferences(
+    body: ProactivePreferencesIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Upsert per-category preferences and update global settings."""
+    import json as _json
+    from datetime import datetime, timezone as tz
+    from app.core.proactive_pool import DEFAULT_CATEGORIES
+
+    # Build a lookup of default windows
+    defaults = {c.name: c for c in DEFAULT_CATEGORIES}
+
+    for cat_in in body.categories:
+        default_cat = defaults.get(cat_in.name)
+        if not default_cat:
+            continue  # skip unknown categories
+
+        # Determine if window values match defaults (store null if so)
+        ws = cat_in.window_start_hour
+        we = cat_in.window_end_hour
+        if ws is not None and ws == default_cat.window_start_hour:
+            ws = None
+        if we is not None and we == default_cat.window_end_hour:
+            we = None
+
+        # Upsert: check for existing row
+        result = await db.execute(
+            select(ProactivePreference).where(
+                ProactivePreference.user_id == user.id,
+                ProactivePreference.category_name == cat_in.name,
+            )
+        )
+        existing = result.scalars().first()
+        if existing:
+            existing.enabled = cat_in.enabled
+            existing.window_start_hour = ws
+            existing.window_end_hour = we
+            existing.updated_at = datetime.now(tz.utc)
+        else:
+            import uuid
+            pref = ProactivePreference(
+                id=str(uuid.uuid4()),
+                user_id=user.id,
+                category_name=cat_in.name,
+                enabled=cat_in.enabled,
+                window_start_hour=ws,
+                window_end_hour=we,
+            )
+            db.add(pref)
+
+    # Update global settings on User
+    await db.execute(
+        update(User).where(User.id == user.id).values(
+            proactive_settings_json=_json.dumps(body.global_settings.model_dump())
+        )
+    )
+    await db.commit()
+
+    return {"status": "saved"}

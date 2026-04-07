@@ -1,7 +1,8 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+import sqlalchemy as sa
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import relationship
 
 from app.database import Base
@@ -67,6 +68,7 @@ class User(Base):
     goals = relationship("Goal", back_populates="user", cascade="all, delete-orphan")
     action_logs = relationship("ActionLog", back_populates="user", cascade="all, delete-orphan")
     profile_entries = relationship("UserProfile", back_populates="user", cascade="all, delete-orphan")
+    proactive_preferences = relationship("ProactivePreference", back_populates="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -243,6 +245,30 @@ class UserProfile(Base):
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", back_populates="profile_entries")
+
+
+class ProactivePreference(Base):
+    """Per-user per-category proactive engagement preferences.
+
+    Each row represents a user's override for one proactive category.
+    If no row exists for a category, system defaults apply (enabled=true,
+    default time windows from ProactiveCategory dataclass).
+    """
+    __tablename__ = "proactive_preferences"
+    __table_args__ = (
+        UniqueConstraint("user_id", "category_name", name="uq_proactive_pref_user_category"),
+    )
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    category_name = Column(String, nullable=False)
+    enabled = Column(Boolean, default=True)
+    window_start_hour = Column(Float, nullable=True)  # null = use system default
+    window_end_hour = Column(Float, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    updated_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    user = relationship("User", back_populates="proactive_preferences")
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
