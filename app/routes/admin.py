@@ -32,7 +32,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import cast, Date, delete, distinct, func, or_, select
+from sqlalchemy import delete, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -435,13 +435,13 @@ async def analytics_signups(
     async def _query(db: AsyncSession):
         stmt = (
             select(
-                cast(User.created_at, Date).label("date"),
+                func.date(User.created_at).label("date"),
                 func.count().label("count"),
             )
             .where(User.deleted_at.is_(None))
         )
         stmt = _apply_cutoff(stmt, User.created_at, cutoff)
-        stmt = stmt.group_by(cast(User.created_at, Date)).order_by("date")
+        stmt = stmt.group_by(func.date(User.created_at)).order_by("date")
         result = await db.execute(stmt)
         return {"data": [{"date": str(row.date), "count": row.count} for row in result]}
 
@@ -460,13 +460,13 @@ async def analytics_active_users(
     async def _query(db: AsyncSession):
         stmt = (
             select(
-                cast(User.last_seen_at, Date).label("date"),
+                func.date(User.last_seen_at).label("date"),
                 func.count(distinct(User.id)).label("dau"),
             )
             .where(User.deleted_at.is_(None))
         )
         stmt = _apply_cutoff(stmt, User.last_seen_at, cutoff)
-        stmt = stmt.group_by(cast(User.last_seen_at, Date)).order_by("date")
+        stmt = stmt.group_by(func.date(User.last_seen_at)).order_by("date")
         result = await db.execute(stmt)
         return {"data": [{"date": str(row.date), "dau": row.dau} for row in result]}
 
@@ -484,11 +484,11 @@ async def analytics_messages(
 
     async def _query(db: AsyncSession):
         stmt = select(
-            cast(Message.created_at, Date).label("date"),
+            func.date(Message.created_at).label("date"),
             func.count().label("count"),
         )
         stmt = _apply_cutoff(stmt, Message.created_at, cutoff)
-        stmt = stmt.group_by(cast(Message.created_at, Date)).order_by("date")
+        stmt = stmt.group_by(func.date(Message.created_at)).order_by("date")
         result = await db.execute(stmt)
         return {"data": [{"date": str(row.date), "count": row.count} for row in result]}
 
