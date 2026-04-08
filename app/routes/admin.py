@@ -560,8 +560,8 @@ async def admin_health(
     try:
         r = aioredis.from_url(settings.redis_url, decode_responses=True)
         await r.ping()
-        # Queue depth — use llen since the queue is a Redis list (LPUSH/BRPOP pattern)
-        queue_depth = await r.llen(settings.queue_name)
+        # Queue depth — the queue is a Redis Stream (XADD/XREADGROUP pattern)
+        queue_depth = await r.xlen(settings.queue_name)
         redis_status = {"status": "ok", "queue_depth": queue_depth}
         await r.aclose()
     except Exception as e:
