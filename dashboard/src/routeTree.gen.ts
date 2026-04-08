@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as TasksRouteImport } from './routes/tasks'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as GoalsRouteImport } from './routes/goals'
+import { Route as CapabilitiesRouteImport } from './routes/capabilities'
 import { Route as ActionsRouteImport } from './routes/actions'
 import { Route as AdminRouteRouteImport } from './routes/admin/route'
 import { Route as IndexRouteImport } from './routes/index'
@@ -19,6 +20,7 @@ import { Route as OnboardingIndexRouteImport } from './routes/onboarding/index'
 import { Route as ConversationsIndexRouteImport } from './routes/conversations/index'
 import { Route as ConnectionsIndexRouteImport } from './routes/connections/index'
 import { Route as AdminIndexRouteImport } from './routes/admin/index'
+import { Route as SettingsProactiveRouteImport } from './routes/settings/proactive'
 import { Route as SettingsPersonasRouteImport } from './routes/settings/personas'
 import { Route as SettingsAssistantRouteImport } from './routes/settings/assistant'
 import { Route as SettingsAccountRouteImport } from './routes/settings/account'
@@ -42,6 +44,11 @@ const ProfileRoute = ProfileRouteImport.update({
 const GoalsRoute = GoalsRouteImport.update({
   id: '/goals',
   path: '/goals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CapabilitiesRoute = CapabilitiesRouteImport.update({
+  id: '/capabilities',
+  path: '/capabilities',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ActionsRoute = ActionsRouteImport.update({
@@ -78,6 +85,11 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => AdminRouteRoute,
+} as any)
+const SettingsProactiveRoute = SettingsProactiveRouteImport.update({
+  id: '/settings/proactive',
+  path: '/settings/proactive',
+  getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsPersonasRoute = SettingsPersonasRouteImport.update({
   id: '/settings/personas',
@@ -129,6 +141,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
   '/actions': typeof ActionsRoute
+  '/capabilities': typeof CapabilitiesRoute
   '/goals': typeof GoalsRoute
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
@@ -139,6 +152,7 @@ export interface FileRoutesByFullPath {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/personas': typeof SettingsPersonasRoute
+  '/settings/proactive': typeof SettingsProactiveRoute
   '/admin/': typeof AdminIndexRoute
   '/connections/': typeof ConnectionsIndexRoute
   '/conversations/': typeof ConversationsIndexRoute
@@ -149,6 +163,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/actions': typeof ActionsRoute
+  '/capabilities': typeof CapabilitiesRoute
   '/goals': typeof GoalsRoute
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
@@ -159,6 +174,7 @@ export interface FileRoutesByTo {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/personas': typeof SettingsPersonasRoute
+  '/settings/proactive': typeof SettingsProactiveRoute
   '/admin': typeof AdminIndexRoute
   '/connections': typeof ConnectionsIndexRoute
   '/conversations': typeof ConversationsIndexRoute
@@ -171,6 +187,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/admin': typeof AdminRouteRouteWithChildren
   '/actions': typeof ActionsRoute
+  '/capabilities': typeof CapabilitiesRoute
   '/goals': typeof GoalsRoute
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
@@ -181,6 +198,7 @@ export interface FileRoutesById {
   '/settings/account': typeof SettingsAccountRoute
   '/settings/assistant': typeof SettingsAssistantRoute
   '/settings/personas': typeof SettingsPersonasRoute
+  '/settings/proactive': typeof SettingsProactiveRoute
   '/admin/': typeof AdminIndexRoute
   '/connections/': typeof ConnectionsIndexRoute
   '/conversations/': typeof ConversationsIndexRoute
@@ -194,6 +212,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/actions'
+    | '/capabilities'
     | '/goals'
     | '/profile'
     | '/tasks'
@@ -204,6 +223,7 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/assistant'
     | '/settings/personas'
+    | '/settings/proactive'
     | '/admin/'
     | '/connections/'
     | '/conversations/'
@@ -214,6 +234,7 @@ export interface FileRouteTypes {
   to:
     | '/'
     | '/actions'
+    | '/capabilities'
     | '/goals'
     | '/profile'
     | '/tasks'
@@ -224,6 +245,7 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/assistant'
     | '/settings/personas'
+    | '/settings/proactive'
     | '/admin'
     | '/connections'
     | '/conversations'
@@ -235,6 +257,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/actions'
+    | '/capabilities'
     | '/goals'
     | '/profile'
     | '/tasks'
@@ -245,6 +268,7 @@ export interface FileRouteTypes {
     | '/settings/account'
     | '/settings/assistant'
     | '/settings/personas'
+    | '/settings/proactive'
     | '/admin/'
     | '/connections/'
     | '/conversations/'
@@ -257,6 +281,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRouteRoute: typeof AdminRouteRouteWithChildren
   ActionsRoute: typeof ActionsRoute
+  CapabilitiesRoute: typeof CapabilitiesRoute
   GoalsRoute: typeof GoalsRoute
   ProfileRoute: typeof ProfileRoute
   TasksRoute: typeof TasksRoute
@@ -266,6 +291,7 @@ export interface RootRouteChildren {
   SettingsAccountRoute: typeof SettingsAccountRoute
   SettingsAssistantRoute: typeof SettingsAssistantRoute
   SettingsPersonasRoute: typeof SettingsPersonasRoute
+  SettingsProactiveRoute: typeof SettingsProactiveRoute
   ConnectionsIndexRoute: typeof ConnectionsIndexRoute
   ConversationsIndexRoute: typeof ConversationsIndexRoute
   OnboardingIndexRoute: typeof OnboardingIndexRoute
@@ -292,6 +318,13 @@ declare module '@tanstack/react-router' {
       path: '/goals'
       fullPath: '/goals'
       preLoaderRoute: typeof GoalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/capabilities': {
+      id: '/capabilities'
+      path: '/capabilities'
+      fullPath: '/capabilities'
+      preLoaderRoute: typeof CapabilitiesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/actions': {
@@ -342,6 +375,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/admin/'
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof AdminRouteRoute
+    }
+    '/settings/proactive': {
+      id: '/settings/proactive'
+      path: '/settings/proactive'
+      fullPath: '/settings/proactive'
+      preLoaderRoute: typeof SettingsProactiveRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/settings/personas': {
       id: '/settings/personas'
@@ -431,6 +471,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRouteRoute: AdminRouteRouteWithChildren,
   ActionsRoute: ActionsRoute,
+  CapabilitiesRoute: CapabilitiesRoute,
   GoalsRoute: GoalsRoute,
   ProfileRoute: ProfileRoute,
   TasksRoute: TasksRoute,
@@ -440,6 +481,7 @@ const rootRouteChildren: RootRouteChildren = {
   SettingsAccountRoute: SettingsAccountRoute,
   SettingsAssistantRoute: SettingsAssistantRoute,
   SettingsPersonasRoute: SettingsPersonasRoute,
+  SettingsProactiveRoute: SettingsProactiveRoute,
   ConnectionsIndexRoute: ConnectionsIndexRoute,
   ConversationsIndexRoute: ConversationsIndexRoute,
   OnboardingIndexRoute: OnboardingIndexRoute,
