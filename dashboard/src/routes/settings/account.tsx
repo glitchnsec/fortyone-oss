@@ -18,8 +18,10 @@ import {
 } from "@/components/ui/alert-dialog";
 import { fetchWithAuth } from "@/lib/api";
 import { useAuth } from "@/lib/auth.tsx";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { toast } from "sonner";
+import { Copy, Check, MessageSquare } from "lucide-react";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
 export const Route = createFileRoute("/settings/account")({
   component: AccountSettingsPage,
@@ -38,12 +40,39 @@ function AccountSettingsPage() {
   const navigate = useNavigate();
   const [loggingOut, setLoggingOut] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [linkCode, setLinkCode] = useState<string | null>(null);
+  const [generatingCode, setGeneratingCode] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   const { data, isLoading } = useQuery<MeResponse>({
     queryKey: ["me"],
     queryFn: () =>
       fetchWithAuth("/api/v1/me").then((r) => r.json()) as Promise<MeResponse>,
   });
+
+  const handleGenerateLinkCode = async () => {
+    setGeneratingCode(true);
+    setCodeCopied(false);
+    try {
+      const res = await fetchWithAuth("/auth/me/slack-link-code", { method: "POST" });
+      if (!res.ok) throw new Error("Failed to generate code");
+      const data = await res.json();
+      setLinkCode(data.code);
+    } catch {
+      toast.error("Failed to generate linking code. Please try again.");
+    } finally {
+      setGeneratingCode(false);
+    }
+  };
+
+  const handleCopyCode = () => {
+    if (linkCode) {
+      navigator.clipboard.writeText(linkCode);
+      setCodeCopied(true);
+      toast.success("Code copied to clipboard");
+      setTimeout(() => setCodeCopied(false), 2000);
+    }
+  };
 
   const handleDeleteAccount = async () => {
     setDeleting(true);
@@ -102,6 +131,58 @@ function AccountSettingsPage() {
           <p className="text-xs text-neutral-400">
             Email and phone editing will be available in a future update.
           </p>
+
+          {/* Link Slack Account */}
+          <div className="border-t border-neutral-200 pt-6">
+            <Card>
+              <CardHeader className="pb-3">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="h-5 w-5 text-neutral-500" />
+                  <h2 className="text-sm font-semibold text-neutral-900">Link Slack Account</h2>
+                </div>
+                <p className="text-xs text-neutral-500">
+                  Connect your Slack account to message your assistant from Slack.
+                  Generate a code below, then paste it in a DM to the bot.
+                </p>
+              </CardHeader>
+              <CardContent>
+                {linkCode ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <code className="rounded-md bg-neutral-100 px-4 py-2 text-lg font-mono font-semibold tracking-widest text-neutral-900">
+                        {linkCode}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleCopyCode}
+                      >
+                        {codeCopied ? (
+                          <Check className="mr-1 h-4 w-4 text-green-600" />
+                        ) : (
+                          <Copy className="mr-1 h-4 w-4" />
+                        )}
+                        {codeCopied ? "Copied" : "Copy"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-neutral-400">
+                      Paste this code in a DM to your assistant bot in Slack.
+                      The code expires in 10 minutes.
+                    </p>
+                  </div>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={handleGenerateLinkCode}
+                    disabled={generatingCode}
+                  >
+                    {generatingCode && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                    Generate Linking Code
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          </div>
 
           {/* Logout */}
           <div className="border-t border-neutral-200 pt-6">
