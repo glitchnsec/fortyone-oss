@@ -699,6 +699,7 @@ DEFAULT_GLOBAL_SETTINGS = {
     "quiet_hours_start": 22,
     "quiet_hours_end": 7,
     "enabled": True,
+    "preferred_channel": "sms",
 }
 
 
@@ -714,6 +715,7 @@ class GlobalSettingsIn(BaseModel):
     quiet_hours_start: int = 22
     quiet_hours_end: int = 7
     enabled: bool = True
+    preferred_channel: str = "sms"
 
 
 class ProactivePreferencesIn(BaseModel):
@@ -760,7 +762,11 @@ async def get_proactive_preferences(
         except (_json.JSONDecodeError, TypeError):
             pass
 
-    return {"categories": categories, "global_settings": global_settings}
+    return {
+        "categories": categories,
+        "global_settings": global_settings,
+        "has_slack_linked": bool(user.slack_user_id),
+    }
 
 
 @router.put("/proactive-preferences")

@@ -366,6 +366,20 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     user = result.scalars().first()
     phone = user.phone if user else ""
 
+    # Determine preferred channel for proactive messages
+    preferred_channel = "sms"
+    if user and user.proactive_settings_json:
+        try:
+            ps = json.loads(user.proactive_settings_json)
+            if ps.get("preferred_channel") in ("sms", "slack"):
+                preferred_channel = ps["preferred_channel"]
+        except (json.JSONDecodeError, TypeError):
+            pass
+    # Fall back to SMS if user has no Slack linked
+    if preferred_channel == "slack" and (not user or not user.slack_user_id):
+        preferred_channel = "sms"
+    address = user.slack_user_id if preferred_channel == "slack" else phone
+
     scheduled_names = []
     current_hour = today.hour + today.minute / 60.0
     for cat in selected:
@@ -396,8 +410,8 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
             "type": cat.handler_type,
             "category": cat.name,  # Used for idempotency (distinct from handler_type)
             "user_id": user_id,
-            "channel": "sms",
-            "phone": phone,
+            "channel": preferred_channel,
+            "phone": address,
             "source": "scheduler",
             "job_id": str(uuid.uuid4()),
         }
