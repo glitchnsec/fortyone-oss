@@ -33,6 +33,7 @@ interface Message {
   direction: "inbound" | "outbound";
   body: string;
   intent: string | null;
+  channel: string;
   created_at: string;
 }
 
@@ -49,13 +50,17 @@ const LIMIT = 20;
 
 function ConversationsPage() {
   const [page, setPage] = useState(1);
+  const [channel, setChannel] = useState<string>("all");
 
   const { data, isLoading, isError } = useQuery<ConversationsResponse>({
-    queryKey: ["conversations", page],
-    queryFn: () =>
-      fetchWithAuth(`/api/v1/conversations?page=${page}&limit=${LIMIT}`).then(
+    queryKey: ["conversations", page, channel],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), limit: String(LIMIT) });
+      if (channel !== "all") params.set("channel", channel);
+      return fetchWithAuth(`/api/v1/conversations?${params}`).then(
         (r) => r.json()
-      ) as Promise<ConversationsResponse>,
+      ) as Promise<ConversationsResponse>;
+    },
   });
 
   const messages = data?.conversations ?? [];
@@ -74,6 +79,28 @@ function ConversationsPage() {
     <div className="mx-auto max-w-5xl px-4 sm:px-6 py-6 sm:py-8">
       <h1 className="mb-6 text-xl font-semibold text-neutral-900">Conversation History</h1>
 
+      {/* Channel filter tabs */}
+      <div className="mb-4 flex -space-x-px">
+        {(["all", "sms", "slack"] as const).map((ch, i) => {
+          const isActive = channel === ch;
+          const label = ch === "all" ? "All" : ch === "sms" ? "SMS" : "Slack";
+          const rounded = i === 0 ? "rounded-l-md" : i === 2 ? "rounded-r-md" : "";
+          return (
+            <button
+              key={ch}
+              onClick={() => { setChannel(ch); setPage(1); }}
+              className={`px-4 py-1.5 text-sm font-medium border ${rounded} ${
+                isActive
+                  ? "bg-neutral-900 text-white border-neutral-900 z-10"
+                  : "bg-neutral-100 text-neutral-600 border-neutral-200 hover:bg-neutral-200"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
       {isError && (
         <p className="mb-4 text-sm text-red-600">
           Failed to load conversations. Please refresh the page.
@@ -81,7 +108,7 @@ function ConversationsPage() {
       )}
 
       {!isLoading && messages.length === 0 ? (
-        <EmptyState />
+        <EmptyState channel={channel} />
       ) : (
         <>
           <div className="overflow-x-auto rounded-md border border-neutral-200">
@@ -90,6 +117,7 @@ function ConversationsPage() {
                 <TableRow>
                   <TableHead className="w-[180px]">Time</TableHead>
                   <TableHead className="hidden sm:table-cell w-[100px]">Direction</TableHead>
+                  <TableHead className="hidden sm:table-cell w-[80px]">Channel</TableHead>
                   <TableHead>Message</TableHead>
                   <TableHead className="hidden sm:table-cell w-[120px]">Intent</TableHead>
                 </TableRow>
@@ -102,6 +130,9 @@ function ConversationsPage() {
                     </TableCell>
                     <TableCell className="hidden sm:table-cell">
                       <DirectionBadge direction={msg.direction} />
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      <ChannelBadge channel={msg.channel} />
                     </TableCell>
                     <TableCell className="max-w-xs">
                       <span className="block truncate text-sm text-neutral-800" title={msg.body}>
@@ -153,19 +184,35 @@ function ConversationsPage() {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState() {
+function EmptyState({ channel }: { channel: string }) {
+  const channelLabel = channel === "all" ? "" : channel === "sms" ? " SMS" : " Slack";
   return (
     <div className="flex flex-col items-center gap-3 py-16 text-center">
       <MessageSquare className="h-10 w-10 text-neutral-300" />
-      <h2 className="text-2xl font-semibold text-neutral-900">No conversations yet</h2>
+      <h2 className="text-2xl font-semibold text-neutral-900">
+        No{channelLabel} conversations yet
+      </h2>
       <p className="max-w-xs text-sm text-neutral-500">
-        Send a message to your assistant via SMS to get started.
+        {channel === "all"
+          ? "Send a message to your assistant via SMS to get started."
+          : `No messages found for the ${channel === "sms" ? "SMS" : "Slack"} channel.`}
       </p>
     </div>
   );
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function ChannelBadge({ channel }: { channel: string }) {
+  if (channel === "slack") {
+    return (
+      <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-100 text-xs">Slack</Badge>
+    );
+  }
+  return (
+    <Badge className="bg-green-100 text-green-700 hover:bg-green-100 text-xs">SMS</Badge>
+  );
+}
 
 function DirectionBadge({ direction }: { direction: "inbound" | "outbound" }) {
   if (direction === "inbound") {
