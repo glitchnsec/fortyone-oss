@@ -297,6 +297,7 @@ async def manager_dispatch(payload: dict) -> dict:
         "channel": channel,
         "response": response_text,
         "learn": learn_signals,
+        "user_id": user_id,
     }
 
 
@@ -374,17 +375,24 @@ def _build_system_prompt(payload: dict) -> str:
     persona = payload.get("persona", "shared")
 
     # Start with identity preamble if available
+    # User info is nested under context["user"] (from MemoryStore.get_context_standard/full)
+    user_info = context.get("user", {}) if isinstance(context, dict) else {}
     parts = []
     try:
         from app.core.identity import identity_preamble
         preamble = identity_preamble(
-            assistant_name=context.get("assistant_name"),
-            personality_notes=context.get("personality_notes"),
+            assistant_name=user_info.get("assistant_name") or context.get("assistant_name"),
+            personality_notes=user_info.get("personality_notes") or context.get("personality_notes"),
         )
         if preamble:
             parts.append(preamble)
     except ImportError:
         pass
+
+    # Include user's name so the LLM knows who it's talking to (channel-agnostic)
+    user_name = user_info.get("name")
+    if user_name:
+        parts.append(f"The user's name is {user_name}.")
 
     from datetime import datetime, timezone as tz
     import zoneinfo
