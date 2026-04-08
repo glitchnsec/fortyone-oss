@@ -52,11 +52,13 @@ interface GlobalSettings {
   quiet_hours_start: number;
   quiet_hours_end: number;
   enabled: boolean;
+  preferred_channel: "sms" | "slack";
 }
 
 interface PreferencesResponse {
   categories: CategoryData[];
   global_settings: GlobalSettings;
+  has_slack_linked: boolean;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
@@ -123,12 +125,15 @@ function ProactiveSettingsPage() {
     quiet_hours_start: 22,
     quiet_hours_end: 7,
     enabled: true,
+    preferred_channel: "sms",
   });
+  const [hasSlackLinked, setHasSlackLinked] = useState(false);
 
   useEffect(() => {
     if (data) {
       setCategories(data.categories);
       setGlobalSettings(data.global_settings);
+      setHasSlackLinked(data.has_slack_linked ?? false);
     }
   }, [data]);
 
@@ -231,6 +236,36 @@ function ProactiveSettingsPage() {
                 setGlobalSettings((prev) => ({ ...prev, enabled: checked }))
               }
             />
+          </div>
+
+          <div>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="preferred-channel">Preferred channel</Label>
+              <Select
+                value={globalSettings.preferred_channel}
+                onValueChange={(v: string) =>
+                  setGlobalSettings((prev) => ({
+                    ...prev,
+                    preferred_channel: v as "sms" | "slack",
+                  }))
+                }
+              >
+                <SelectTrigger id="preferred-channel" className="w-28">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="sms">SMS</SelectItem>
+                  <SelectItem value="slack" disabled={!hasSlackLinked}>
+                    Slack
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {!hasSlackLinked && (
+              <p className="text-xs text-neutral-400 mt-1">
+                Link your Slack account in Settings to enable Slack delivery.
+              </p>
+            )}
           </div>
 
           <div className="flex items-center justify-between">
