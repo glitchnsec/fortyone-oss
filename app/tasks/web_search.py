@@ -16,15 +16,27 @@ async def handle_web_search(payload: dict) -> dict:
     """Search the web via Brave Search API and return formatted results."""
     job_id = payload.get("job_id", "")
     phone = payload.get("phone", "")
+    address = payload.get("address", phone)
+    channel = payload.get("channel", "sms")
+    p_user_id = payload.get("user_id", "")
     message = payload.get("body", "") or payload.get("message", "")
+
+    # Common identity fields included in every return dict so the
+    # ResponseListener can route delivery and attribute the user correctly.
+    _identity = {
+        "job_id": job_id,
+        "phone": phone,
+        "address": address,
+        "channel": channel,
+        "user_id": p_user_id,
+    }
 
     s = get_settings()
 
     if not s.brave_api_key:
         logger.warning("BRAVE_API_KEY not set — returning mock search result")
         return {
-            "job_id": job_id,
-            "phone": phone,
+            **_identity,
             "response": "Web search is not available right now.",
             "degraded": True,
             "admin_reason": "BRAVE_API_KEY not set — configure it to enable web search",
@@ -47,8 +59,7 @@ async def handle_web_search(payload: dict) -> dict:
         results = data.get("web", {}).get("results", [])
         if not results:
             return {
-                "job_id": job_id,
-                "phone": phone,
+                **_identity,
                 "response": f"I searched for '{message}' but found no results.",
             }
 
@@ -60,22 +71,20 @@ async def handle_web_search(payload: dict) -> dict:
             url = r.get("url", "")
             lines.append(f"{i}. {title}\n   {description}\n   {url}")
         response_text = "\n".join(lines)
-        return {"job_id": job_id, "phone": phone, "response": response_text}
+        return {**_identity, "response": response_text}
 
     except httpx.HTTPStatusError as e:
         if e.response.status_code == 429:
             logger.warning("Brave Search rate limit hit")
             return {
-                "job_id": job_id,
-                "phone": phone,
+                **_identity,
                 "response": "I hit a search rate limit. Try again in a moment.",
                 "degraded": True,
                 "user_reason": "Search rate limit reached — try again in a moment",
             }
         logger.error("Brave Search API error status=%s", e.response.status_code, exc_info=True)
         return {
-            "job_id": job_id,
-            "phone": phone,
+            **_identity,
             "response": "I ran into an issue with web search. Try again shortly.",
             "degraded": True,
             "user_reason": "Web search encountered an error",
@@ -83,8 +92,7 @@ async def handle_web_search(payload: dict) -> dict:
     except Exception as e:
         logger.error("web_search handler error: %s", e, exc_info=True)
         return {
-            "job_id": job_id,
-            "phone": phone,
+            **_identity,
             "response": "Web search failed. I'll try again if you ask.",
             "degraded": True,
             "user_reason": "Web search failed unexpectedly",

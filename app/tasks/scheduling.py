@@ -61,6 +61,9 @@ async def handle_scheduling(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": phone,
+        "address": payload.get("address", phone),
+        "channel": payload.get("channel", "sms"),
+        "user_id": payload.get("user_id", ""),
         "response": suggestion,
         "learn": {"type": "scheduling_request", "query": body},
     }

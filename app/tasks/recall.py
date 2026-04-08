@@ -39,7 +39,7 @@ async def handle_recall(payload: dict) -> dict:
     Falls back to a static summary when LLM is unavailable.
     """
     job_id: str = payload["job_id"]
-    phone: str = payload["phone"]
+    phone: str = payload.get("phone", "")
     body: str = payload.get("body", "What do you know about me?")
 
     context: dict = payload.get("context", {})
@@ -109,6 +109,7 @@ async def handle_recall(payload: dict) -> dict:
         "phone": phone,
         "address": payload.get("address", phone),
         "channel": payload.get("channel", "sms"),
+        "user_id": payload.get("user_id", ""),
         "response": data.get("response") or mock_text,
     }
 
@@ -119,18 +120,30 @@ async def handle_complete(payload: dict) -> dict:
     User can say "done with call John" and we find the best match.
     """
     job_id: str = payload["job_id"]
-    phone: str = payload["phone"]
+    phone: str = payload.get("phone", "")
     body: str = payload["body"]
+    user_id: str = payload.get("user_id", "")
 
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = await store.get_or_create_user(phone)
+
+        # Use user_id (UUID) for identity when available; fall back to phone
+        if user_id:
+            user = await store.get_user_by_id(user_id)
+            if not user:
+                user = await store.get_or_create_user(phone)
+        else:
+            user = await store.get_or_create_user(phone)
+
         tasks = await store.get_active_tasks(user.id)
 
         if not tasks:
             return {
                 "job_id": job_id,
                 "phone": phone,
+                "address": payload.get("address", phone),
+                "channel": payload.get("channel", "sms"),
+                "user_id": user.id,
                 "response": "You don't have any active tasks to mark complete.",
             }
 
@@ -152,6 +165,9 @@ async def handle_complete(payload: dict) -> dict:
             return {
                 "job_id": job_id,
                 "phone": phone,
+                "address": payload.get("address", phone),
+                "channel": payload.get("channel", "sms"),
+                "user_id": user.id,
                 "response": f"Done! ✓ Marked \"{best_task.title}\" as complete.",
             }
 
@@ -160,6 +176,9 @@ async def handle_complete(payload: dict) -> dict:
         return {
             "job_id": job_id,
             "phone": phone,
+            "address": payload.get("address", phone),
+            "channel": payload.get("channel", "sms"),
+            "user_id": user.id,
             "response": f"Which one did you complete? Here are your active tasks:\n{task_list}",
         }
 
@@ -175,7 +194,7 @@ async def handle_general(payload: dict) -> dict:
                     stored as a profile_update learn signal at zero extra cost.
     """
     job_id: str = payload["job_id"]
-    phone: str   = payload["phone"]
+    phone: str   = payload.get("phone", "")
     body: str    = payload["body"]
     context: dict = payload.get("context", {})
 
@@ -225,6 +244,7 @@ async def handle_general(payload: dict) -> dict:
         "phone":   phone,
         "address": payload.get("address", phone),
         "channel": payload.get("channel", "sms"),
+        "user_id": payload.get("user_id", ""),
         "response": data.get("response") or mock_response,
     }
     if profile:

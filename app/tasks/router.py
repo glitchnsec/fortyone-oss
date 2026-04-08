@@ -45,6 +45,7 @@ async def route_job(payload: dict) -> dict:
             "phone": payload.get("phone", ""),
             "address": payload.get("address", payload.get("phone", "")),
             "channel": payload.get("channel", "sms"),
+            "user_id": payload.get("user_id", ""),
             "response": f"Done! {str(response)[:300]}",
         }
 
@@ -97,6 +98,9 @@ async def route_job(payload: dict) -> dict:
                 return {
                     "job_id": job_id,
                     "phone": phone,
+                    "address": payload.get("address", phone),
+                    "channel": payload.get("channel", "sms"),
+                    "user_id": payload.get("user_id", ""),
                     "response": (
                         "Your Google connection needs reauthorization. "
                         "Visit your dashboard connections page to reconnect."
@@ -122,6 +126,9 @@ async def route_job(payload: dict) -> dict:
             return {
                 "job_id": job_id,
                 "phone": phone,
+                "address": payload.get("address", phone),
+                "channel": payload.get("channel", "sms"),
+                "user_id": payload.get("user_id", ""),
                 "response": (
                     "Your Google connection needs reauthorization. "
                     "Visit your dashboard connections page to reconnect."

@@ -178,6 +178,11 @@ class Worker:
                 logger.error("Proactive job %s failed: %s", job_id, exc, exc_info=True)
                 result = {"job_id": job_id, "phone": phone, "response": ""}
 
+            # Ensure identity fields propagate for proactive jobs too
+            for key in ("user_id", "address", "channel"):
+                if key not in result and payload.get(key):
+                    result[key] = payload[key]
+
             # Only publish if there's a response to send
             if result.get("response"):
                 await self._publish_result(job_id, result)
@@ -191,9 +196,19 @@ class Worker:
             result = {
                 "job_id": job_id,
                 "phone": phone,
+                "address": payload.get("address", phone),
+                "channel": payload.get("channel", "sms"),
+                "user_id": payload.get("user_id", ""),
                 "response": "Sorry, I hit a snag on that one. Could you try again?",
                 "error": str(exc),
             }
+
+        # Ensure identity fields propagate to the result so ResponseListener can
+        # route delivery and attribute the user correctly (important for Slack
+        # where address != phone).
+        for key in ("user_id", "address", "channel"):
+            if key not in result and payload.get(key):
+                result[key] = payload[key]
 
         await self._publish_result(job_id, result)
 

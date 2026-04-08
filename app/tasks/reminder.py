@@ -168,9 +168,10 @@ def _has_time_reference(text: str) -> bool:
 
 async def handle_reminder(payload: dict) -> dict:
     job_id: str = payload["job_id"]
-    phone: str = payload["phone"]
+    phone: str = payload.get("phone", "")
     body: str = payload["body"]
     context: dict = payload.get("context", {})
+    user_id: str = payload.get("user_id", "")
 
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
@@ -219,7 +220,15 @@ async def handle_reminder(payload: dict) -> dict:
 
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = await store.get_or_create_user(phone)
+
+        # Use user_id (UUID) for identity when available; fall back to phone
+        # for backward compat with in-flight jobs that lack user_id.
+        if user_id:
+            user = await store.get_user_by_id(user_id)
+            if not user:
+                user = await store.get_or_create_user(phone)
+        else:
+            user = await store.get_or_create_user(phone)
 
         # DETERMINISTIC FIRST: Try relative time parsing BEFORE using the LLM's
         # date. "in 5 minutes", "in 2 mins", "in an hour" are computed exactly
@@ -294,6 +303,9 @@ async def handle_reminder(payload: dict) -> dict:
             return {
                 "job_id": job_id,
                 "phone": phone,
+                "address": payload.get("address", phone),
+                "channel": payload.get("channel", "sms"),
+                "user_id": user.id,
                 "response": (
                     f"I saved '{task_title}' as a task, but I couldn't figure out "
                     f"the exact time. Could you tell me when you'd like to be reminded? "
@@ -333,6 +345,9 @@ async def handle_reminder(payload: dict) -> dict:
         return {
             "job_id": job_id,
             "phone": phone,
+            "address": payload.get("address", phone),
+            "channel": payload.get("channel", "sms"),
+            "user_id": user.id,
             "response": confirmation,
             "task_id": task.id,
             "learn": {
@@ -386,8 +401,9 @@ async def _schedule_task_reminder(
 
 async def handle_preference(payload: dict) -> dict:
     job_id: str = payload["job_id"]
-    phone: str = payload["phone"]
+    phone: str = payload.get("phone", "")
     body: str = payload["body"]
+    user_id: str = payload.get("user_id", "")
 
     # Separate system instructions from user content — no f-string interpolation (D-10)
     messages = [
@@ -402,7 +418,15 @@ async def handle_preference(payload: dict) -> dict:
 
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
-        user = await store.get_or_create_user(phone)
+
+        # Use user_id (UUID) for identity when available; fall back to phone
+        if user_id:
+            user = await store.get_user_by_id(user_id)
+            if not user:
+                user = await store.get_or_create_user(phone)
+        else:
+            user = await store.get_or_create_user(phone)
+
         await store.store_memory(
             user_id=user.id,
             memory_type="long_term",
@@ -412,6 +436,9 @@ async def handle_preference(payload: dict) -> dict:
         return {
             "job_id": job_id,
             "phone": phone,
+            "address": payload.get("address", phone),
+            "channel": payload.get("channel", "sms"),
+            "user_id": user.id,
             "response": data.get("confirmation", "Noted — I'll remember that."),
             "learn": {
                 "type": "preference_stored",
