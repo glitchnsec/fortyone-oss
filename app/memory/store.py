@@ -48,6 +48,30 @@ class MemoryStore:
         result = await self.db.execute(select(User).where(User.phone == phone))
         return result.scalar_one_or_none()
 
+    async def lookup_by_slack_user_id(self, slack_user_id: str) -> Optional[User]:
+        """Return the User with the given slack_user_id, or None if not found."""
+        result = await self.db.execute(select(User).where(User.slack_user_id == slack_user_id))
+        return result.scalar_one_or_none()
+
+    async def link_slack_user(self, user_id: str, slack_user_id: str) -> None:
+        """Set slack_user_id on the user row."""
+        result = await self.db.execute(select(User).where(User.id == user_id))
+        user = result.scalars().first()
+        if user:
+            user.slack_user_id = slack_user_id
+            await self.db.commit()
+
+    async def get_or_create_user_for_slack(self, slack_user_id: str) -> Optional[User]:
+        """Look up user by slack_user_id. If found, update last_seen_at and return.
+        If not found, return None (caller handles onboarding)."""
+        result = await self.db.execute(select(User).where(User.slack_user_id == slack_user_id))
+        user = result.scalar_one_or_none()
+        if user:
+            user.last_seen_at = datetime.now(timezone.utc)
+            await self.db.commit()
+            return user
+        return None
+
     async def update_user_name(self, user_id: str, name: str) -> None:
         result = await self.db.execute(select(User).where(User.id == user_id))
         user = result.scalars().first()

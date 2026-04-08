@@ -52,6 +52,10 @@ class User(Base):
     personality_notes = Column(Text, nullable=True)  # Free-form personality/tone notes
     proactive_settings_json = Column(Text, nullable=True)  # JSON: max_daily_messages, quiet_hours, briefing_times, enabled
 
+    # Slack identity (migration 009)
+    slack_user_id = Column(String, unique=True, nullable=True, index=True)
+    pending_slack_link = Column(Text, nullable=True)  # JSON: {"slack_user_id": "...", "channel": "slack"}
+
     # Role-based access control (migration 006)
     role_id = Column(String, ForeignKey("roles.id"), nullable=True)
     role = relationship("Role", back_populates="users")
