@@ -20,5 +20,6 @@ python-jose[cryptography]==3.5.0
 bcrypt==4.2.1
 email-validator==2.3.0
 pyyaml==6.0.2
+slack-sdk>=3.41.0
 croniter==3.0.3
 dateparser==1.4.0
