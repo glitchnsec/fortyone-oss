@@ -79,7 +79,10 @@ async def _process_inbound(address: str, body: str) -> None:
             existing_user = await store.lookup_by_phone(address)
             if not existing_user:
                 s = get_settings()
-                registration_url = f"{s.base_url.rstrip('/') if s.base_url else 'https://your-app.com'}/auth/register"
+                base = s.base_url.rstrip('/') if s.base_url else 'https://your-app.com'
+                # Prefill phone (E.164 from Twilio) so the user doesn't have to retype it
+                from urllib.parse import quote
+                registration_url = f"{base}/auth/register?phone={quote(address)}"
                 reply = f"Hi! To use Operator, please create your account here: {registration_url}"
                 logger.info(
                     "UNREGISTERED  channel=sms  from=%s  sending_registration_link",

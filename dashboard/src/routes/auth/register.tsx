@@ -22,6 +22,7 @@ function RegisterPage() {
   // Read URL params for Slack onboarding flow (D-03)
   const searchParams = new URLSearchParams(window.location.search);
   const prefillEmail = searchParams.get("email") || "";
+  const prefillPhone = searchParams.get("phone") || "";
   const fromSlack = searchParams.get("from") === "slack";
   const slackId = searchParams.get("slack_id") || "";
 
@@ -33,6 +34,7 @@ function RegisterPage() {
   } = useForm<RegisterForm>({
     defaultValues: {
       email: prefillEmail,
+      phone: prefillPhone,
     },
   });
   const [serverError, setServerError] = useState<string | null>(null);
