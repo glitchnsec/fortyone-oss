@@ -189,7 +189,7 @@ class MessagePipeline:
                     job_id = await self.queue.push_job({
                         "channel": self.channel.name,
                         "address": address,
-                        "phone": address,
+                        "phone": user.phone,
                         "body": f"Execute confirmed action: {pending.action_type}",
                         "intent": "needs_manager",
                         "context": await self.store.get_context_full(user.id, channel=self.channel.name, query=body),
@@ -270,10 +270,12 @@ class MessagePipeline:
             )
 
         # ── QUEUE JOB ────────────────────────────────────────────────────────
+        # address = channel-specific delivery target (phone for SMS, Slack user ID for Slack)
+        # phone   = canonical user phone for identity lookups in the worker
         job_id = await self.queue.push_job({
             "channel":  self.channel.name,
             "address":  address,
-            "phone":    address,
+            "phone":    user.phone,
             "body":     body,
             "intent":   intent.type.value,
             "context":  context,
@@ -429,20 +431,29 @@ class ResponseListener:
         from app.database import AsyncSessionLocal
         async with AsyncSessionLocal() as db:
             store = MemoryStore(db)
-            user = await store.get_or_create_user(address)
+
+            # Prefer user_id from the result (set by worker) to avoid
+            # misidentifying Slack users whose address != phone.
+            result_user_id = result.get("user_id")
+            if result_user_id:
+                user_id = result_user_id
+            else:
+                user = await store.get_or_create_user(address)
+                user_id = user.id
 
             await store.store_message(
-                user_id=user.id,
+                user_id=user_id,
                 direction="outbound",
                 body=response_text,
                 state=MessageState.CONFIRM.value,
                 job_id=job_id,
+                channel=channel_name,
             )
 
             learn_signals: dict = result.get("learn", {})
             if learn_signals:
-                await self._learn(store, user.id, learn_signals)
-                logger.info("LEARN  user_id=%s  signals=%s", user.id, learn_signals)
+                await self._learn(store, user_id, learn_signals)
+                logger.info("LEARN  user_id=%s  signals=%s", user_id, learn_signals)
 
     @staticmethod
     async def _learn(store: MemoryStore, user_id: str, signals: dict) -> None:
