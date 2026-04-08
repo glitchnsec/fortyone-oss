@@ -115,21 +115,32 @@ async def update_assistant(
 async def list_conversations(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
+    channel: Optional[str] = Query(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """Return paginated message history for the authenticated user."""
+    """Return paginated message history for the authenticated user.
+
+    Optional query params:
+      channel — filter by channel ("sms" or "slack"). Omit for all channels.
+    """
     offset = (page - 1) * limit
+
+    # Base filters
+    filters = [Message.user_id == user.id]
+    if channel is not None:
+        filters.append(Message.channel == channel)
+
     result = await db.execute(
         select(Message)
-        .where(Message.user_id == user.id)
+        .where(*filters)
         .order_by(Message.created_at.desc())
         .offset(offset)
         .limit(limit)
     )
     messages = result.scalars().all()
     total_result = await db.execute(
-        select(func.count()).select_from(Message).where(Message.user_id == user.id)
+        select(func.count()).select_from(Message).where(*filters)
     )
     total = total_result.scalar_one()
     return {
@@ -139,6 +150,7 @@ async def list_conversations(
                 "direction": m.direction,
                 "body": m.body,
                 "intent": m.intent,
+                "channel": m.channel or "sms",
                 "created_at": m.created_at.isoformat(),
             }
             for m in messages
