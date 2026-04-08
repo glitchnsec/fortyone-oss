@@ -13,7 +13,7 @@
  *   GET /api/v1/custom-agents  -- user's custom agents
  *   POST/PUT/PATCH/DELETE /api/v1/custom-agents -- CRUD mutations
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -24,7 +24,9 @@ import {
   Trash2,
   AlertCircle,
   Info,
+  X,
 } from "lucide-react";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -127,6 +129,58 @@ interface AgentFormData {
   yaml_content: string;
   parameters_schema: string;
   risk_level: "low" | "medium" | "high";
+}
+
+interface ParameterRow {
+  name: string;
+  type: "string" | "number" | "boolean";
+  description: string;
+  required: boolean;
+}
+
+const EMPTY_ROW: ParameterRow = { name: "", type: "string", description: "", required: false };
+
+/** Convert visual parameter rows into a JSON Schema object string. */
+function rowsToSchemaString(rows: ParameterRow[]): string {
+  const filled = rows.filter((r) => r.name.trim());
+  if (filled.length === 0) return "";
+  const properties: Record<string, { type: string; description?: string }> = {};
+  const required: string[] = [];
+  for (const row of filled) {
+    const prop: { type: string; description?: string } = { type: row.type };
+    if (row.description.trim()) prop.description = row.description.trim();
+    properties[row.name.trim()] = prop;
+    if (row.required) required.push(row.name.trim());
+  }
+  const schema: Record<string, unknown> = { type: "object", properties };
+  if (required.length > 0) schema.required = required;
+  return JSON.stringify(schema, null, 2);
+}
+
+/** Try to parse a JSON Schema string back into visual rows. Returns null if not parseable as simple object schema. */
+function schemaStringToRows(json: string): ParameterRow[] | null {
+  if (!json.trim()) return [];
+  try {
+    const schema = JSON.parse(json);
+    if (schema.type !== "object" || !schema.properties) return null;
+    const required: string[] = schema.required || [];
+    const rows: ParameterRow[] = [];
+    for (const [name, prop] of Object.entries(schema.properties)) {
+      const p = prop as { type?: string; description?: string };
+      const type = (["string", "number", "boolean"].includes(p.type || "")
+        ? p.type
+        : "string") as ParameterRow["type"];
+      rows.push({
+        name,
+        type,
+        description: p.description || "",
+        required: required.includes(name),
+      });
+    }
+    return rows;
+  } catch {
+    return null;
+  }
 }
 
 const INITIAL_FORM: AgentFormData = {
@@ -328,6 +382,175 @@ function CustomAgentCard({
   );
 }
 
+// ---- ParameterBuilder ----
+
+function ParameterBuilder({
+  value,
+  onChange,
+  error,
+}: {
+  value: string;
+  onChange: (json: string) => void;
+  error?: string;
+}) {
+  // Determine initial mode: if current value can be parsed as rows, start visual
+  const initialRows = schemaStringToRows(value);
+  const canShowVisual = initialRows !== null;
+
+  const [mode, setMode] = useState<"visual" | "json">(
+    canShowVisual ? "visual" : "json",
+  );
+  const [rows, setRows] = useState<ParameterRow[]>(
+    initialRows && initialRows.length > 0 ? initialRows : [{ ...EMPTY_ROW }],
+  );
+
+  // Sync rows -> JSON when in visual mode
+  const updateRow = (index: number, patch: Partial<ParameterRow>) => {
+    const next = rows.map((r, i) => (i === index ? { ...r, ...patch } : r));
+    setRows(next);
+    onChange(rowsToSchemaString(next));
+  };
+
+  const addRow = () => {
+    const next = [...rows, { ...EMPTY_ROW }];
+    setRows(next);
+    // Don't update JSON for empty row - it has no name yet
+  };
+
+  const removeRow = (index: number) => {
+    const next = rows.filter((_, i) => i !== index);
+    setRows(next.length > 0 ? next : [{ ...EMPTY_ROW }]);
+    onChange(rowsToSchemaString(next.length > 0 ? next : []));
+  };
+
+  const switchToJson = () => {
+    // Serialize current rows to JSON before switching
+    const json = rowsToSchemaString(rows);
+    onChange(json);
+    setMode("json");
+  };
+
+  const switchToVisual = () => {
+    const parsed = schemaStringToRows(value);
+    if (parsed === null) {
+      // Can't parse - stay in JSON mode
+      return;
+    }
+    setRows(parsed.length > 0 ? parsed : [{ ...EMPTY_ROW }]);
+    setMode("visual");
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label>Parameters Schema (optional)</Label>
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2"
+          onClick={() => (mode === "visual" ? switchToJson() : switchToVisual())}
+        >
+          {mode === "visual" ? "Switch to JSON" : "Switch to Visual"}
+        </button>
+      </div>
+
+      {mode === "visual" ? (
+        <div className="space-y-2">
+          {/* Header row */}
+          {rows.length > 0 && (
+            <div className="grid grid-cols-[1fr_100px_1fr_60px_28px] gap-2 text-xs font-medium text-muted-foreground px-0.5">
+              <span>Name</span>
+              <span>Type</span>
+              <span>Description</span>
+              <span className="text-center">Required</span>
+              <span />
+            </div>
+          )}
+
+          {rows.map((row, i) => (
+            <div
+              key={i}
+              className="grid grid-cols-[1fr_100px_1fr_60px_28px] gap-2 items-center"
+            >
+              <Input
+                value={row.name}
+                onChange={(e) => updateRow(i, { name: e.target.value })}
+                placeholder="param_name"
+                className="h-8 text-sm"
+              />
+              <Select
+                value={row.type}
+                onValueChange={(v) =>
+                  updateRow(i, { type: v as ParameterRow["type"] })
+                }
+              >
+                <SelectTrigger className="h-8 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="string">String</SelectItem>
+                  <SelectItem value="number">Number</SelectItem>
+                  <SelectItem value="boolean">Boolean</SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                value={row.description}
+                onChange={(e) => updateRow(i, { description: e.target.value })}
+                placeholder="Description"
+                className="h-8 text-sm"
+              />
+              <div className="flex justify-center">
+                <Checkbox
+                  checked={row.required}
+                  onCheckedChange={(checked) =>
+                    updateRow(i, { required: checked === true })
+                  }
+                />
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 text-muted-foreground hover:text-red-600"
+                onClick={() => removeRow(i)}
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          ))}
+
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="w-full"
+            onClick={addRow}
+          >
+            <Plus className="mr-1 h-3.5 w-3.5" />
+            Add Parameter
+          </Button>
+        </div>
+      ) : (
+        <>
+          <Textarea
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder='{"type": "object", "properties": {...}}'
+            rows={3}
+            className="font-mono text-sm"
+          />
+          {value.trim() && !schemaStringToRows(value) && (
+            <p className="text-xs text-muted-foreground">
+              Complex schema detected. Visual mode is unavailable for this schema.
+            </p>
+          )}
+        </>
+      )}
+
+      {error && <p className="text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
 // ---- CustomAgentDialog ----
 
 function CustomAgentDialog({
@@ -376,9 +599,9 @@ function CustomAgentDialog({
   };
 
   // Also populate when editAgent changes while open
-  useState(() => {
+  useEffect(() => {
     if (open) populateForm(editAgent);
-  });
+  }, [editAgent, open]);
 
   const validate = (): boolean => {
     const errs: Partial<Record<keyof AgentFormData, string>> = {};
@@ -418,7 +641,7 @@ function CustomAgentDialog({
       const url = isEdit
         ? `/api/v1/custom-agents/${editAgent!.id}`
         : "/api/v1/custom-agents";
-      const method = isEdit ? "PUT" : "POST";
+      const method = isEdit ? "PATCH" : "POST";
 
       const res = await fetchWithAuth(url, {
         method,
@@ -575,20 +798,11 @@ function CustomAgentDialog({
           )}
 
           {/* Parameters Schema */}
-          <div className="space-y-2">
-            <Label htmlFor="agent-params">Parameters Schema (optional)</Label>
-            <Textarea
-              id="agent-params"
-              value={form.parameters_schema}
-              onChange={(e) => setField("parameters_schema", e.target.value)}
-              placeholder='{"type": "object", "properties": {...}}'
-              rows={3}
-              className="font-mono text-sm"
-            />
-            {errors.parameters_schema && (
-              <p className="text-xs text-red-600">{errors.parameters_schema}</p>
-            )}
-          </div>
+          <ParameterBuilder
+            value={form.parameters_schema}
+            onChange={(v) => setField("parameters_schema", v)}
+            error={errors.parameters_schema}
+          />
 
           {/* Risk Level */}
           <div className="space-y-2">
