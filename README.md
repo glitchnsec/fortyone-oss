@@ -1,151 +1,150 @@
-# SMS Personal Assistant
+# Operator — Personal Operating System
 
-A production-grade SMS-based personal assistant that remembers context, captures tasks, and suggests actions — like a real executive assistant in your pocket.
+A SaaS personal operating system disguised as an AI assistant. Users text (SMS/Slack) or use the web dashboard to interact with their always-on assistant, which handles tasks, remembers context across interactions, connects to external services, and proactively manages both work and personal life.
+
+**Core Value:** Text your assistant, it just handles things — and gets better at it over time.
 
 ## Architecture
 
 ```
-Twilio SMS
-    │
-    ▼
-┌─────────────────────────────────┐
-│   FastAPI  (always-on)          │  ← returns 200 to Twilio in < 50ms
-│   • receives /sms/inbound       │
-│   • sends ACK via Twilio REST   │  ← ACK < 500ms
-│   • classifies intent           │
-│   • pushes job → Redis queue    │
-│   • listens on Redis pub/sub    │  ← sends final response when worker done
-└─────────────────────────────────┘
-         │                  ▲
-    Redis Queue         Redis Pub/Sub
-         │                  │
-         ▼                  │
-┌─────────────────────────────────┐
-│   Worker  (async process)       │
-│   • pulls job from queue        │
-│   • retrieves memory/context    │
-│   • calls OpenAI                │
-│   • stores task/memory in DB    │
-│   • publishes result            │
-└─────────────────────────────────┘
+SMS (Twilio)  /  Slack  /  Web Dashboard
+         │            │           │
+         ▼            ▼           ▼
+┌──────────────────────────────────────────┐
+│   FastAPI API Server                     │
+│   • /sms/inbound — Twilio webhook        │
+│   • /slack/events — Slack webhook         │
+│   • /api/v1/* — Dashboard REST API        │
+│   • /admin/* — Admin dashboard API        │
+│   • /auth/* — JWT auth + registration     │
+│   • Intent classification + ACK < 500ms   │
+│   • Pushes jobs → Redis Streams           │
+│   • ResponseListener (pub/sub delivery)   │
+└──────────────────────────────────────────┘
+         │                    ▲
+    Redis Streams         Redis Pub/Sub
+         │                    │
+         ▼                    │
+┌──────────────────────────────────────────┐
+│   Worker Process                         │
+│   • Manager/subagent tool-calling loop    │
+│   • Built-in tools (12) + custom agents   │
+│   • Memory context assembly               │
+│   • LLM calls via OpenRouter              │
+│   • Publishes results                     │
+└──────────────────────────────────────────┘
          │
-    SQLite / PostgreSQL
-    (Users, Memories, Tasks, Messages)
+    PostgreSQL (Users, Memories, Tasks, Messages, Goals, Personas, CustomAgents)
+
+┌──────────────────────────────────────────┐
+│   Connections Service (Docker)           │
+│   • OAuth flow management (Google)        │
+│   • Token encryption (Fernet)             │
+│   • Gmail + Calendar tool execution       │
+│   • Capability manifest per provider      │
+│   • Per-persona connection scoping        │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│   Scheduler Process                      │
+│   • Proactive engagement pool             │
+│   • Per-user category selection            │
+│   • Time-windowed job scheduling           │
+│   • Quiet hours enforcement               │
+└──────────────────────────────────────────┘
+
+┌──────────────────────────────────────────┐
+│   React Dashboard (Vite + shadcn/ui)     │
+│   • Registration + onboarding             │
+│   • Conversations (filterable by channel) │
+│   • Connections (per-persona management)  │
+│   • Personas (Work/Personal profiles)     │
+│   • Goals + Tasks                         │
+│   • Capabilities (built-in + custom)      │
+│   • Proactive settings                    │
+│   • Admin dashboard (users, analytics)    │
+│   • Served from FastAPI static mount      │
+└──────────────────────────────────────────┘
 ```
 
-### Message State Machine
+## Features
 
-```
-RECEIVED → ACK → THINK → ACT → CONFIRM → LEARN
-```
+### Multi-Channel Messaging
+- **SMS** via Twilio (primary channel)
+- **Slack** via Bot DM (with account linking)
+- Channel-agnostic pipeline — same assistant across all channels
+- Proactive messages delivered to user's preferred channel
 
-### Latency targets
-| Stage | Target |
-|-------|--------|
-| ACK (acknowledgment SMS) | < 500ms |
-| Full response | 1–3s |
+### Persona System
+- Work and Personal persona profiles
+- Per-persona connections (separate Google accounts)
+- Cross-context awareness ("busy week at work → reschedule gym")
+- Automatic persona detection per message
+
+### Proactive Agent
+- Morning briefings, day check-ins, evening recaps, goal coaching
+- Configurable categories with time windows
+- Per-user rate limiting and quiet hours
+- Preferred channel selection (SMS or Slack)
+
+### Connections & Tools
+- Google (Gmail + Calendar) via OAuth
+- Web search (Brave Search API)
+- 12 built-in tools across 6 subagents
+- Custom agents: webhook, prompt, and YAML/script types
+- Per-persona connection scoping
+- Dynamic capability manifest
+
+### Admin Dashboard
+- User management (view, suspend, delete, impersonate)
+- Platform analytics (adoption + usage metrics)
+- System health monitoring (Redis, DB, worker)
+
+### Security
+- JWT authentication with refresh token rotation
+- Twilio signature validation
+- Slack signing secret verification
+- OAuth token encryption at rest (Fernet)
+- Role-based access control (admin/user)
+- Multi-tenant user isolation
 
 ---
 
-## Quick Start (Local)
+## Quick Start
 
 ### Prerequisites
+- Docker + Docker Compose
 - Python 3.11+
-- Docker (for Redis) — or install Redis locally
 
-### 1. Install dependencies
-```bash
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 2. Configure environment
+### 1. Configure environment
 ```bash
 cp .env.example .env
-# Edit .env — at minimum set NVIDIA_API_KEY for real LLM responses.
-# Get a free key at https://build.nvidia.com/ (click any model → "Get API Key").
-# MOCK_SMS=true means SMS is just printed to logs (no Twilio needed locally).
+# Edit .env — set at minimum:
+#   OPENROUTER_API_KEY (for LLM)
+#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER (for SMS)
+#   BRAVE_SEARCH_API_KEY (for web search)
 ```
 
-### 3. Start Redis
+### 2. Start all services
 ```bash
-docker run -d -p 6379:6379 redis:7-alpine
-# or: docker compose up redis -d
+docker compose up --build
 ```
 
-### 4. Start the API
+This starts: API server (port 8000), worker, scheduler, Redis, PostgreSQL, and connections service.
+
+### 3. Access the dashboard
+Open http://localhost:8000 and register an account.
+
+### 4. (Optional) Create an admin user
 ```bash
-uvicorn app.main:app --reload --port 8000
+docker compose exec api python scripts/create_admin.py your@email.com
 ```
 
-### 5. Start the worker (separate terminal)
-```bash
-python scripts/run_worker.py
-```
-
-### 6. (Optional) Seed demo data
-```bash
-python scripts/seed_demo.py
-```
-
-### 7. Test it
-```bash
-# Simulate an inbound SMS
-curl -X POST http://localhost:8000/sms/inbound \
-  -d "From=%2B15551234567&Body=Remind+me+to+call+John+tomorrow+at+3pm"
-
-# List all users and their memories
-curl http://localhost:8000/debug/users
-
-# Check health
-curl http://localhost:8000/health
-```
-
----
-
-## Using with Twilio (Real SMS)
-
-1. Get a Twilio number at https://twilio.com
-2. Fill in `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`
-3. Set `MOCK_SMS=false`
-4. Expose your local API with ngrok:
-   ```bash
-   ngrok http 8000
-   ```
-5. Set your Twilio number's webhook to:
-   `https://<ngrok-url>/sms/inbound` (HTTP POST)
-
----
-
-## Example Flows
-
-### Reminder
-```
-User:      "Remind me to call John tomorrow at 3pm"
-Assistant: "On it — setting that up now."         ← ACK (< 500ms)
-Assistant: "Got it! I'll remind you to call John tomorrow at 3:00 PM."
-```
-
-### Scheduling
-```
-User:      "When should I schedule a team sync this week?"
-Assistant: "Let me check your preferences and find a good time."
-Assistant: "You usually prefer mornings — how about Tuesday or Thursday at 9am?"
-```
-
-### Memory Recall
-```
-User:      "What reminders do I have?"
-Assistant: "Let me pull that up for you..."
-Assistant: "Here's what I have for you:\n1. Call John — due Thu Apr 3 at 3:00 PM"
-```
-
-### Preference Storage
-```
-User:      "I prefer morning meetings before 10am"
-Assistant: "Got it — I'll remember that."
-```
+### 5. (Optional) Connect Slack
+- Create a Slack app with `message.im` event subscription
+- Set Request URL to `https://<your-url>/slack/events`
+- Enable Messages Tab in App Home settings
+- Set `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in `.env`
 
 ---
 
@@ -153,42 +152,105 @@ Assistant: "Got it — I'll remember that."
 
 ```
 app/
-├── main.py              # FastAPI app + lifespan (startup/shutdown)
+├── main.py              # FastAPI app + lifespan
 ├── config.py            # Settings (pydantic-settings)
-├── database.py          # SQLAlchemy engine + session
+├── database.py          # SQLAlchemy async engine + session
+├── crypto.py            # Fernet encryption for sensitive data
+├── middleware/
+│   └── auth.py          # JWT auth, get_current_user, require_admin
 ├── routes/
-│   └── sms.py           # POST /sms/inbound webhook
+│   ├── sms.py           # Twilio webhook + SMS registration flow
+│   ├── slack.py         # Slack events + onboarding + account linking
+│   ├── auth.py          # Register, login, refresh, Slack link codes
+│   ├── dashboard.py     # User API (me, conversations, connections proxy, proactive settings)
+│   ├── admin.py         # Admin API (users, analytics, health)
+│   ├── capabilities.py  # Capabilities + custom agents CRUD
+│   └── personas.py      # Persona CRUD
 ├── core/
-│   ├── intent.py        # Rule-based intent classifier
-│   ├── ack.py           # ACK message generator
-│   └── pipeline.py      # Message state machine + response listener
+│   ├── pipeline.py      # Message state machine + ResponseListener
+│   ├── intent.py        # Intent classification (LLM + regex fast-path)
+│   ├── persona.py       # Persona detection per message
+│   ├── ack.py           # Context-aware acknowledgment
+│   ├── greeter.py       # First-message greeting
+│   ├── identity.py      # Assistant identity preamble
+│   ├── tools.py         # Tool registry (subagents.yaml + custom agents)
+│   └── proactive_pool.py # Proactive engagement scheduling
 ├── memory/
-│   ├── models.py        # SQLAlchemy models (User, Memory, Task, Message)
-│   └── store.py         # Memory CRUD operations
+│   ├── models.py        # SQLAlchemy models (User, Memory, Task, Message, Persona, Goal, CustomAgent, etc.)
+│   └── store.py         # Memory CRUD + tiered context assembly
 ├── queue/
-│   ├── client.py        # Redis queue producer
-│   └── worker.py        # Worker loop (run as separate process)
+│   ├── client.py        # Redis Streams producer
+│   └── worker.py        # Worker loop + job dispatch
 ├── tasks/
-│   ├── router.py        # Routes jobs to correct handler
-│   ├── reminder.py      # Reminder + preference handlers
-│   ├── scheduling.py    # Scheduling suggestion handler
-│   └── recall.py        # Memory recall + general handler
-└── sms/
-    └── client.py        # Twilio wrapper (with mock mode)
+│   ├── manager.py       # Manager/subagent tool-calling loop
+│   ├── router.py        # Intent → handler routing
+│   ├── reminder.py      # Reminders + preferences
+│   ├── scheduling.py    # Scheduling suggestions
+│   ├── recall.py        # Memory recall + general handler
+│   ├── web_search.py    # Brave Search integration
+│   └── _llm.py          # LLM wrapper (OpenRouter, graceful fallback)
+└── channels/
+    ├── base.py          # Abstract channel interface
+    ├── sms.py           # Twilio SMS channel
+    └── slack.py         # Slack Web API channel
+
+connections/             # Dockerized connections service
+├── app/
+│   ├── main.py          # FastAPI + startup migrations
+│   ├── models.py        # Connection, OAuthToken, OAuthState
+│   ├── providers/       # Google OAuth provider + base interface
+│   ├── routes/          # OAuth flow, connections list, tool execution
+│   └── tools/           # Gmail + Calendar tool handlers
+
+dashboard/               # React SPA (Vite + shadcn/ui)
+├── src/
+│   ├── routes/          # TanStack Router pages
+│   ├── components/      # UI components (layout, admin, ui)
+│   └── lib/             # Auth context, API client
 
 scripts/
-├── run_worker.py        # Entry point for worker process
-└── seed_demo.py         # Seed demo user + memories
+├── run_worker.py        # Worker process entry point
+├── run_scheduler.py     # Scheduler process entry point
+├── create_admin.py      # Promote user to admin role
+
+config/
+└── subagents.yaml       # Built-in tool definitions (6 subagents, 12 tools)
+
+tests/                   # pytest + pytest-asyncio
 ```
 
 ---
 
-## Production Notes
+## Environment Variables
 
-- Swap SQLite for PostgreSQL (`DATABASE_URL=postgresql://...`)
-- Deploy API on Railway/Render/Fly.io (always-on)
-- Deploy workers on AWS Lambda (triggered by SQS) or keep as always-on process
-- Add Twilio signature validation in `routes/sms.py`
-- Set `MOCK_SMS=false` and fill in Twilio credentials
-- For on-prem / private NIM deployments set `NIM_BASE_URL` to your endpoint
-- Swap `NIM_MODEL_FAST` / `NIM_MODEL_CAPABLE` for any NIM-hosted model
+See `.env.example` for the full list with descriptions. Key variables:
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `OPENROUTER_API_KEY` | Yes | LLM API access via OpenRouter |
+| `DATABASE_URL` | No | PostgreSQL URL (default in docker-compose) |
+| `REDIS_URL` | No | Redis URL (default in docker-compose) |
+| `TWILIO_ACCOUNT_SID` | For SMS | Twilio account credentials |
+| `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
+| `TWILIO_PHONE_NUMBER` | For SMS | Your Twilio phone number |
+| `SLACK_BOT_TOKEN` | For Slack | Slack bot OAuth token |
+| `SLACK_SIGNING_SECRET` | For Slack | Slack request signing secret |
+| `BRAVE_SEARCH_API_KEY` | For search | Brave Search API key |
+| `JWT_SECRET` | Yes | Secret for JWT token signing |
+| `FERNET_KEY` | Yes | Encryption key for OAuth tokens |
+| `BASE_URL` | For SMS | Public URL for Twilio signature validation |
+
+---
+
+## Running Tests
+
+```bash
+pip install -r requirements.txt
+python -m pytest tests/ -v
+```
+
+---
+
+## License
+
+Proprietary. All rights reserved.
