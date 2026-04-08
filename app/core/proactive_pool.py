@@ -367,7 +367,10 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     phone = user.phone if user else ""
 
     # Determine preferred channel for proactive messages
-    preferred_channel = "sms"
+    # Priority: explicit user preference > first available channel
+    has_sms = bool(phone)
+    has_slack = bool(user and user.slack_user_id)
+    preferred_channel = None
     if user and user.proactive_settings_json:
         try:
             ps = json.loads(user.proactive_settings_json)
@@ -375,9 +378,20 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
                 preferred_channel = ps["preferred_channel"]
         except (json.JSONDecodeError, TypeError):
             pass
-    # Fall back to SMS if user has no Slack linked
-    if preferred_channel == "slack" and (not user or not user.slack_user_id):
-        preferred_channel = "sms"
+    # Validate the explicit preference is actually available
+    if preferred_channel == "slack" and not has_slack:
+        preferred_channel = None
+    if preferred_channel == "sms" and not has_sms:
+        preferred_channel = None
+    # If no valid preference, default to first available channel
+    if not preferred_channel:
+        if has_sms:
+            preferred_channel = "sms"
+        elif has_slack:
+            preferred_channel = "slack"
+        else:
+            logger.warning("POOL_NO_CHANNEL user=%s — no SMS or Slack linked, skipping", user_id[:8])
+            return []
     address = user.slack_user_id if preferred_channel == "slack" else phone
 
     scheduled_names = []
