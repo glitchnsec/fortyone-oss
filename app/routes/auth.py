@@ -48,6 +48,7 @@ class RegisterInput(BaseModel):
     email: EmailStr
     phone: str
     password: str
+    slack_user_id: str | None = None  # Optional: auto-link Slack on registration
 
 
 class LoginInput(BaseModel):
@@ -110,6 +111,16 @@ async def register(body: RegisterInput, response: Response, db: AsyncSession = D
         db.add(user)
         await db.commit()
         await db.refresh(user)
+
+    # Auto-link Slack account if slack_user_id was provided (D-04, D-06)
+    if body.slack_user_id:
+        user.slack_user_id = body.slack_user_id
+        await db.commit()
+        await db.refresh(user)
+        # Send welcome message via Slack in background
+        import asyncio
+        asyncio.create_task(_send_slack_welcome(body.slack_user_id))
+        logger.info("SLACK_LINK_REG  user=%s  slack=%s", user.id[:8], body.slack_user_id)
 
     # Auto-login: issue tokens so the user is authenticated immediately after registration
     access_token = _create_access_token(user.id, role="user")
@@ -286,3 +297,49 @@ async def verify_otp(
     except Exception as e:
         logger.error("OTP verify failed phone=%s error=%s", body.phone, e, exc_info=True)
         raise HTTPException(500, "Verification check failed")
+
+
+# -- Slack Welcome Helper -------------------------------------------------------
+
+async def _send_slack_welcome(slack_user_id: str) -> None:
+    """Send welcome message to a newly-linked Slack user. Fire-and-forget."""
+    try:
+        from app.channels.slack import SlackChannel
+        channel = SlackChannel()
+        await channel.send(
+            slack_user_id,
+            "Welcome! Your Slack is now linked to your account. Just message me here anytime.",
+        )
+    except Exception as exc:
+        logger.warning("Slack welcome failed slack=%s: %s", slack_user_id, exc)
+
+
+# -- Slack Linking Code --------------------------------------------------------
+
+class SlackLinkCodeResponse(BaseModel):
+    code: str
+
+
+@router.post("/me/slack-link-code", response_model=SlackLinkCodeResponse)
+async def generate_slack_link_code(
+    user: User = Depends(_get_current_user),
+):
+    """Generate a 6-char alphanumeric code for linking a Slack account.
+
+    The code is stored in Redis with key slack_link:{code} -> user_id, TTL 600s.
+    The user pastes this code in a Slack DM to the bot to link their account.
+    """
+    import string
+    import redis.asyncio as aioredis
+    from app.config import get_settings
+    settings = get_settings()
+
+    code = "".join(secrets.choice(string.ascii_uppercase + string.digits) for _ in range(6))
+
+    r = aioredis.from_url(settings.redis_url)
+    try:
+        await r.setex(f"slack_link:{code}", 600, user.id)
+    finally:
+        await r.aclose()
+
+    return {"code": code}

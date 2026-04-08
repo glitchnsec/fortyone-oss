@@ -87,6 +87,15 @@ class MessagePipeline:
         """
         # ── RECEIVED ─────────────────────────────────────────────────────────
         user = await self.store.get_or_create_user(address)
+        return await self._process(user, address, body)
+
+    async def handle_with_user(self, user, body: str) -> None:
+        """Entry point for Slack onboarding path — user already resolved."""
+        address = user.slack_user_id or user.phone
+        return await self._process(user, address, body)
+
+    async def _process(self, user, address: str, body: str) -> None:
+        """Shared processing logic for handle() and handle_with_user()."""
 
         # ── CLASSIFY ─────────────────────────────────────────────────────────
         intent = classify_intent(body)

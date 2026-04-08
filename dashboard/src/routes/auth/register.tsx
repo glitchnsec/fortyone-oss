@@ -18,12 +18,23 @@ interface RegisterForm {
 
 function RegisterPage() {
   const { login } = useAuth();
+
+  // Read URL params for Slack onboarding flow (D-03)
+  const searchParams = new URLSearchParams(window.location.search);
+  const prefillEmail = searchParams.get("email") || "";
+  const fromSlack = searchParams.get("from") === "slack";
+  const slackId = searchParams.get("slack_id") || "";
+
   const {
     register,
     handleSubmit,
     watch,
     formState: { errors, isSubmitting },
-  } = useForm<RegisterForm>();
+  } = useForm<RegisterForm>({
+    defaultValues: {
+      email: prefillEmail,
+    },
+  });
   const [serverError, setServerError] = useState<string | null>(null);
   const navigate = useNavigate();
   const router = useRouter();
@@ -32,14 +43,19 @@ function RegisterPage() {
 
   const onSubmit = async (data: RegisterForm) => {
     setServerError(null);
+    const payload: Record<string, string> = {
+      email: data.email,
+      phone: data.phone,
+      password: data.password,
+    };
+    // Pass slack_user_id for auto-linking (D-04)
+    if (fromSlack && slackId) {
+      payload.slack_user_id = slackId;
+    }
     const res = await fetch("/auth/register", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: data.email,
-        phone: data.phone,
-        password: data.password,
-      }),
+      body: JSON.stringify(payload),
       credentials: "include",
     });
     if (res.status === 409) {
