@@ -48,7 +48,7 @@ def upgrade() -> None:
 
     # Get all user IDs
     users = conn.execute(sa.text("SELECT id FROM users")).fetchall()
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
 
     for (user_id,) in users:
         for category in DISABLED_BY_DEFAULT:
