@@ -87,6 +87,19 @@ async def _handle_proactive(store, db, user_id: str, action: str, target: str, v
         except (ValueError, TypeError):
             settings = {}
 
+    # Global enable/disable — "turn off/on all proactive messages"
+    if target == "enabled" or target in ("all", "global", "proactive", "proactive_messages"):
+        if action == "disable":
+            settings["enabled"] = False
+            user.proactive_settings_json = json.dumps(settings)
+            await db.commit()
+            return {"result": "All proactive messages have been disabled."}
+        elif action == "enable":
+            settings["enabled"] = True
+            user.proactive_settings_json = json.dumps(settings)
+            await db.commit()
+            return {"result": "Proactive messages have been re-enabled."}
+
     if target == "quiet_hours_start":
         quiet = settings.get("quiet_hours", {"start": 22, "end": 7})
         quiet["start"] = int(value) if value is not None else 22
@@ -110,13 +123,34 @@ async def _handle_proactive(store, db, user_id: str, action: str, target: str, v
         return {"result": f"Max daily proactive messages set to {settings['max_daily_messages']}."}
 
     elif action in ("enable", "disable"):
-        # Toggle a proactive category
-        categories = settings.get("categories", {})
-        categories[target] = (action == "enable")
-        settings["categories"] = categories
-        user.proactive_settings_json = json.dumps(settings)
+        # Toggle a proactive category via ProactivePreference table
+        # (same store the dashboard reads/writes)
+        from app.memory.models import ProactivePreference
+        from sqlalchemy import select as sa_select
+        from datetime import datetime, timezone as tz
+
+        enabled_val = (action == "enable")
+        result = await db.execute(
+            sa_select(ProactivePreference).where(
+                ProactivePreference.user_id == user_id,
+                ProactivePreference.category_name == target,
+            )
+        )
+        existing = result.scalars().first()
+        if existing:
+            existing.enabled = enabled_val
+            existing.updated_at = datetime.now(tz.utc)
+        else:
+            import uuid
+            pref = ProactivePreference(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                category_name=target,
+                enabled=enabled_val,
+            )
+            db.add(pref)
         await db.commit()
-        state = "enabled" if action == "enable" else "disabled"
+        state = "enabled" if enabled_val else "disabled"
         return {"result": f"Proactive category '{target}' {state}."}
 
     elif target == "preferred_channel":

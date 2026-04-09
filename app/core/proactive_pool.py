@@ -422,6 +422,34 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
             )
             continue
 
+        # Check per-category user preferences (ProactivePreference table).
+        # If user explicitly disabled this category via dashboard or text settings, skip it.
+        from app.memory.models import ProactivePreference
+        pref_result = await store.db.execute(
+            sa_select(ProactivePreference).where(
+                ProactivePreference.user_id == user_id,
+                ProactivePreference.category_name == cat.name,
+            )
+        )
+        pref = pref_result.scalars().first()
+        if pref and not pref.enabled:
+            logger.info(
+                "POOL_SKIP_DISABLED user=%s category=%s",
+                user_id[:8], cat.name,
+            )
+            continue
+
+        # Enforce cooldown_hours — skip if this category was sent recently.
+        # Uses a Redis key set by _record_category_cooldown after dispatch.
+        # This is the PRIMARY defense against daily repetition of the same category.
+        cooldown_key = f"proactive:cooldown:{user_id}:{cat.name}"
+        if await r.exists(cooldown_key):
+            logger.info(
+                "POOL_SKIP_COOLDOWN user=%s category=%s cooldown_hours=%d",
+                user_id[:8], cat.name, cat.cooldown_hours,
+            )
+            continue
+
         jitter_ts = compute_jitter_time(
             cat.window_start_hour, cat.window_end_hour, user_timezone, today,
         )
@@ -453,6 +481,27 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
         user_id[:8], scheduled_names, target_count,
     )
     return scheduled_names
+
+
+# ─── Cooldown enforcement ──────────────────────────────────────────────────
+
+# Map category name -> cooldown_hours for quick lookup
+_COOLDOWN_MAP: dict[str, int] = {cat.name: cat.cooldown_hours for cat in DEFAULT_CATEGORIES}
+
+
+async def record_category_cooldown(r, user_id: str, category: str) -> None:
+    """
+    Set a Redis key that prevents this category from being re-selected
+    until cooldown_hours elapse. Called after a proactive message is
+    successfully dispatched (from the handler or scheduler).
+    """
+    cooldown_hours = _COOLDOWN_MAP.get(category, 24)
+    cooldown_key = f"proactive:cooldown:{user_id}:{category}"
+    await r.set(cooldown_key, "1", ex=cooldown_hours * 3600)
+    logger.info(
+        "COOLDOWN_SET user=%s category=%s hours=%d",
+        user_id[:8], category, cooldown_hours,
+    )
 
 
 # ─── Public API ──────────────────────────────────────────────────────────────
