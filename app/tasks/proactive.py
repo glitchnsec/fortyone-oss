@@ -25,6 +25,67 @@ from datetime import datetime, timezone, timedelta
 logger = logging.getLogger(__name__)
 
 
+async def _has_content_delta(store, user_id: str, category: str) -> bool:
+    """
+    Check if anything changed since the last send of this category (D-03, D-13).
+
+    Uses action_log to find the most recent send of this category type.
+    Returns True if there is new content (should send), False if stale (suppress).
+    Default to True if no prior send exists (first time always sends).
+    """
+    logs = await store.get_action_log(user_id, limit=100)
+    last_send = next(
+        (a for a in logs if a.action_type == category and a.outcome == "success"),
+        None,
+    )
+    if not last_send:
+        return True  # Never sent -- always has news
+
+    since = last_send.created_at
+
+    if category == "morning_briefing":
+        tasks = await store.get_active_tasks(user_id)
+        if any(t.updated_at > since or t.created_at > since for t in tasks):
+            return True
+        goals = await store.get_goals(user_id, status="active")
+        return any(g.updated_at > since for g in goals)
+
+    elif category == "evening_recap":
+        logs_today = await store.get_action_log(user_id, limit=20)
+        today = datetime.now(timezone.utc).date()
+        today_actions = [a for a in logs_today if a.created_at.date() == today and a.action_type != "evening_recap"]
+        return len(today_actions) > 0
+
+    elif category == "goal_coaching" or category == "goal_checkin":
+        goals = await store.get_goals(user_id, status="active")
+        return any(g.updated_at > since for g in goals) or any(
+            g.target_date and (g.target_date - datetime.now(timezone.utc)) <= timedelta(days=7)
+            for g in goals
+        )
+
+    elif category == "profile_nudge":
+        from app.core.proactive_pool import compute_user_state
+        state = await compute_user_state(store, user_id)
+        return state.get("profile_completeness", 1.0) < 0.8
+
+    elif category == "insight_observation":
+        memories = await store.get_memories(user_id)
+        # Check if any new memories since last send
+        return any(m.created_at > since for m in memories)
+
+    elif category in ("smart_checkin", "day_checkin", "afternoon_followup"):
+        # Check-ins always have delta (they are conversational, not data-driven)
+        return True
+
+    elif category == "weekly_digest":
+        logs_week = await store.get_action_log(user_id, limit=100)
+        week_ago = datetime.now(timezone.utc) - timedelta(days=7)
+        week_actions = [a for a in logs_week if a.created_at >= week_ago and a.action_type != "weekly_digest"]
+        return len(week_actions) > 0
+
+    return True  # Unknown category -- default to sending
+
+
 async def handle_morning_briefing(payload: dict) -> dict:
     """
     Morning briefing -- summarize the user's day ahead.
@@ -40,6 +101,10 @@ async def handle_morning_briefing(payload: dict) -> dict:
         store = MemoryStore(db)
         user = await _get_user_by_id(store, user_id)
         if not user:
+            return _empty_result(job_id, user_id)
+
+        if not await _has_content_delta(store, user_id, "morning_briefing"):
+            logger.info("DELTA_SUPPRESS user=%s category=morning_briefing", user_id[:8])
             return _empty_result(job_id, user_id)
 
         # Gather context for briefing
@@ -114,6 +179,10 @@ async def handle_evening_recap(payload: dict) -> dict:
         store = MemoryStore(db)
         user = await _get_user_by_id(store, user_id)
         if not user:
+            return _empty_result(job_id, user_id)
+
+        if not await _has_content_delta(store, user_id, "evening_recap"):
+            logger.info("DELTA_SUPPRESS user=%s category=evening_recap", user_id[:8])
             return _empty_result(job_id, user_id)
 
         # Get today's actions
@@ -191,6 +260,10 @@ async def handle_goal_checkin(payload: dict) -> dict:
         if not goals:
             return _empty_result(job_id, user_id)
 
+        if not await _has_content_delta(store, user_id, "goal_checkin"):
+            logger.info("DELTA_SUPPRESS user=%s category=goal_checkin", user_id[:8])
+            return _empty_result(job_id, user_id)
+
         from app.tasks._llm import llm_text
         from app.core.identity import identity_preamble
 
@@ -256,6 +329,10 @@ async def handle_weekly_digest(payload: dict) -> dict:
         store = MemoryStore(db)
         user = await _get_user_by_id(store, user_id)
         if not user:
+            return _empty_result(job_id, user_id)
+
+        if not await _has_content_delta(store, user_id, "weekly_digest"):
+            logger.info("DELTA_SUPPRESS user=%s category=weekly_digest", user_id[:8])
             return _empty_result(job_id, user_id)
 
         # Get past week's actions (up to 100)
@@ -501,6 +578,10 @@ async def handle_profile_nudge(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
+        if not await _has_content_delta(store, user_id, "profile_nudge"):
+            logger.info("DELTA_SUPPRESS user=%s category=profile_nudge", user_id[:8])
+            return _empty_result(job_id, user_id)
+
         # Compute profile completeness
         entries = await store.get_profile_entries(user_id)
         score, missing = _profile_completeness(user, entries)
@@ -667,6 +748,10 @@ async def handle_insight_observation(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
+        if not await _has_content_delta(store, user_id, "insight_observation"):
+            logger.info("DELTA_SUPPRESS user=%s category=insight_observation", user_id[:8])
+            return _empty_result(job_id, user_id)
+
         # Gate: need at least 15 memories for meaningful insights
         memories = await store.get_memories(user_id)
         if len(memories) < 15:
@@ -771,6 +856,10 @@ async def handle_goal_coaching(payload: dict) -> dict:
         store = MemoryStore(db)
         user = await _get_user_by_id(store, user_id)
         if not user:
+            return _empty_result(job_id, user_id)
+
+        if not await _has_content_delta(store, user_id, "goal_coaching"):
+            logger.info("DELTA_SUPPRESS user=%s category=goal_coaching", user_id[:8])
             return _empty_result(job_id, user_id)
 
         phone = phone or getattr(user, "phone", "")

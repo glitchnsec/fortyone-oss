@@ -1,7 +1,7 @@
 """
 ProactivePool — weighted random category selection with jitter windows.
 
-Replaces cron-based fixed scheduling with a pool-based system where 2-4
+Replaces cron-based fixed scheduling with a pool-based system where 1-3
 categories are selected per user per day via weighted random, each assigned
 a random time within its window. Jitter makes delivery times feel organic.
 
@@ -351,8 +351,8 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     # Compute user state for weight evaluation
     user_state = await compute_user_state(store, user_id)
 
-    # Select 3-5 categories (D-06, widened from 2-4 for better day coverage)
-    target_count = random.randint(3, 5)
+    # Select 1-3 categories (D-06 revised per Phase 4.3 D-01)
+    target_count = random.randint(1, 3)
     selected = select_categories(DEFAULT_CATEGORIES, user_state, target_count=target_count)
 
     if not selected:

@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Defaults — can be overridden per-user via proactive_settings_json
 DEFAULT_MAX_PER_HOUR = 10
-DEFAULT_MAX_PER_DAY = 5
+DEFAULT_MAX_PER_DAY = 3
 DEAD_MAN_SWITCH_THRESHOLD = 5  # If >5 in 1 hour, something is wrong
 
 
