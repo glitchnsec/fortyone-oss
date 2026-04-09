@@ -115,6 +115,10 @@ async def handle_morning_briefing(payload: dict) -> dict:
     user_id = payload.get("user_id", "")
     job_id = payload.get("job_id", "")
 
+    # Handler-level dedup: prevent concurrent execution of the same category
+    if not await _claim_handler_lock(user_id, "morning_briefing"):
+        return _empty_result(job_id, user_id)
+
     from app.database import AsyncSessionLocal
     from app.memory.store import MemoryStore
 
@@ -221,8 +225,8 @@ async def handle_morning_briefing(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    # Record proactive send (AGENT-05)
-    await _record_send(user_id)
+    # Record proactive send (AGENT-05) and set category cooldown
+    await _record_send(user_id, category="morning_briefing")
 
     return {
         "job_id": job_id,
@@ -238,6 +242,9 @@ async def handle_evening_recap(payload: dict) -> dict:
     user_id = payload.get("user_id", "")
     job_id = payload.get("job_id", "")
 
+    if not await _claim_handler_lock(user_id, "evening_recap"):
+        return _empty_result(job_id, user_id)
+
     from app.database import AsyncSessionLocal
     from app.memory.store import MemoryStore
 
@@ -251,18 +258,33 @@ async def handle_evening_recap(payload: dict) -> dict:
             logger.info("DELTA_SUPPRESS user=%s category=evening_recap", user_id[:8])
             return _empty_result(job_id, user_id)
 
-        # Get today's actions
+        # Get today's actions — filter out internal system operations
+        _INTERNAL_ACTION_TYPES = {
+            "morning_briefing", "evening_recap", "weekly_digest",
+            "profile_nudge", "goal_coaching", "smart_checkin",
+            "insight_observation", "feature_discovery", "afternoon_followup",
+            "proactive_send", "scheduler", "requeue",
+        }
         actions = await store.get_action_log(user_id, limit=20)
         today = datetime.now(timezone.utc).date()
-        today_actions = [a for a in actions if a.created_at.date() == today]
+        today_actions = [
+            a for a in actions
+            if a.created_at.date() == today
+            and a.action_type not in _INTERNAL_ACTION_TYPES
+        ]
+
+        # If no user-facing actions today, suppress the recap entirely
+        if not today_actions:
+            logger.info("RECAP_SUPPRESS user=%s reason=no_user_actions", user_id[:8])
+            return _empty_result(job_id, user_id)
 
         from app.tasks._llm import llm_text
         from app.core.identity import identity_preamble
 
         action_summary = "\n".join(
-            f"- {a.action_type}: {a.description} ({a.outcome})"
+            f"- {a.description} ({a.outcome})"
             for a in today_actions[:10]
-        ) or "No recorded actions today."
+        )
 
         system = identity_preamble(
             assistant_name=getattr(user, "assistant_name", None),
@@ -270,13 +292,18 @@ async def handle_evening_recap(payload: dict) -> dict:
         )
 
         recap = await llm_text(
-            system=system + "\nYou are sending an evening recap. Be concise and supportive.",
+            system=system + (
+                "\nYou are sending an evening recap. Be concise and supportive. "
+                "Only mention things the user did or that happened for them. "
+                "Never mention internal system operations, re-queues, nudges sent, "
+                "or other behind-the-scenes activity."
+            ),
             messages=[{
                 "role": "user",
                 "content": (
                     f"Generate a brief evening recap. "
-                    f"Here's what happened today:\n\n"
-                    f"Actions:\n{action_summary}\n\n"
+                    f"Here's what the user accomplished today:\n\n"
+                    f"{action_summary}\n\n"
                     f"Keep it under 150 words."
                 ),
             }],
@@ -292,7 +319,7 @@ async def handle_evening_recap(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="evening_recap")
 
     return {
         "job_id": job_id,
@@ -367,7 +394,7 @@ async def handle_goal_checkin(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="goal_checkin")
 
     return {
         "job_id": job_id,
@@ -456,7 +483,7 @@ async def handle_weekly_digest(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="weekly_digest")
 
     return {
         "job_id": job_id,
@@ -750,7 +777,7 @@ async def handle_profile_nudge(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="profile_nudge")
 
     return {
         "job_id": job_id,
@@ -888,7 +915,7 @@ async def handle_insight_observation(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="insight_observation")
 
     return {
         "job_id": job_id,
@@ -1152,7 +1179,7 @@ async def _requeue_via_manager(
     except Exception as exc:
         logger.warning("Failed to log %s action: %s", action_type, exc)
 
-    await _record_send(user_id)
+    await _record_send(user_id, category=action_type)
 
     # Return empty response — the manager job will produce the real one
     return {
@@ -1378,7 +1405,7 @@ async def handle_feature_discovery(payload: dict) -> dict:
             trigger="scheduled",
         )
 
-    await _record_send(user_id)
+    await _record_send(user_id, category="feature_discovery")
 
     return {
         "job_id": job_id,
@@ -1397,8 +1424,35 @@ async def _get_user_by_id(store, user_id: str):
     return result.scalar_one_or_none()
 
 
-async def _record_send(user_id: str) -> None:
-    """Record proactive send in rate limiter."""
+async def _claim_handler_lock(user_id: str, category: str) -> bool:
+    """
+    Claim a per-user per-category handler lock via Redis SET NX.
+
+    Prevents concurrent execution of the same category for the same user
+    (defense-in-depth against duplicate dispatch). Lock expires after 10 minutes
+    to handle handler crashes. Returns True if lock was acquired.
+    """
+    try:
+        import redis.asyncio as aioredis
+        from app.config import get_settings
+        settings = get_settings()
+        r = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
+        lock_key = f"handler_lock:{user_id}:{category}"
+        acquired = await r.set(lock_key, "1", nx=True, ex=600)
+        await r.aclose()
+        if not acquired:
+            logger.info(
+                "HANDLER_LOCK_BLOCKED user=%s category=%s — concurrent execution prevented",
+                user_id[:8], category,
+            )
+        return acquired is not None
+    except Exception as exc:
+        logger.warning("Failed to check handler lock: %s", exc)
+        return True  # Fail open — better to risk duplicate than block all sends
+
+
+async def _record_send(user_id: str, category: str | None = None) -> None:
+    """Record proactive send in rate limiter and set category cooldown."""
     try:
         import redis.asyncio as aioredis
         from app.config import get_settings
@@ -1406,6 +1460,10 @@ async def _record_send(user_id: str) -> None:
         settings = get_settings()
         r = await aioredis.from_url(settings.redis_url, encoding="utf-8", decode_responses=True)
         await record_proactive_send(r, user_id)
+        # Also set category cooldown to prevent re-selection in next plan_day
+        if category:
+            from app.core.proactive_pool import record_category_cooldown
+            await record_category_cooldown(r, user_id, category)
         await r.aclose()
     except Exception as exc:
         logger.warning("Failed to record proactive send: %s", exc)
