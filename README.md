@@ -47,10 +47,12 @@ SMS (Twilio)  /  Slack  /  Web Dashboard
 
 ┌──────────────────────────────────────────┐
 │   Scheduler Process                      │
-│   • Proactive engagement pool             │
-│   • Per-user category selection            │
-│   • Time-windowed job scheduling           │
-│   • Quiet hours enforcement               │
+│   • Weighted random category pool (1-3/day)│
+│   • Per-user preferences + cooldown        │
+│   • Content delta suppression              │
+│   • Time-windowed jitter scheduling        │
+│   • Quiet hours + rate limit enforcement   │
+│   • Feature discovery + auto-archive       │
 └──────────────────────────────────────────┘
 
 ┌──────────────────────────────────────────┐
@@ -82,10 +84,24 @@ SMS (Twilio)  /  Slack  /  Web Dashboard
 - Automatic persona detection per message
 
 ### Proactive Agent
-- Morning briefings, day check-ins, evening recaps, goal coaching
-- Configurable categories with time windows
-- Per-user rate limiting and quiet hours
+- Morning briefings (dynamic time window based on calendar density), evening recaps, goal coaching
+- Weighted random category pool with content delta suppression (no stale messages)
+- Per-category enable/disable, configurable time windows, 1-3 messages/day default
+- Per-user rate limiting, quiet hours, and cooldown enforcement
+- Feature discovery nudges for undiscovered capabilities (dismissible, decaying schedule)
+- Auto-archive: execute tasks archived immediately, remind tasks follow-up in next briefing
 - Preferred channel selection (SMS or Slack)
+
+### Text-Based Settings
+- Configure any simple setting via SMS using natural language
+- Covers: proactive preferences, tasks, goals, profile, assistant settings
+- Confirmation pattern: assistant echoes proposed change, applies on user approval
+- Complex settings (OAuth, connections) get a dashboard link in response
+
+### Goal Recognition
+- Detects goal-like language ("I need to publish 3 posts by Friday") vs reminders
+- Creates Goal objects with coaching support, not just reminder nudges
+- Proactive goal coaching follows up with research and actionable suggestions
 
 ### Connections & Tools
 - Google (Gmail + Calendar) via OAuth
@@ -96,7 +112,8 @@ SMS (Twilio)  /  Slack  /  Web Dashboard
 - Dynamic capability manifest
 
 ### Admin Dashboard
-- User management (view, suspend, delete, impersonate)
+- User management (view, edit profile, suspend, delete, impersonate)
+- Editable user fields: name, email, phone, timezone, assistant name, personality notes
 - Platform analytics (adoption + usage metrics)
 - System health monitoring (Redis, DB, worker)
 
@@ -161,7 +178,7 @@ app/
 ├── routes/
 │   ├── sms.py           # Twilio webhook + SMS registration flow
 │   ├── slack.py         # Slack events + onboarding + account linking
-│   ├── auth.py          # Register, login, refresh, Slack link codes
+│   ├── auth.py          # Register (with name/timezone), login, refresh, Slack link codes
 │   ├── dashboard.py     # User API (me, conversations, connections proxy, proactive settings)
 │   ├── admin.py         # Admin API (users, analytics, health)
 │   ├── capabilities.py  # Capabilities + custom agents CRUD
@@ -184,9 +201,11 @@ app/
 ├── tasks/
 │   ├── manager.py       # Manager/subagent tool-calling loop
 │   ├── router.py        # Intent → handler routing
-│   ├── reminder.py      # Reminders + preferences
-│   ├── scheduling.py    # Scheduling suggestions
+│   ├── reminder.py      # Reminders + timezone-aware scheduling
+│   ├── scheduling.py    # Scheduling suggestions (timezone-aware)
 │   ├── recall.py        # Memory recall + general handler
+│   ├── settings_handler.py # Text-based settings (proactive, tasks, goals, profile)
+│   ├── proactive.py     # Proactive handlers (briefings, recaps, nudges, discovery)
 │   ├── web_search.py    # Brave Search integration
 │   └── _llm.py          # LLM wrapper (OpenRouter, graceful fallback)
 └── channels/
