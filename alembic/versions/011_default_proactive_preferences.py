@@ -89,14 +89,15 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Remove only the rows this migration inserted (enabled=False, no custom windows)
+    # Revert: set disabled-by-default categories back to enabled
     conn = op.get_bind()
+    now = datetime.now(timezone.utc)
     for category in DISABLED_BY_DEFAULT:
         conn.execute(
             sa.text(
-                "DELETE FROM proactive_preferences "
-                "WHERE category_name = :cat AND enabled = 0 "
-                "AND window_start_hour IS NULL AND window_end_hour IS NULL"
+                "UPDATE proactive_preferences "
+                "SET enabled = :enabled, updated_at = :updated "
+                "WHERE category_name = :cat AND enabled = :disabled"
             ),
-            {"cat": category},
+            {"enabled": True, "disabled": False, "updated": now, "cat": category},
         )
