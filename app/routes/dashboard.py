@@ -30,6 +30,18 @@ router = APIRouter(prefix="/api/v1")
 logger = logging.getLogger(__name__)
 
 
+async def _try_record_milestone(user_id: str, milestone_name: str):
+    """Best-effort milestone recording. Silent on failure."""
+    try:
+        from app.database import AsyncSessionLocal
+        from app.memory.store import MemoryStore
+        async with AsyncSessionLocal() as db:
+            store = MemoryStore(db)
+            await store.record_milestone(user_id, milestone_name)
+    except Exception:
+        pass  # Non-critical -- milestones are advisory
+
+
 async def _get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -492,6 +504,7 @@ async def create_goal(
         parent_goal_id=body.parent_goal_id,
         metadata=body.metadata,
     )
+    await _try_record_milestone(user.id, "set_goal")
     return {"id": goal.id, "title": goal.title, "status": goal.status}
 
 
@@ -594,6 +607,7 @@ async def create_persona(
         user_id=user.id, name=body.name,
         description=body.description, tone_notes=body.tone_notes,
     )
+    await _try_record_milestone(user.id, "created_persona")
     return {"id": persona.id, "name": persona.name}
 
 
@@ -692,6 +706,7 @@ CATEGORY_DESCRIPTIONS = {
     "profile_nudge": "Gentle prompts to complete your profile",
     "insight_observation": "Observations and patterns from your activity",
     "afternoon_followup": "Afternoon follow-up on earlier conversations",
+    "feature_discovery": "Tips about features you haven't explored yet",
 }
 
 DEFAULT_GLOBAL_SETTINGS = {
@@ -828,5 +843,12 @@ async def update_proactive_preferences(
         )
     )
     await db.commit()
+
+    # Record milestones for quiet hours and category configuration
+    gs = body.global_settings
+    if gs.quiet_hours_start != 22 or gs.quiet_hours_end != 7:
+        await _try_record_milestone(user.id, "configured_quiet_hours")
+    if body.categories:
+        await _try_record_milestone(user.id, "configured_proactive")
 
     return {"status": "saved"}

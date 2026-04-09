@@ -58,6 +58,11 @@ def _insight_weight(state: dict) -> float:
     return 3.0 if state.get("memory_count", 0) > 20 else 0.0
 
 
+def _discovery_weight(state: dict) -> float:
+    """Boost weight if user has undiscovered features (many milestones = low weight)."""
+    return 3.0  # Constant boost -- handler self-filters by achieved milestones
+
+
 # ─── Default categories (D-04: merge existing + new) ────────────────────────
 
 DEFAULT_CATEGORIES = [
@@ -129,6 +134,17 @@ DEFAULT_CATEGORIES = [
         window_start_hour=14.5,   # 2:30 PM
         window_end_hour=16.5,     # 4:30 PM
         base_weight=4,
+        requires="always",
+    ),
+    # Feature discovery — nudge users about undiscovered features (D-07, D-08, D-09)
+    ProactiveCategory(
+        name="feature_discovery",
+        handler_type="feature_discovery",
+        window_start_hour=11.0,
+        window_end_hour=15.0,
+        base_weight=4,
+        weight_fn=_discovery_weight,
+        cooldown_hours=48,  # At most every 2 days
         requires="always",
     ),
 ]

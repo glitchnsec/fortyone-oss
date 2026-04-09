@@ -73,6 +73,10 @@ async def _has_content_delta(store, user_id: str, category: str) -> bool:
         # Check if any new memories since last send
         return any(m.created_at > since for m in memories)
 
+    elif category == "feature_discovery":
+        # Feature discovery always has delta -- handler self-filters by milestones
+        return True
+
     elif category in ("smart_checkin", "day_checkin", "afternoon_followup"):
         # Check-ins always have delta (they are conversational, not data-driven)
         return True
@@ -1203,6 +1207,186 @@ def _profile_completeness(user, entries: list) -> tuple[float, list[str]]:
     score = sum(checks.values()) / len(checks) if checks else 0.0
     missing = [k for k, v in checks.items() if not v]
     return score, missing
+
+
+# ─── Feature Discovery Nudges (D-07, D-08, D-09) ─────────────────────────
+
+# Milestones: features users can discover. Each has a nudge with both
+# a text command AND a dashboard link per D-09.
+FEATURE_NUDGES = {
+    "connected_gmail": {
+        "description": "Connect your Gmail so I can read and send emails for you.",
+        "text_command": "Try saying: 'Send an email to [name] about [topic]'",
+        "dashboard_link": "/connections",
+        "category": "connections",
+    },
+    "connected_calendar": {
+        "description": "Connect your Google Calendar so I can manage your schedule.",
+        "text_command": "Try saying: 'What's on my calendar today?'",
+        "dashboard_link": "/connections",
+        "category": "connections",
+    },
+    "created_persona": {
+        "description": "Create Work and Personal personas to get context-aware responses.",
+        "text_command": "Try saying: 'Create a Work persona'",
+        "dashboard_link": "/personas",
+        "category": "personas",
+    },
+    "set_goal": {
+        "description": "Set a goal and I'll coach you toward it with check-ins and suggestions.",
+        "text_command": "Try saying: 'My goal is to ship v1 by end of month'",
+        "dashboard_link": "/goals",
+        "category": "goals",
+    },
+    "configured_quiet_hours": {
+        "description": "Set quiet hours so I won't message you at inconvenient times.",
+        "text_command": "Try saying: 'Set quiet hours from 10pm to 7am'",
+        "dashboard_link": "/settings/proactive",
+        "category": "settings",
+    },
+    "configured_proactive": {
+        "description": "Customize which types of proactive messages you receive.",
+        "text_command": "Try saying: 'Disable evening recaps' or 'Enable goal coaching'",
+        "dashboard_link": "/settings/proactive",
+        "category": "settings",
+    },
+    "used_web_search": {
+        "description": "Ask me anything and I'll search the web for answers -- no connection needed!",
+        "text_command": "Try saying: 'What's the weather in Austin?'",
+        "dashboard_link": "/capabilities",
+        "category": "tools",
+    },
+    "created_custom_agent": {
+        "description": "Create custom agents (webhooks or prompts) to extend my capabilities.",
+        "text_command": "Check the Capabilities page in your dashboard to get started.",
+        "dashboard_link": "/capabilities",
+        "category": "agents",
+    },
+}
+
+# Decaying schedule intervals (D-08): 1 week, 2 weeks, 1 month, then stop
+_NUDGE_INTERVALS_DAYS = [7, 14, 30]
+
+
+async def handle_feature_discovery(payload: dict) -> dict:
+    """
+    Feature discovery nudge -- suggest features the user hasn't explored (D-07, D-08, D-09).
+
+    Picks one undiscovered feature, sends a nudge with both text-command and dashboard link.
+    Respects decaying schedule: after 3 nudges for a feature, stops suggesting it.
+    Users can dismiss nudges via proactive_settings_json.
+    """
+    user_id = payload.get("user_id", "")
+    job_id = payload.get("job_id", "")
+
+    from app.database import AsyncSessionLocal
+    from app.memory.store import MemoryStore
+    import json as _json
+    import random
+
+    async with AsyncSessionLocal() as db:
+        store = MemoryStore(db)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            return _empty_result(job_id, user_id)
+
+        # Get achieved milestones
+        milestones = await store.get_milestones(user_id)
+        achieved_names = {m.milestone_name for m in milestones}
+
+        # Get dismissed nudges from proactive_settings_json
+        dismissed = set()
+        if user.proactive_settings_json:
+            try:
+                ps = _json.loads(user.proactive_settings_json)
+                dismissed = set(ps.get("dismissed_nudges", []))
+            except (ValueError, TypeError):
+                pass
+
+        # Find undiscovered, non-dismissed features
+        candidates = [
+            (name, info) for name, info in FEATURE_NUDGES.items()
+            if name not in achieved_names and name not in dismissed
+        ]
+
+        if not candidates:
+            logger.info("DISCOVERY_NO_CANDIDATES user=%s", user_id[:8])
+            return _empty_result(job_id, user_id)
+
+        # Check nudge frequency via action_log (decaying schedule D-08)
+        logs = await store.get_action_log(user_id, limit=100)
+        eligible = []
+        for name, info in candidates:
+            # Count how many times this nudge was sent
+            nudge_sends = [
+                a for a in logs
+                if a.action_type == "feature_discovery" and name in (a.description or "")
+            ]
+            send_count = len(nudge_sends)
+
+            if send_count >= len(_NUDGE_INTERVALS_DAYS):
+                continue  # Max nudges reached, stop suggesting
+
+            if send_count > 0:
+                last = nudge_sends[0]  # Most recent (logs are desc by created_at)
+                interval = _NUDGE_INTERVALS_DAYS[min(send_count, len(_NUDGE_INTERVALS_DAYS) - 1)]
+                if (datetime.now(timezone.utc) - last.created_at).days < interval:
+                    continue  # Too soon for next nudge
+
+            eligible.append((name, info))
+
+        if not eligible:
+            return _empty_result(job_id, user_id)
+
+        # Pick one at random
+        name, info = random.choice(eligible)
+
+        from app.tasks._llm import llm_text
+        from app.core.identity import identity_preamble
+
+        system = identity_preamble(
+            assistant_name=getattr(user, "assistant_name", None),
+            personality_notes=getattr(user, "personality_notes", None),
+        )
+
+        nudge_text = await llm_text(
+            system=system + "\nYou are sending a feature discovery tip. Be casual and brief.",
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Generate a short, friendly feature tip message.\n\n"
+                    f"Feature: {info['description']}\n"
+                    f"Text command: {info['text_command']}\n"
+                    f"Dashboard: {info['dashboard_link']}\n\n"
+                    f"Include BOTH the text command suggestion AND the dashboard link. "
+                    f"Keep it under 100 words. Don't be pushy."
+                ),
+            }],
+            mock_text=(
+                f"Tip: {info['description']} "
+                f"{info['text_command']} "
+                f"Or visit your dashboard: {info['dashboard_link']}"
+            ),
+            timeout_s=10.0,
+        )
+
+        await store.log_action(
+            user_id=user_id,
+            action_type="feature_discovery",
+            description=f"Sent feature discovery nudge: {name}",
+            outcome="success",
+            trigger="scheduled",
+        )
+
+    await _record_send(user_id)
+
+    return {
+        "job_id": job_id,
+        "phone": getattr(user, "phone", ""),
+        "address": getattr(user, "phone", ""),
+        "channel": payload.get("channel", "sms"),
+        "response": nudge_text,
+    }
 
 
 async def _get_user_by_id(store, user_id: str):
