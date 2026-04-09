@@ -316,3 +316,86 @@ async def test_register_rejects_duplicate_phone_with_email(client):
         "password": "AnotherPass123!",
     })
     assert resp.status_code == 409
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Registration with name + timezone, GET/PATCH /api/v1/me profile fields
+# ──────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_register_with_name_and_timezone(client):
+    """Registration accepts optional name and timezone fields."""
+    resp = await client.post("/auth/register", json={
+        **TEST_USER,
+        "name": "KC",
+        "timezone": "America/Toronto",
+    })
+    assert resp.status_code == 201
+    token = resp.json()["access_token"]
+
+    me = await client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    data = me.json()
+    assert data["name"] == "KC"
+    assert data["timezone"] == "America/Toronto"
+
+
+@pytest.mark.asyncio
+async def test_get_me_returns_name_and_timezone(client):
+    """GET /api/v1/me includes name and timezone in response."""
+    resp = await client.post("/auth/register", json=TEST_USER)
+    token = resp.json()["access_token"]
+
+    me = await client.get("/api/v1/me", headers={"Authorization": f"Bearer {token}"})
+    assert me.status_code == 200
+    data = me.json()
+    assert "name" in data
+    assert "timezone" in data
+
+
+@pytest.mark.asyncio
+async def test_patch_me_updates_name(client):
+    """PATCH /api/v1/me can update user name."""
+    resp = await client.post("/auth/register", json=TEST_USER)
+    token = resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    patch = await client.patch("/api/v1/me", json={"name": "Dr. Smith"}, headers=headers)
+    assert patch.status_code == 200
+    assert patch.json()["name"] == "Dr. Smith"
+
+    me = await client.get("/api/v1/me", headers=headers)
+    assert me.json()["name"] == "Dr. Smith"
+
+
+@pytest.mark.asyncio
+async def test_patch_me_updates_timezone(client):
+    """PATCH /api/v1/me can update user timezone."""
+    resp = await client.post("/auth/register", json=TEST_USER)
+    token = resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    patch = await client.patch("/api/v1/me", json={"timezone": "Asia/Tokyo"}, headers=headers)
+    assert patch.status_code == 200
+    assert patch.json()["timezone"] == "Asia/Tokyo"
+
+    me = await client.get("/api/v1/me", headers=headers)
+    assert me.json()["timezone"] == "Asia/Tokyo"
+
+
+@pytest.mark.asyncio
+async def test_patch_me_rejects_invalid_timezone(client):
+    """PATCH /api/v1/me rejects invalid IANA timezone strings."""
+    resp = await client.post("/auth/register", json=TEST_USER)
+    token = resp.json()["access_token"]
+    headers = {"Authorization": f"Bearer {token}"}
+
+    patch = await client.patch("/api/v1/me", json={"timezone": "Fake/Nowhere"}, headers=headers)
+    assert patch.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_patch_me_requires_auth(client):
+    """PATCH /api/v1/me without auth returns 401/403."""
+    patch = await client.patch("/api/v1/me", json={"name": "Hacker"})
+    assert patch.status_code in (401, 403)

@@ -84,17 +84,22 @@ async def update_me(
     db: AsyncSession = Depends(_get_db),
 ):
     """Update user profile fields (name, timezone)."""
+    # Re-fetch user within this session so changes persist on commit
+    result = await db.execute(select(User).where(User.id == user.id))
+    db_user = result.scalars().first()
+    if not db_user:
+        raise HTTPException(404, "User not found")
     if body.name is not None:
-        user.name = body.name
+        db_user.name = body.name
     if body.timezone is not None:
         import zoneinfo
         try:
             zoneinfo.ZoneInfo(body.timezone)
         except (KeyError, zoneinfo.ZoneInfoNotFoundError):
             raise HTTPException(400, f"Invalid timezone: '{body.timezone}'")
-        user.timezone = body.timezone
+        db_user.timezone = body.timezone
     await db.commit()
-    return {"ok": True, "name": user.name, "timezone": user.timezone}
+    return {"ok": True, "name": db_user.name, "timezone": db_user.timezone}
 
 
 class AssistantUpdate(BaseModel):
