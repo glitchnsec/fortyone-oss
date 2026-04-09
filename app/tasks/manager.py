@@ -179,6 +179,7 @@ async def manager_dispatch(payload: dict) -> dict:
                     tool_name, error_type, tool_failure_counts[tool_name], job_id,
                 )
                 now_utc = datetime.now(timezone.utc).isoformat()
+                _user_tz = context.get("user", {}).get("timezone") or "America/New_York"
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
@@ -188,7 +189,9 @@ async def manager_dispatch(payload: dict) -> dict:
                         "hint": (
                             f"The date you provided was invalid or in the past. "
                             f"The current UTC time is {now_utc}. "
-                            f"Please retry with a correct future date in ISO 8601 format."
+                            f"The user's timezone is {_user_tz}. All user times are in their local timezone. "
+                            f"Please retry with a correct future date in ISO 8601 UTC format, "
+                            f"converting from the user's local time."
                         ),
                     }),
                 })
@@ -381,8 +384,8 @@ def _build_system_prompt(payload: dict) -> str:
     try:
         from app.core.identity import identity_preamble
         preamble = identity_preamble(
-            assistant_name=user_info.get("assistant_name") or context.get("assistant_name"),
-            personality_notes=user_info.get("personality_notes") or context.get("personality_notes"),
+            assistant_name=user_info.get("assistant_name"),
+            personality_notes=user_info.get("personality_notes"),
         )
         if preamble:
             parts.append(preamble)
@@ -396,12 +399,17 @@ def _build_system_prompt(payload: dict) -> str:
 
     from datetime import datetime, timezone as tz
     import zoneinfo
-    user_tz_name = context.get("timezone", "UTC")
+    user_tz_name = context.get("user", {}).get("timezone") or "America/New_York"
     try:
         user_tz = zoneinfo.ZoneInfo(user_tz_name)
         now_local = datetime.now(user_tz)
+        now_utc = datetime.now(tz.utc)
         parts.append(
-            f"Current time: {now_local.strftime('%Y-%m-%d %H:%M %Z')} ({user_tz_name})")
+            f"Current time: {now_local.strftime('%Y-%m-%d %H:%M %Z')} ({user_tz_name}). "
+            f"Current UTC: {now_utc.strftime('%Y-%m-%d %H:%M UTC')}. "
+            f"The user's timezone is {user_tz_name}. All times the user mentions are in their local timezone. "
+            f"When using tools that accept dates, always convert the user's local time to UTC."
+        )
     except Exception:
         parts.append(
             f"Current time: {datetime.now(tz.utc).strftime('%Y-%m-%d %H:%M UTC')}")
@@ -426,7 +434,16 @@ def _build_system_prompt(payload: dict) -> str:
         # "- However, do NOT create a reminder as a substitute when a different tool fails. "
         # "For example, if web_search fails while the user asked you to find something, "
         # "don't create a reminder for the user to search manually — tell them the search is unavailable instead.\n"
-        "- Do not mention technical details like API keys or configuration to the user."
+        "- Do not mention technical details like API keys or configuration to the user.\n"
+        "- CRITICAL: To change any user setting (proactive messages, quiet hours, profile, etc.), "
+        "you MUST call the update_setting tool. NEVER claim you have changed a setting without "
+        "actually calling the tool. If you cannot determine the right parameters, ask the user "
+        "for clarification instead of pretending the change was made.\n"
+        "- PROACTIVE PROFILE UPDATES: When the user mentions information that belongs on their "
+        "profile (timezone, name, preferences), call update_setting to persist it. Examples:\n"
+        "  - 'I'm in Eastern time' → call update_setting(scope=profile, target=timezone, value='America/New_York')\n"
+        "  - 'Call me KC' → call update_setting(scope=profile, target=name, value='KC')\n"
+        "  Don't just learn it passively — update the profile so all future interactions use it."
     )
 
     # Scheduled execution context — tell the manager to act, not re-schedule
@@ -503,6 +520,26 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
         return f"send an email to {args.get('to', 'someone')} about \"{args.get('subject', 'something')}\""
     elif tool_name == "create_event":
         return f"create a calendar event \"{args.get('summary', 'event')}\" at {args.get('start_time', 'the scheduled time')}"
+    elif tool_name == "update_setting":
+        scope = args.get("scope", "setting")
+        action = args.get("action", "update")
+        target = args.get("target", "")
+        value = args.get("value")
+        if scope == "proactive" and target == "enabled":
+            verb = "enable" if action == "enable" else "disable"
+            return f"{verb} all proactive messages"
+        elif scope == "proactive":
+            if value is not None:
+                return f"set your {target.replace('_', ' ')} to {value}"
+            return f"{action} your {target.replace('_', ' ')} setting"
+        elif scope == "task":
+            return f"{action} your task \"{target}\""
+        elif scope == "goal":
+            return f"{action} your goal \"{target}\""
+        elif scope in ("profile", "assistant"):
+            return f"update your {target.replace('_', ' ')} to \"{value}\""
+        else:
+            return f"update your {scope} settings"
     else:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
