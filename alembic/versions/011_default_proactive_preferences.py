@@ -52,7 +52,6 @@ def upgrade() -> None:
 
     for (user_id,) in users:
         for category in DISABLED_BY_DEFAULT:
-            # Only insert if no preference row exists for this user+category
             exists = conn.execute(
                 sa.text(
                     "SELECT 1 FROM proactive_preferences "
@@ -61,7 +60,17 @@ def upgrade() -> None:
                 {"uid": user_id, "cat": category},
             ).fetchone()
 
-            if not exists:
+            if exists:
+                # Update existing row to disabled
+                conn.execute(
+                    sa.text(
+                        "UPDATE proactive_preferences SET enabled = :enabled, updated_at = :updated "
+                        "WHERE user_id = :uid AND category_name = :cat"
+                    ),
+                    {"enabled": False, "updated": now, "uid": user_id, "cat": category},
+                )
+            else:
+                # Insert new disabled row
                 conn.execute(
                     sa.text(
                         "INSERT INTO proactive_preferences "
