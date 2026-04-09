@@ -173,3 +173,123 @@ def test_manager_dispatches_update_setting():
     from app.tasks.manager import _execute_tool
     src = inspect.getsource(_execute_tool)
     assert "update_setting" in src, "_execute_tool must handle update_setting"
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Per-category disable contract tests — verify data lands in ProactivePreference
+# ──────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_category_disable_writes_proactive_preference():
+    """Disabling a category must upsert ProactivePreference, NOT write to JSON blob."""
+    from app.tasks.settings_handler import execute_setting_update
+
+    mock_user = MagicMock()
+    mock_user.proactive_settings_json = json.dumps({"enabled": True})
+    mock_user.id = "u1"
+
+    added_objects = []
+
+    with patch("app.database.AsyncSessionLocal") as mock_cls:
+        mock_db = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        # First execute call: return user. Second: return no existing pref.
+        mock_user_result = MagicMock()
+        mock_user_result.scalars.return_value.first.return_value = mock_user
+        mock_pref_result = MagicMock()
+        mock_pref_result.scalars.return_value.first.return_value = None
+        mock_db.execute.side_effect = [mock_user_result, mock_pref_result]
+        mock_db.commit = AsyncMock()
+        mock_db.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
+
+        result = await execute_setting_update(
+            {"scope": "proactive", "action": "disable", "target": "morning_briefing"},
+            {"user_id": "u1"},
+        )
+
+    assert "result" in result
+    assert "disabled" in result["result"]
+    # Must have added a ProactivePreference, not written to JSON
+    assert len(added_objects) == 1
+    pref = added_objects[0]
+    assert pref.category_name == "morning_briefing"
+    assert pref.enabled is False
+    assert pref.user_id == "u1"
+    # proactive_settings_json must NOT have a "categories" key added
+    settings_after = json.loads(mock_user.proactive_settings_json)
+    assert "categories" not in settings_after
+
+
+@pytest.mark.asyncio
+async def test_category_enable_updates_existing_preference():
+    """Re-enabling a category must update existing ProactivePreference row."""
+    from app.tasks.settings_handler import execute_setting_update
+
+    mock_user = MagicMock()
+    mock_user.proactive_settings_json = json.dumps({"enabled": True})
+    mock_user.id = "u1"
+
+    mock_pref = MagicMock()
+    mock_pref.enabled = False
+    mock_pref.category_name = "morning_briefing"
+
+    with patch("app.database.AsyncSessionLocal") as mock_cls:
+        mock_db = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalars.return_value.first.return_value = mock_user
+        mock_pref_result = MagicMock()
+        mock_pref_result.scalars.return_value.first.return_value = mock_pref
+        mock_db.execute.side_effect = [mock_user_result, mock_pref_result]
+        mock_db.commit = AsyncMock()
+
+        result = await execute_setting_update(
+            {"scope": "proactive", "action": "enable", "target": "morning_briefing"},
+            {"user_id": "u1"},
+        )
+
+    assert "enabled" in result["result"]
+    assert mock_pref.enabled is True
+
+
+@pytest.mark.asyncio
+async def test_global_disable_does_not_touch_preferences_table():
+    """Global disable writes to proactive_settings_json, not ProactivePreference."""
+    from app.tasks.settings_handler import execute_setting_update
+
+    mock_user = MagicMock()
+    mock_user.proactive_settings_json = json.dumps({"enabled": True})
+
+    with patch("app.database.AsyncSessionLocal") as mock_cls:
+        mock_db = AsyncMock()
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = mock_user
+        mock_db.execute.return_value = mock_result
+        mock_db.commit = AsyncMock()
+        mock_db.add = MagicMock()
+
+        result = await execute_setting_update(
+            {"scope": "proactive", "action": "disable", "target": "enabled"},
+            {"user_id": "u1"},
+        )
+
+    assert "disabled" in result["result"].lower()
+    settings = json.loads(mock_user.proactive_settings_json)
+    assert settings["enabled"] is False
+    mock_db.add.assert_not_called()
+
+
+def test_pool_plan_day_checks_preference_table():
+    """plan_day must query ProactivePreference to filter disabled categories."""
+    import inspect
+    from app.core.proactive_pool import plan_day
+    src = inspect.getsource(plan_day)
+    assert "ProactivePreference" in src, "plan_day must check ProactivePreference table"
+    assert "POOL_SKIP_DISABLED" in src, "plan_day must log skipped disabled categories"
