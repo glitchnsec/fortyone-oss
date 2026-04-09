@@ -275,7 +275,11 @@ class MemoryStore:
     ) -> list[Task]:
         stmt = (
             select(Task)
-            .where(Task.user_id == user_id, Task.completed == False)  # noqa: E712
+            .where(
+                Task.user_id == user_id,
+                Task.completed == False,  # noqa: E712
+                Task.archived_at == None,  # noqa: E711  -- exclude archived
+            )
             .order_by(nullslast(Task.due_at.asc()))
         )
         if task_type:
@@ -338,6 +342,66 @@ class MemoryStore:
         await self.db.delete(task)
         await self.db.commit()
         return True
+
+    # ─── Task Archive + Feature Milestones ─────────────────────────────────
+
+    async def archive_task(self, user_id: str, task_id: str) -> bool:
+        """Set archived_at on a task. Idempotent -- no-op if already archived."""
+        result = await self.db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        )
+        task = result.scalars().first()
+        if not task or task.archived_at is not None:
+            return False
+        task.archived_at = datetime.now(timezone.utc)
+        task.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        return True
+
+    async def mark_follow_up_sent(self, user_id: str, task_id: str) -> bool:
+        """Mark that a follow-up was sent for a remind task (D-15)."""
+        result = await self.db.execute(
+            select(Task).where(Task.id == task_id, Task.user_id == user_id)
+        )
+        task = result.scalars().first()
+        if not task:
+            return False
+        task.follow_up_sent_at = datetime.now(timezone.utc)
+        task.updated_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        return True
+
+    async def get_tasks_needing_archive(self, user_id: str) -> list:
+        """Get remind tasks with follow_up_sent_at set but not yet archived (D-15)."""
+        result = await self.db.execute(
+            select(Task).where(
+                Task.user_id == user_id,
+                Task.archived_at == None,  # noqa: E711
+                Task.follow_up_sent_at != None,  # noqa: E711
+                Task.completed == False,  # noqa: E712
+            )
+        )
+        return list(result.scalars().all())
+
+    async def record_milestone(self, user_id: str, milestone_name: str) -> bool:
+        """Record a feature milestone. Idempotent via unique constraint."""
+        from app.memory.models import FeatureMilestone
+        try:
+            milestone = FeatureMilestone(user_id=user_id, milestone_name=milestone_name)
+            self.db.add(milestone)
+            await self.db.commit()
+            return True
+        except Exception:
+            await self.db.rollback()
+            return False  # Already exists (unique constraint)
+
+    async def get_milestones(self, user_id: str) -> list:
+        """Get all milestones for a user."""
+        from app.memory.models import FeatureMilestone
+        result = await self.db.execute(
+            select(FeatureMilestone).where(FeatureMilestone.user_id == user_id)
+        )
+        return list(result.scalars().all())
 
     # ─── Messages ────────────────────────────────────────────────────────────
 

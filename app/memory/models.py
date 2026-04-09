@@ -74,6 +74,7 @@ class User(Base):
     profile_entries = relationship("UserProfile", back_populates="user", cascade="all, delete-orphan")
     proactive_preferences = relationship("ProactivePreference", back_populates="user", cascade="all, delete-orphan")
     custom_agents = relationship("CustomAgent", back_populates="user", cascade="all, delete-orphan")
+    feature_milestones = relationship("FeatureMilestone", backref="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -126,6 +127,8 @@ class Task(Base):
     metadata_json = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
+    archived_at = Column(DateTime(timezone=True), nullable=True)
+    follow_up_sent_at = Column(DateTime(timezone=True), nullable=True)
 
     user = relationship("User", back_populates="tasks")
 
@@ -293,6 +296,21 @@ class CustomAgent(Base):
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
 
     user = relationship("User", back_populates="custom_agents")
+
+
+class FeatureMilestone(Base):
+    """
+    Track which features a user has explored for feature discovery nudges (D-07).
+    Milestones are permanent user state. UniqueConstraint prevents duplicates.
+    """
+    __tablename__ = "feature_milestones"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    milestone_name = Column(String, nullable=False)  # "connected_gmail", "set_goal", "created_persona", etc.
+    achieved_at = Column(DateTime(timezone=True), default=_utcnow)
+
+    __table_args__ = (UniqueConstraint("user_id", "milestone_name", name="uq_user_milestone"),)
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
