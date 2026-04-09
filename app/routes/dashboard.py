@@ -710,7 +710,7 @@ CATEGORY_DESCRIPTIONS = {
 }
 
 DEFAULT_GLOBAL_SETTINGS = {
-    "max_daily_messages": 5,
+    "max_daily_messages": 3,
     "quiet_hours_start": 22,
     "quiet_hours_end": 7,
     "enabled": True,
@@ -726,7 +726,7 @@ class CategoryPrefIn(BaseModel):
 
 
 class GlobalSettingsIn(BaseModel):
-    max_daily_messages: int = 5
+    max_daily_messages: int = 3
     quiet_hours_start: int = 22
     quiet_hours_end: int = 7
     enabled: bool = True
