@@ -16,9 +16,11 @@ import {
   AlertDialogContent, AlertDialogDescription, AlertDialogFooter,
   AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Input } from "@/components/ui/input";
 import { fetchWithAuth } from "@/lib/api";
 import { useAuth } from "@/lib/auth.tsx";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { Copy, Check, MessageSquare } from "lucide-react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -32,6 +34,8 @@ interface MeResponse {
   email: string | null;
   phone: string;
   phone_verified: boolean;
+  name: string | null;
+  timezone: string | null;
   assistant_name: string | null;
 }
 
@@ -43,12 +47,59 @@ function AccountSettingsPage() {
   const [linkCode, setLinkCode] = useState<string | null>(null);
   const [generatingCode, setGeneratingCode] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editTimezone, setEditTimezone] = useState("");
+  const queryClient = useQueryClient();
+
+  const allTimezones = useMemo(() => {
+    try {
+      return Intl.supportedValuesOf("timeZone");
+    } catch {
+      return [
+        "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles",
+        "America/Denver", "America/Chicago", "America/New_York",
+        "America/Toronto", "America/Halifax", "Europe/London",
+        "Europe/Paris", "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+      ];
+    }
+  }, []);
 
   const { data, isLoading } = useQuery<MeResponse>({
     queryKey: ["me"],
     queryFn: () =>
       fetchWithAuth("/api/v1/me").then((r) => r.json()) as Promise<MeResponse>,
   });
+
+  useEffect(() => {
+    if (data) {
+      setEditName(data.name || "");
+      setEditTimezone(data.timezone || "America/New_York");
+    }
+  }, [data]);
+
+  const profileMutation = useMutation({
+    mutationFn: async (body: { name?: string; timezone?: string }) => {
+      const res = await fetchWithAuth("/api/v1/me", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error("Failed to update profile");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["me"] });
+      toast.success("Profile updated");
+    },
+    onError: () => toast.error("Failed to update profile"),
+  });
+
+  const handleSaveProfile = () => {
+    const changes: { name?: string; timezone?: string } = {};
+    if (editName !== (data?.name || "")) changes.name = editName;
+    if (editTimezone !== (data?.timezone || "")) changes.timezone = editTimezone;
+    if (Object.keys(changes).length > 0) profileMutation.mutate(changes);
+  };
 
   const handleGenerateLinkCode = async () => {
     setGeneratingCode(true);
@@ -109,8 +160,47 @@ function AccountSettingsPage() {
         </div>
       ) : (
         <div className="space-y-6">
-          {/* Email (read-only) */}
+          {/* Name (editable) */}
           <div className="space-y-1">
+            <Label htmlFor="edit-name" className="text-sm text-neutral-500">Name</Label>
+            <Input
+              id="edit-name"
+              value={editName}
+              onChange={(e) => setEditName(e.target.value)}
+              placeholder="How should we address you?"
+              className="max-w-xs"
+            />
+          </div>
+
+          {/* Timezone (editable) */}
+          <div className="space-y-1">
+            <Label htmlFor="edit-tz" className="text-sm text-neutral-500">Timezone</Label>
+            <select
+              id="edit-tz"
+              value={editTimezone}
+              onChange={(e) => setEditTimezone(e.target.value)}
+              className="flex h-10 max-w-xs w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2"
+            >
+              {allTimezones.map((tz) => (
+                <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Save button for name/timezone */}
+          {(editName !== (data?.name || "") || editTimezone !== (data?.timezone || "")) && (
+            <Button
+              onClick={handleSaveProfile}
+              disabled={profileMutation.isPending}
+              className="bg-blue-600 hover:bg-blue-700"
+            >
+              {profileMutation.isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Save Changes
+            </Button>
+          )}
+
+          {/* Email (read-only) */}
+          <div className="space-y-1 border-t border-neutral-200 pt-6">
             <Label className="text-sm text-neutral-500">Email</Label>
             <p className="text-sm text-neutral-900">{data?.email ?? "—"}</p>
           </div>

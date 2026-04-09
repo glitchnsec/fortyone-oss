@@ -64,10 +64,37 @@ async def get_me(user: User = Depends(get_current_user)):
         "email": user.email,
         "phone": user.phone,
         "phone_verified": user.phone_verified,
+        "name": user.name,
+        "timezone": user.timezone,
         "assistant_name": user.assistant_name,
         "personality_notes": getattr(user, "personality_notes", None),
         "role": user.role.name if user.role else "user",
     }
+
+
+class ProfileUpdate(BaseModel):
+    name: Optional[str] = None
+    timezone: Optional[str] = None
+
+
+@router.patch("/me")
+async def update_me(
+    body: ProfileUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Update user profile fields (name, timezone)."""
+    if body.name is not None:
+        user.name = body.name
+    if body.timezone is not None:
+        import zoneinfo
+        try:
+            zoneinfo.ZoneInfo(body.timezone)
+        except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+            raise HTTPException(400, f"Invalid timezone: '{body.timezone}'")
+        user.timezone = body.timezone
+    await db.commit()
+    return {"ok": True, "name": user.name, "timezone": user.timezone}
 
 
 class AssistantUpdate(BaseModel):
