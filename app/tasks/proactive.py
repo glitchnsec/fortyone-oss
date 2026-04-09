@@ -24,6 +24,16 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
+# Action types that are internal system operations — never expose to user in
+# recaps, digests, or insights. Used by evening_recap, weekly_digest, and
+# insight_observation to filter action log before passing to LLM.
+_INTERNAL_ACTION_TYPES = {
+    "morning_briefing", "evening_recap", "weekly_digest",
+    "profile_nudge", "goal_coaching", "smart_checkin",
+    "insight_observation", "feature_discovery", "afternoon_followup",
+    "proactive_send", "scheduler", "requeue",
+}
+
 
 async def _has_content_delta(store, user_id: str, category: str) -> bool:
     """
@@ -259,12 +269,6 @@ async def handle_evening_recap(payload: dict) -> dict:
             return _empty_result(job_id, user_id)
 
         # Get today's actions — filter out internal system operations
-        _INTERNAL_ACTION_TYPES = {
-            "morning_briefing", "evening_recap", "weekly_digest",
-            "profile_nudge", "goal_coaching", "smart_checkin",
-            "insight_observation", "feature_discovery", "afternoon_followup",
-            "proactive_send", "scheduler", "requeue",
-        }
         actions = await store.get_action_log(user_id, limit=20)
         today = datetime.now(timezone.utc).date()
         today_actions = [
@@ -428,52 +432,61 @@ async def handle_weekly_digest(payload: dict) -> dict:
             logger.info("DELTA_SUPPRESS user=%s category=weekly_digest", user_id[:8])
             return _empty_result(job_id, user_id)
 
-        # Get past week's actions (up to 100)
+        # Get past week's actions — filter out internal system operations
         all_actions = await store.get_action_log(user_id, limit=100)
         week_ago = datetime.now(timezone.utc) - timedelta(days=7)
-        week_actions = [a for a in all_actions if a.created_at >= week_ago]
+        week_actions = [
+            a for a in all_actions
+            if a.created_at >= week_ago
+            and a.action_type not in _INTERNAL_ACTION_TYPES
+        ]
 
         if not week_actions:
-            digest_text = "Quiet week! No actions were taken by your assistant. Need help with anything?"
-        else:
-            from app.tasks._llm import llm_text
-            from app.core.identity import identity_preamble
+            logger.info("DIGEST_SUPPRESS user=%s reason=no_user_actions", user_id[:8])
+            return _empty_result(job_id, user_id)
 
-            # Group by action type for summary
-            action_groups: dict[str, int] = {}
-            for a in week_actions:
-                action_groups[a.action_type] = action_groups.get(a.action_type, 0) + 1
+        from app.tasks._llm import llm_text
+        from app.core.identity import identity_preamble
 
-            action_summary = "\n".join(
-                f"- {action_type}: {count} time(s)"
-                for action_type, count in sorted(action_groups.items(), key=lambda x: -x[1])
-            )
+        # Group by action type for summary
+        action_groups: dict[str, int] = {}
+        for a in week_actions:
+            action_groups[a.action_type] = action_groups.get(a.action_type, 0) + 1
 
-            recent_highlights = "\n".join(
-                f"- {a.description} ({a.outcome})"
-                for a in week_actions[:10]
-            )
+        action_summary = "\n".join(
+            f"- {action_type}: {count} time(s)"
+            for action_type, count in sorted(action_groups.items(), key=lambda x: -x[1])
+        )
 
-            system = identity_preamble(
-                assistant_name=getattr(user, "assistant_name", None),
-                personality_notes=getattr(user, "personality_notes", None),
-            )
+        recent_highlights = "\n".join(
+            f"- {a.description} ({a.outcome})"
+            for a in week_actions[:10]
+        )
 
-            digest_text = await llm_text(
-                system=system + "\nYou are sending a weekly activity digest via SMS. Be brief and informative.",
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"Generate a weekly digest SMS. This week:\n\n"
-                        f"Action summary:\n{action_summary}\n\n"
-                        f"Recent highlights:\n{recent_highlights}\n\n"
-                        f"Total actions: {len(week_actions)}\n"
-                        f"Keep it under 200 words. Start with 'Weekly recap:'"
-                    ),
-                }],
-                mock_text=f"Weekly recap: {len(week_actions)} actions this week. {action_summary[:100]}",
-                timeout_s=10.0,
-            )
+        system = identity_preamble(
+            assistant_name=getattr(user, "assistant_name", None),
+            personality_notes=getattr(user, "personality_notes", None),
+        )
+
+        digest_text = await llm_text(
+            system=system + (
+                "\nYou are sending a weekly activity digest via SMS. Be brief and informative. "
+                "Only mention things the user did or that happened for them. "
+                "Never mention internal system operations, re-queues, nudges, or proactive sends."
+            ),
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"Generate a weekly digest SMS. This week:\n\n"
+                    f"Action summary:\n{action_summary}\n\n"
+                    f"Recent highlights:\n{recent_highlights}\n\n"
+                    f"Total actions: {len(week_actions)}\n"
+                    f"Keep it under 200 words. Start with 'Weekly recap:'"
+                ),
+            }],
+            mock_text=f"Weekly recap: {len(week_actions)} actions this week. {action_summary[:100]}",
+            timeout_s=10.0,
+        )
 
         await store.log_action(
             user_id=user_id,
@@ -863,9 +876,10 @@ async def handle_insight_observation(payload: dict) -> dict:
             )
             return _empty_result(job_id, user_id)
 
-        # Load profile entries and recent actions for richer context
+        # Load profile entries and recent actions — filter out internal operations
         profile_entries = await store.get_profile_entries(user_id)
-        recent_actions = await store.get_action_log(user_id, limit=20)
+        all_recent = await store.get_action_log(user_id, limit=20)
+        recent_actions = [a for a in all_recent if a.action_type not in _INTERNAL_ACTION_TYPES]
 
         from app.tasks._llm import llm_text
         from app.core.identity import identity_preamble
@@ -882,8 +896,8 @@ async def handle_insight_observation(payload: dict) -> dict:
             f"- [{e.section}] {e.label}: {e.content}" for e in profile_entries[:15]
         )
         action_summary = "\n".join(
-            f"- {a.action_type}: {a.description}" for a in recent_actions[:10]
-        )
+            f"- {a.description}" for a in recent_actions[:10]
+        ) or "No recent user actions."
 
         insight = await llm_text(
             system=(
