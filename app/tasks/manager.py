@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.config import get_settings
+from app.core.capabilities import get_capabilities, TOOL_CAPABILITY_MAP, resolve_capability_persona
 from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas
 
 logger = logging.getLogger(__name__)
@@ -279,8 +280,9 @@ async def manager_dispatch(payload: dict) -> dict:
     # ensure the response acknowledges the limitation. The LLM often
     # produces responses that gloss over failures — prepend a clear note.
     if failed_tools and response_text:
+        settings = get_settings()
         failure_summaries = [_tool_failure_user_message(
-            name) for name in failed_tools]
+            name, "your", settings.dashboard_url) for name in failed_tools]
         failure_note = " ".join(failure_summaries)
         # Only prepend if the response doesn't already mention the limitation
         limitation_keywords = ["can't search", "unable to search",
@@ -552,18 +554,19 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
 
-def _tool_failure_user_message(tool_name: str) -> str:
-    """Map tool names to user-friendly failure explanations. No technical details."""
+def _tool_failure_user_message(tool_name: str, persona_name: str = "your", dashboard_url: str = "") -> str:
+    """Map tool names to user-friendly failure explanations with persona and dashboard link."""
+    base = f"{dashboard_url}/connections" if dashboard_url else "/connections"
     messages = {
         "web_search": "I can't search the web right now — that feature isn't available at the moment.",
-        "send_email": "I can't send emails right now — the email connection needs to be set up.",
-        "read_emails": "I can't read your emails right now — the email connection needs to be set up.",
-        "list_events": "I can't check your calendar right now — the calendar connection needs to be set up.",
-        "create_event": "I can't create calendar events right now — the calendar connection needs to be set up.",
+        "send_email": f"I can't send emails — your {persona_name} persona doesn't have Gmail connected. Set it up at {base}",
+        "read_emails": f"I can't read your emails — your {persona_name} persona doesn't have Gmail connected. Set it up at {base}",
+        "list_events": f"I can't check your calendar — your {persona_name} persona doesn't have Google Calendar connected. Set it up at {base}",
+        "create_event": f"I can't create calendar events — your {persona_name} persona doesn't have Google Calendar connected. Set it up at {base}",
         "create_reminder": "I wasn't able to create that reminder.",
         "list_tasks": "I wasn't able to check your tasks.",
     }
-    return messages.get(tool_name, f"the {tool_name} tool isn't available right now.")
+    return messages.get(tool_name, f"This tool requires a connection that isn't set up yet. Visit {base} to connect it.")
 
 
 async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> dict:
@@ -582,6 +585,23 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
     user_id = payload.get("user_id", "")
     persona_id = payload.get("persona_id")
     persona_name = payload.get("persona", "shared")
+
+    # ── Capability pre-check (D-01): check cached capabilities before dispatch ──
+    required_cap = TOOL_CAPABILITY_MAP.get(tool_name)
+    if required_cap:
+        from app.queue.client import queue_client
+        r = queue_client._redis
+        if r is not None:
+            cap_persona_id = resolve_capability_persona(payload)
+            caps = await get_capabilities(r, user_id, cap_persona_id)
+            if not caps.get(required_cap, False):
+                settings = get_settings()
+                return {
+                    "error": "missing_capability",
+                    "user_message": _tool_failure_user_message(
+                        tool_name, persona_name or "your", settings.dashboard_url,
+                    ),
+                }
 
     try:
         if tool_name == "web_search":
@@ -811,11 +831,13 @@ async def _call_connections_tool(
             # D-07: Fallback when active persona lacks this connection
             if resp.status_code == 404:
                 display_name = persona_name or "your current persona"
+                dash_url = settings.dashboard_url
+                conn_url = f"{dash_url}/connections" if dash_url else "/connections"
                 return {
                     "error": "no_persona_connection",
                     "message": (
                         f"Your {display_name} persona doesn't have this service connected. "
-                        "Check your other personas or connect it from your dashboard settings."
+                        f"Check your other personas or connect it at {conn_url}"
                     ),
                 }
             resp.raise_for_status()
