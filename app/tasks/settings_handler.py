@@ -117,7 +117,8 @@ async def _handle_proactive(store, db, user_id: str, action: str, target: str, v
         return {"result": f"Quiet hours end set to {quiet['end']}:00."}
 
     elif target == "max_daily_messages":
-        settings["max_daily_messages"] = int(value) if value is not None else 3
+        from app.core.throttle import DEFAULT_MAX_PER_DAY
+        settings["max_daily_messages"] = int(value) if value is not None else DEFAULT_MAX_PER_DAY
         user.proactive_settings_json = json.dumps(settings)
         await db.commit()
         return {"result": f"Max daily proactive messages set to {settings['max_daily_messages']}."}
