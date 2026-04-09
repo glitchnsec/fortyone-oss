@@ -763,7 +763,7 @@ async def get_proactive_preferences(
             "description": CATEGORY_DESCRIPTIONS.get(cat.name, ""),
             "default_window_start": cat.window_start_hour,
             "default_window_end": cat.window_end_hour,
-            "enabled": override.enabled if has_override else True,
+            "enabled": override.enabled if has_override else cat.default_enabled,
             "window_start_hour": override.window_start_hour if has_override and override.window_start_hour is not None else cat.window_start_hour,
             "window_end_hour": override.window_end_hour if has_override and override.window_end_hour is not None else cat.window_end_hour,
             "has_override": has_override,

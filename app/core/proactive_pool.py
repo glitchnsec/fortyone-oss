@@ -33,6 +33,7 @@ class ProactiveCategory:
     days_of_week: Optional[set] = None  # None = all days, {6} = Sunday only
     cooldown_hours: int = 24            # min hours since last send of THIS category
     requires: str = "always"            # "always" | "has_goals" | "incomplete_profile" | "has_memories"
+    default_enabled: bool = False       # whether enabled by default for new users (no ProactivePreference row)
 
 
 # ─── Weight modifier functions ──────────────────────────────────────────────
@@ -117,6 +118,7 @@ DEFAULT_CATEGORIES = [
         base_weight=3,
         weight_fn=_profile_nudge_weight,
         requires="incomplete_profile",
+        default_enabled=True,
     ),
     ProactiveCategory(
         name="insight_observation",
@@ -146,6 +148,7 @@ DEFAULT_CATEGORIES = [
         weight_fn=_discovery_weight,
         cooldown_hours=48,  # At most every 2 days
         requires="always",
+        default_enabled=True,
     ),
 ]
 
@@ -432,10 +435,14 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
             )
         )
         pref = pref_result.scalars().first()
-        if pref and not pref.enabled:
+        # If explicit preference exists, respect it. Otherwise use category default.
+        is_enabled = pref.enabled if pref else cat.default_enabled
+        if not is_enabled:
             logger.info(
-                "POOL_SKIP_DISABLED user=%s category=%s",
+                "POOL_SKIP_DISABLED user=%s category=%s (pref=%s default=%s)",
                 user_id[:8], cat.name,
+                pref.enabled if pref else "none",
+                cat.default_enabled,
             )
             continue
 
