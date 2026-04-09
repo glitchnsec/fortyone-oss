@@ -554,15 +554,16 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
 
-def _tool_failure_user_message(tool_name: str, persona_name: str = "your", dashboard_url: str = "") -> str:
+def _tool_failure_user_message(tool_name: str, persona_name: str = "", dashboard_url: str = "") -> str:
     """Map tool names to user-friendly failure explanations with persona and dashboard link."""
     base = f"{dashboard_url}/connections" if dashboard_url else "/connections"
+    persona_label = f"your {persona_name} persona" if persona_name and persona_name not in ("your", "shared") else "your account"
     messages = {
         "web_search": "I can't search the web right now — that feature isn't available at the moment.",
-        "send_email": f"I can't send emails — your {persona_name} persona doesn't have Gmail connected. Set it up at {base}",
-        "read_emails": f"I can't read your emails — your {persona_name} persona doesn't have Gmail connected. Set it up at {base}",
-        "list_events": f"I can't check your calendar — your {persona_name} persona doesn't have Google Calendar connected. Set it up at {base}",
-        "create_event": f"I can't create calendar events — your {persona_name} persona doesn't have Google Calendar connected. Set it up at {base}",
+        "send_email": f"I can't send emails — {persona_label} doesn't have Gmail connected. Set it up at {base}",
+        "read_emails": f"I can't read your emails — {persona_label} doesn't have Gmail connected. Set it up at {base}",
+        "list_events": f"I can't check your calendar — {persona_label} doesn't have Google Calendar connected. Set it up at {base}",
+        "create_event": f"I can't create calendar events — {persona_label} doesn't have Google Calendar connected. Set it up at {base}",
         "create_reminder": "I wasn't able to create that reminder.",
         "list_tasks": "I wasn't able to check your tasks.",
     }
@@ -599,7 +600,7 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 return {
                     "error": "missing_capability",
                     "user_message": _tool_failure_user_message(
-                        tool_name, persona_name or "your", settings.dashboard_url,
+                        tool_name, persona_name, settings.dashboard_url,
                     ),
                 }
 
