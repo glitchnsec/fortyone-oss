@@ -46,6 +46,7 @@ STALE_JOB_THRESHOLD = 6 * 3600  # 6 hours — discard pool jobs older than this
 POOL_JOB_TYPES = {
     "morning_briefing", "evening_recap", "weekly_digest",
     "goal_coaching", "smart_checkin", "profile_nudge", "insight_observation",
+    "feature_discovery",
 }
 
 
@@ -178,6 +179,13 @@ async def scheduler_loop():
                         continue
 
                     await r.xadd(settings.queue_name, {"data": json.dumps(payload)})
+
+                    # Record category cooldown to prevent re-selection
+                    # during the next plan_day call.
+                    from app.core.proactive_pool import record_category_cooldown
+                    idem_category = payload.get("category", job_type)
+                    await record_category_cooldown(r, user_id, idem_category)
+
                     logger.info(
                         "SCHEDULED_DISPATCH  type=%s  user=%s",
                         payload.get("type"), user_id[:8],

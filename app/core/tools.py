@@ -64,7 +64,14 @@ UPDATE_SETTING_SCHEMA = {
                 },
                 "target": {
                     "type": "string",
-                    "description": "Setting key (e.g. 'quiet_hours_start', 'max_daily_messages') or item identifier (task title, goal title)",
+                    "description": (
+                        "Setting key or item identifier. "
+                        "For proactive scope: 'enabled' (global on/off toggle), "
+                        "'quiet_hours_start', 'quiet_hours_end', 'max_daily_messages', "
+                        "'preferred_channel', or a category name. "
+                        "Use target='enabled' with action='disable' to turn off ALL proactive messages. "
+                        "For task/goal scope: the task or goal title to match."
+                    ),
                 },
                 "value": {
                     "description": "New value. Type depends on setting: number for hours, string for names, boolean for toggles. Omit for complete/archive/delete actions.",

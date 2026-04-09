@@ -19,13 +19,22 @@ async def handle_scheduling(payload: dict) -> dict:
     context: dict = payload.get("context", {})
 
     memories: dict = context.get("memories", {})
-    now_str = datetime.now(timezone.utc).strftime("%A, %B %d %Y, %I:%M %p UTC")
+    user_tz_name = context.get("user", {}).get("timezone") or "America/New_York"
+
+    # Show time in user's local timezone so the LLM suggests local times
+    try:
+        import zoneinfo
+        user_tz = zoneinfo.ZoneInfo(user_tz_name)
+        now_local = datetime.now(user_tz)
+        now_str = now_local.strftime(f"%A, %B %d %Y, %I:%M %p ({user_tz_name})")
+    except Exception:
+        now_str = datetime.now(timezone.utc).strftime("%A, %B %d %Y, %I:%M %p UTC")
 
     # Build a compact preference summary
     pref_lines: list[str] = []
     relevant_keys = {
         "preferred_meeting_time", "preferred_days", "preferred_time_of_day",
-        "wake_up_time", "work_hours", "timezone",
+        "wake_up_time", "work_hours",
     }
     for k, v in memories.items():
         if k in relevant_keys:
@@ -36,11 +45,12 @@ async def handle_scheduling(payload: dict) -> dict:
     system = (
         "You are a personal executive assistant helping with scheduling. "
         "Be concise (2–3 sentences max). Reference the user's preferences when relevant. "
-        "Suggest specific times. Be proactive."
+        "Suggest specific times in the user's local timezone. Be proactive."
     )
 
     user_msg = (
-        f"Current time: {now_str}\n\n"
+        f"Current time: {now_str}\n"
+        f"User timezone: {user_tz_name}\n\n"
         f"Known preferences:\n{pref_block}\n\n"
         f"User says: \"{body}\""
     )

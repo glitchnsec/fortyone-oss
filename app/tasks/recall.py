@@ -47,15 +47,15 @@ async def handle_recall(payload: dict) -> dict:
     active_tasks: list = context.get("active_tasks", [])
     user_info: dict = context.get("user", {})
 
-    name = user_info.get("name") or memories.get("name")
-    timezone = user_info.get("timezone") or memories.get("timezone")
+    name = user_info.get("name")
+    tz = user_info.get("timezone")
 
     # Build structured context block for the LLM
     profile_parts = []
     if name:
         profile_parts.append(f"name={name}")
-    if timezone:
-        profile_parts.append(f"timezone={timezone}")
+    if tz:
+        profile_parts.append(f"timezone={tz}")
     profile_line = ", ".join(profile_parts) if profile_parts else "(no profile yet)"
 
     memory_lines = "\n".join(
@@ -80,8 +80,8 @@ async def handle_recall(payload: dict) -> dict:
     mock_parts = []
     if name:
         mock_parts.append(f"Your name is {name}.")
-    if timezone:
-        mock_parts.append(f"Your timezone is {timezone}.")
+    if tz:
+        mock_parts.append(f"Your timezone is {tz}.")
 
     stored_memories = {k: v for k, v in memories.items()
                        if k not in ("name", "timezone", "greeted", "onboarding_step")}
@@ -202,7 +202,7 @@ async def handle_general(payload: dict) -> dict:
     recent_msgs: list   = context.get("recent_messages", [])
     user_info: dict     = context.get("user", {})
 
-    name = user_info.get("name") or memories.get("name")
+    name = user_info.get("name")
     name_line = f"User's name: {name}" if name else ""
 
     memory_lines = "\n".join(

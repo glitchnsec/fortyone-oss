@@ -185,8 +185,10 @@ class MessagePipeline:
                 if is_confirmed:
                     status = "confirmed"
                     await self.store.resolve_pending_action(pending.id, status)
-                    # Queue the tool execution
-                    job_id = await self.queue.push_job({
+                    # Queue the tool execution — do NOT send an ACK here.
+                    # The worker result will be delivered by ResponseListener
+                    # (or the race pattern) as the single response message.
+                    await self.queue.push_job({
                         "channel": self.channel.name,
                         "address": address,
                         "phone": user.phone,
@@ -200,19 +202,20 @@ class MessagePipeline:
                             "params": json.loads(pending.action_params_json),
                         },
                     })
-                    ack_text = "Got it, I'm on it!"
+                    logger.info("CONFIRMATION_CONFIRMED  user=%s  action=%s", user.id[:8], pending.action_type)
+                    # Return without sending ACK — worker result is the response
+                    return
                 else:
                     status = "rejected"
                     await self.store.resolve_pending_action(pending.id, status)
                     ack_text = "No problem, I've cancelled that."
-
-                await self.channel.send(address, ack_text)
-                await self.store.store_message(
-                    user_id=user.id, direction="outbound", body=ack_text,
-                    state=MessageState.DONE.value, channel=self.channel.name,
-                )
-                logger.info("CONFIRMATION_%s  user=%s  action=%s", status.upper(), user.id[:8], pending.action_type)
-                return
+                    await self.channel.send(address, ack_text)
+                    await self.store.store_message(
+                        user_id=user.id, direction="outbound", body=ack_text,
+                        state=MessageState.DONE.value, channel=self.channel.name,
+                    )
+                    logger.info("CONFIRMATION_REJECTED  user=%s  action=%s", user.id[:8], pending.action_type)
+                    return
 
         # ── PERSONA DETECTION ────────────────────────────────────────────────
         user_personas = await self.store.get_personas(user.id)

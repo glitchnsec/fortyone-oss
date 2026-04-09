@@ -23,7 +23,11 @@ REMINDER_SYSTEM = (
     "'execute' if the user wants ME to do something at that time — e.g. 'tell me a joke', "
     "'send me the weather', 'text me a fun fact'), "
     "confirmation (one casual friendly sentence confirming the reminder). "
-    "Return valid JSON only. If time is relative (e.g. 'tomorrow at 3pm'), convert to absolute UTC. "
+    "Return valid JSON only. "
+    "IMPORTANT: The user speaks in their local timezone. When they say 'at noon' or 'at 3pm', "
+    "they mean that time in THEIR timezone (provided below). You must convert their local time "
+    "to UTC for the due_at field. For example, if the user is in America/New_York (UTC-4) and says "
+    "'at noon', due_at should be 2026-04-09T16:00:00Z (noon EDT = 4pm UTC). "
     "If time is ambiguous, pick the most sensible interpretation and mention it."
 )
 
@@ -175,7 +179,7 @@ async def handle_reminder(payload: dict) -> dict:
 
     now = datetime.now(timezone.utc)
     now_str = now.strftime("%Y-%m-%d %H:%M UTC")
-    tz = context.get("memories", {}).get("timezone", "America/New_York")
+    tz = context.get("user", {}).get("timezone") or "America/New_York"
 
     # Separate system instructions from user content — no f-string interpolation (D-10)
     messages = [
@@ -338,7 +342,14 @@ async def handle_reminder(payload: dict) -> dict:
 
         due_label = ""
         if due_at:
-            due_label = due_at.strftime(" — %a %b %-d at %-I:%M %p UTC")
+            try:
+                import zoneinfo
+                user_tz = zoneinfo.ZoneInfo(tz)
+                due_local = due_at.astimezone(user_tz)
+                tz_abbrev = due_local.strftime("%Z")  # e.g. "EDT", "PST"
+                due_label = due_local.strftime(f" — %a %b %-d at %-I:%M %p {tz_abbrev}")
+            except Exception:
+                due_label = due_at.strftime(" — %a %b %-d at %-I:%M %p UTC")
 
         confirmation = data.get("confirmation") or f"Reminder set: {data.get('task', body)}{due_label}"
 
