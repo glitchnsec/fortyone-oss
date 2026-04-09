@@ -42,6 +42,17 @@ async def _try_record_milestone(user_id: str, milestone_name: str):
         pass  # Non-critical -- milestones are advisory
 
 
+async def _invalidate_user_capabilities(user_id: str):
+    """Best-effort capability cache invalidation after connection changes (D-04)."""
+    try:
+        from app.core.capabilities import invalidate_capabilities
+        from app.queue.client import queue_client
+        if queue_client._redis:
+            await invalidate_capabilities(queue_client._redis, user_id)
+    except Exception as exc:
+        logger.warning("capabilities invalidation failed user=%s error=%s", str(user_id)[:8], exc)
+
+
 async def _get_db():
     async with AsyncSessionLocal() as session:
         yield session
@@ -240,6 +251,7 @@ async def initiate_connection(
             params={"user_id": user.id, "persona_id": body.persona_id},
         )
         resp.raise_for_status()
+        await _invalidate_user_capabilities(str(user.id))
         return resp.json()
     except httpx.HTTPError as e:
         logger.error("initiate error: %s", e)
@@ -265,6 +277,7 @@ async def update_connection(
                 raise HTTPException(403, "Not your connection")
         resp = await client.patch(f"/connections/{conn_id}", json=body)
         resp.raise_for_status()
+        await _invalidate_user_capabilities(str(user.id))
         return resp.json()
     except HTTPException:
         raise
@@ -285,6 +298,7 @@ async def delete_connection(
         if resp.status_code == 404:
             raise HTTPException(404, "Connection not found")
         resp.raise_for_status()
+        await _invalidate_user_capabilities(str(user.id))
     except httpx.HTTPError as e:
         logger.error("delete connection error: %s", e)
         raise HTTPException(502, "Connections service unavailable")
