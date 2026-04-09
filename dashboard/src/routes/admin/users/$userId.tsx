@@ -9,7 +9,7 @@
  *
  * Mutations: suspend, restore, soft-delete, hard-purge with toast feedback.
  */
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
@@ -27,6 +27,8 @@ import {
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -329,7 +331,7 @@ function UserDetailPage() {
 
         {/* Profile Tab */}
         <TabsContent value="profile" className="mt-4">
-          <ProfileTab user={user} />
+          <ProfileTab user={user} userId={userId} />
         </TabsContent>
 
         {/* Activity Tab */}
@@ -362,13 +364,70 @@ function UserDetailPage() {
 
 // --- Profile Tab -------------------------------------------------------------
 
-function ProfileTab({ user }: { user: UserDetail }) {
-  const fields: [string, string | number | boolean | null][] = [
-    ["Name", user.name],
-    ["Email", user.email],
-    ["Phone", user.phone],
-    ["Timezone", user.timezone],
-    ["Assistant Name", user.assistant_name],
+function ProfileTab({ user, userId }: { user: UserDetail; userId: string }) {
+  const queryClient = useQueryClient();
+  const [form, setForm] = useState({
+    name: user.name || "",
+    email: user.email || "",
+    phone: user.phone || "",
+    timezone: user.timezone || "",
+    assistant_name: user.assistant_name || "",
+    personality_notes: user.personality_notes || "",
+  });
+
+  useEffect(() => {
+    setForm({
+      name: user.name || "",
+      email: user.email || "",
+      phone: user.phone || "",
+      timezone: user.timezone || "",
+      assistant_name: user.assistant_name || "",
+      personality_notes: user.personality_notes || "",
+    });
+  }, [user]);
+
+  const allTimezones = (() => {
+    try { return Intl.supportedValuesOf("timeZone"); }
+    catch { return ["America/New_York", "America/Toronto", "America/Chicago", "America/Los_Angeles", "Europe/London", "Asia/Tokyo", "Australia/Sydney"]; }
+  })();
+
+  const updateMutation = useMutation({
+    mutationFn: async (body: Record<string, string>) => {
+      const res = await fetchWithAuth(`/api/v1/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) { const err = await res.json().catch(() => ({})); throw new Error(err.detail || "Update failed"); }
+      return res.json();
+    },
+    onSuccess: () => {
+      toast.success("Profile updated");
+      queryClient.invalidateQueries({ queryKey: ["admin", "user", userId] });
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const hasChanges =
+    form.name !== (user.name || "") ||
+    form.email !== (user.email || "") ||
+    form.phone !== (user.phone || "") ||
+    form.timezone !== (user.timezone || "") ||
+    form.assistant_name !== (user.assistant_name || "") ||
+    form.personality_notes !== (user.personality_notes || "");
+
+  const handleSave = () => {
+    const changes: Record<string, string> = {};
+    if (form.name !== (user.name || "")) changes.name = form.name;
+    if (form.email !== (user.email || "")) changes.email = form.email;
+    if (form.phone !== (user.phone || "")) changes.phone = form.phone;
+    if (form.timezone !== (user.timezone || "")) changes.timezone = form.timezone;
+    if (form.assistant_name !== (user.assistant_name || "")) changes.assistant_name = form.assistant_name;
+    if (form.personality_notes !== (user.personality_notes || "")) changes.personality_notes = form.personality_notes;
+    if (Object.keys(changes).length > 0) updateMutation.mutate(changes);
+  };
+
+  const readOnlyFields: [string, string | number | null][] = [
     ["Phone Verified", user.phone_verified ? "Yes" : "No"],
     ["Created", user.created_at ? formatDate(user.created_at) : null],
     ["Last Active", user.last_seen_at ? formatDate(user.last_seen_at) : null],
@@ -380,18 +439,58 @@ function ProfileTab({ user }: { user: UserDetail }) {
 
   return (
     <Card>
-      <CardContent>
+      <CardContent className="space-y-6 pt-6">
+        {/* Editable fields */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {fields.map(([label, value]) => (
+          <div className="space-y-1">
+            <Label className="text-sm text-neutral-500">Name</Label>
+            <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm text-neutral-500">Email</Label>
+            <Input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm text-neutral-500">Phone</Label>
+            <Input type="tel" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm text-neutral-500">Timezone</Label>
+            <select
+              value={form.timezone}
+              onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+              className="flex h-10 w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm"
+            >
+              {allTimezones.map((tz) => (
+                <option key={tz} value={tz}>{tz.replace(/_/g, " ")}</option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-sm text-neutral-500">Assistant Name</Label>
+            <Input value={form.assistant_name} onChange={(e) => setForm({ ...form, assistant_name: e.target.value })} />
+          </div>
+          <div className="space-y-1 sm:col-span-2">
+            <Label className="text-sm text-neutral-500">Personality Notes</Label>
+            <Input value={form.personality_notes} onChange={(e) => setForm({ ...form, personality_notes: e.target.value })} />
+          </div>
+        </div>
+
+        {hasChanges && (
+          <Button onClick={handleSave} disabled={updateMutation.isPending} className="bg-blue-600 hover:bg-blue-700">
+            {updateMutation.isPending && <span className="animate-spin mr-2">&#8635;</span>}
+            Save Changes
+          </Button>
+        )}
+
+        <Separator />
+
+        {/* Read-only stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+          {readOnlyFields.map(([label, value]) => (
             <div key={label}>
-              <span className="text-sm font-medium text-neutral-500">
-                {label}
-              </span>
-              <p className="text-sm text-neutral-900 mt-0.5">
-                {value !== null && value !== undefined
-                  ? String(value)
-                  : "---"}
-              </p>
+              <span className="text-sm font-medium text-neutral-500">{label}</span>
+              <p className="text-sm text-neutral-900 mt-0.5">{value !== null && value !== undefined ? String(value) : "---"}</p>
             </div>
           ))}
         </div>

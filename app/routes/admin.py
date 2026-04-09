@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import delete, distinct, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -289,6 +290,59 @@ async def restore_user(
     await db.commit()
     logger.info("USER_RESTORED user_id=%s by_admin=%s", user_id, admin.id)
     return {"status": "active"}
+
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    timezone: Optional[str] = None
+    assistant_name: Optional[str] = None
+    personality_notes: Optional[str] = None
+
+
+@router.patch("/users/{user_id}")
+async def update_user_profile(
+    user_id: str,
+    body: AdminUserUpdate,
+    admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(_get_db),
+):
+    """Admin: update a user's profile fields."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(404, "User not found")
+
+    if body.name is not None:
+        user.name = body.name
+    if body.email is not None:
+        user.email = body.email
+    if body.phone is not None:
+        user.phone = body.phone
+    if body.timezone is not None:
+        import zoneinfo
+        try:
+            zoneinfo.ZoneInfo(body.timezone)
+        except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+            raise HTTPException(400, f"Invalid timezone: '{body.timezone}'")
+        user.timezone = body.timezone
+    if body.assistant_name is not None:
+        user.assistant_name = body.assistant_name
+    if body.personality_notes is not None:
+        user.personality_notes = body.personality_notes
+
+    await db.commit()
+    logger.info("USER_PROFILE_UPDATED user_id=%s by_admin=%s fields=%s", user_id, admin.id, [k for k, v in body.model_dump().items() if v is not None])
+    return {
+        "ok": True,
+        "name": user.name,
+        "email": user.email,
+        "phone": user.phone,
+        "timezone": user.timezone,
+        "assistant_name": user.assistant_name,
+        "personality_notes": user.personality_notes,
+    }
 
 
 @router.delete("/users/{user_id}")
