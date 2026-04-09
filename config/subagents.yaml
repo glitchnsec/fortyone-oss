@@ -101,6 +101,12 @@ subagents:
           involves a future action or notification. The system will extract the
           task description and schedule delivery at the right time. Always use
           this tool — do not refuse or say you cannot set reminders.
+          IMPORTANT: Do NOT use this for multi-step goals, projects, or
+          achievements that require effort over time — use create_goal instead.
+          A reminder is a single nudge at a point in time ('call mom at 5pm').
+          A goal is something the user works toward ('publish 3 posts by Friday',
+          'lose 10 pounds', 'finish the proposal'). When in doubt, prefer
+          create_goal — goals can still have deadlines.
         parameters:
           type: object
           properties:
@@ -109,7 +115,7 @@ subagents:
               description: "What the user wants to be reminded about — use their words"
             due_at:
               type: string
-              description: "When to trigger the reminder, in ISO 8601 format. For relative times like 'in 5 minutes', compute from the current time provided in the system prompt. If unsure, leave null and the system will parse it."
+              description: "When to trigger the reminder, in ISO 8601 UTC format. The user speaks in their local timezone (shown in the system prompt). Convert their local time to UTC — e.g., if user is in America/New_York (UTC-4) and says 'at noon', use 2026-04-09T16:00:00Z. For relative times like 'in 5 minutes', compute from the current UTC time. If unsure, leave null and the system will parse it."
             action_type:
               type: string
               enum: ["notify", "execute"]
@@ -188,6 +194,11 @@ subagents:
           Create a new goal for the user. Use when the user shares something
           they want to achieve, a project they're working on, or a target
           they want to hit. Goals can have optional deadlines and descriptions.
+          Prefer this over create_reminder when the request involves multi-step
+          effort, measurable outcomes, or work over time. Examples: 'I need to
+          publish 3 LinkedIn posts by Friday', 'I want to run a 5K', 'finish
+          my resume this week'. After creating a goal, offer to help — break
+          it into steps, suggest a timeline, or coach the user through it.
         parameters:
           type: object
           properties:
