@@ -30,6 +30,51 @@ _tool_handlers: dict[str, str] | None = None
 # Risk classification per tool (populated on first load)
 TOOL_RISK: dict[str, str] = {}
 
+# update_setting requires confirmation (D-10)
+TOOL_RISK["update_setting"] = "medium"
+
+# Text-based settings tool (D-10, D-11) -- added directly (not from YAML)
+# because this is a core system tool, not a subagent capability.
+UPDATE_SETTING_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "update_setting",
+        "description": (
+            "Update a user setting or perform a task/goal action via text. "
+            "Covers: proactive preferences (quiet_hours, max_daily_messages, category toggles), "
+            "task management (complete, archive, delete a task by name/description), "
+            "goal management (update status to completed/archived), "
+            "user profile fields (name, timezone, assistant_name, personality_notes), "
+            "assistant profile (name, personality). "
+            "For complex settings like OAuth connections or persona creation, "
+            "return a dashboard link instead."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "scope": {
+                    "type": "string",
+                    "enum": ["proactive", "task", "goal", "profile", "assistant"],
+                    "description": "Which domain this setting belongs to",
+                },
+                "action": {
+                    "type": "string",
+                    "enum": ["update", "complete", "archive", "delete", "enable", "disable"],
+                    "description": "What to do",
+                },
+                "target": {
+                    "type": "string",
+                    "description": "Setting key (e.g. 'quiet_hours_start', 'max_daily_messages') or item identifier (task title, goal title)",
+                },
+                "value": {
+                    "description": "New value. Type depends on setting: number for hours, string for names, boolean for toggles. Omit for complete/archive/delete actions.",
+                },
+            },
+            "required": ["scope", "action", "target"],
+        },
+    },
+}
+
 
 def load_subagents() -> list[dict]:
     """Load and cache subagent definitions from YAML config."""
@@ -73,6 +118,9 @@ def get_tool_schemas() -> list[dict]:
                     "parameters": tool.get("parameters", {"type": "object", "properties": {}}),
                 },
             })
+
+    # Append core system tools not defined in YAML
+    schemas.append(UPDATE_SETTING_SCHEMA)
 
     _tool_schemas = schemas
     logger.info("Generated %d tool schemas", len(schemas))

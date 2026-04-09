@@ -713,6 +713,11 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 )
                 return {"result": f"Goals ({status_filter}):\n{goal_list}"}
 
+        elif tool_name == "update_setting":
+            from app.tasks.settings_handler import execute_setting_update
+            args = json.loads(tool_args_raw) if isinstance(tool_args_raw, str) else tool_args_raw
+            return await execute_setting_update(args, payload)
+
         # Custom agent dispatch — check if tool_name matches a user's custom agent
         elif tool_name.startswith("custom_"):
             return await _execute_custom_agent(tool_name, tool_args, payload)
