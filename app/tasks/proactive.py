@@ -86,10 +86,27 @@ async def _has_content_delta(store, user_id: str, category: str) -> bool:
     return True  # Unknown category -- default to sending
 
 
+def _compute_briefing_window_hours(task_count: int, calendar_event_count: int = 0) -> float:
+    """
+    Map task/calendar density to briefing window size in hours (D-05).
+
+    Busy = narrower window (focus on immediate). Light = wider window (more context).
+    """
+    total_items = task_count + calendar_event_count
+    if total_items >= 6:
+        return 2.0   # Busy -- focus on next 2 hours
+    elif total_items >= 3:
+        return 3.0   # Moderate -- next 3 hours
+    else:
+        return 4.5   # Light -- next 4-5 hours
+
+
 async def handle_morning_briefing(payload: dict) -> dict:
     """
     Morning briefing -- summarize the user's day ahead.
     Checks active tasks, goals, and (if available) calendar events.
+    Uses dynamic time window based on task density (D-05).
+    Handles remind task follow-ups and auto-archive (D-15).
     """
     user_id = payload.get("user_id", "")
     job_id = payload.get("job_id", "")
@@ -111,14 +128,58 @@ async def handle_morning_briefing(payload: dict) -> dict:
         tasks = await store.get_active_tasks(user_id)
         goals = await store.get_goals(user_id, status="active")
 
+        # D-05: Dynamic time-windowed briefing
+        now = datetime.now(timezone.utc)
+        window_hours = _compute_briefing_window_hours(len(tasks))
+        window_cutoff = now + timedelta(hours=window_hours)
+
+        # Filter tasks to within the window (tasks with due_at in the next N hours)
+        windowed_tasks = [
+            t for t in tasks
+            if t.due_at and t.due_at <= window_cutoff
+        ]
+        # Also include tasks with no due_at (they're always relevant)
+        no_deadline_tasks = [t for t in tasks if not t.due_at]
+        briefing_tasks = windowed_tasks + no_deadline_tasks[:3]  # Cap no-deadline at 3
+
+        # D-15: Check for overdue remind tasks that need follow-up
+        import json as _json
+        overdue_remind = []
+        for t in tasks:
+            if (t.due_at and t.due_at < now
+                    and not t.completed and not getattr(t, 'archived_at', None)):
+                metadata = {}
+                if t.metadata_json:
+                    try:
+                        metadata = _json.loads(t.metadata_json)
+                    except (ValueError, TypeError):
+                        pass
+                action_type = metadata.get("action_type", "notify")
+                if action_type == "notify":
+                    if not getattr(t, 'follow_up_sent_at', None):
+                        overdue_remind.append(t)
+                    elif t.follow_up_sent_at:
+                        # Follow-up was already sent -- auto-archive now (D-15)
+                        await store.archive_task(user_id, t.id)
+                        logger.info("AUTO_ARCHIVE_REMIND task=%s user=%s", t.id, user_id[:8])
+
+        # Include follow-up prompts in briefing
+        follow_up_section = ""
+        if overdue_remind:
+            follow_up_items = "\n".join(f"- {t.title}" for t in overdue_remind[:5])
+            follow_up_section = f"\n\nOverdue reminders to follow up on:\n{follow_up_items}"
+            # Mark follow-up sent
+            for t in overdue_remind[:5]:
+                await store.mark_follow_up_sent(user_id, t.id)
+
         # Build briefing via LLM
         from app.tasks._llm import llm_text
         from app.core.identity import identity_preamble
 
         task_summary = "\n".join(
             f"- {t.title} (due: {t.due_at.strftime('%I:%M %p') if t.due_at else 'no deadline'})"
-            for t in tasks[:10]
-        ) or "No pending tasks."
+            for t in briefing_tasks[:10]
+        ) or "No pending tasks in your upcoming window."
 
         goal_summary = "\n".join(
             f"- {g.title} ({g.framework}, {g.status})"
@@ -135,10 +196,11 @@ async def handle_morning_briefing(payload: dict) -> dict:
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Generate a brief morning briefing for today. "
+                    f"Generate a brief morning briefing for the next {window_hours:.0f} hours. "
                     f"Here's what's on the plate:\n\n"
                     f"Tasks:\n{task_summary}\n\n"
-                    f"Goals:\n{goal_summary}\n\n"
+                    f"Goals:\n{goal_summary}"
+                    f"{follow_up_section}\n\n"
                     f"Keep it under 200 words. Use a friendly tone."
                 ),
             }],
@@ -150,7 +212,7 @@ async def handle_morning_briefing(payload: dict) -> dict:
         await store.log_action(
             user_id=user_id,
             action_type="morning_briefing",
-            description=f"Sent morning briefing with {len(tasks)} tasks and {len(goals)} goals",
+            description=f"Sent morning briefing ({window_hours:.0f}h window) with {len(briefing_tasks)} tasks and {len(goals)} goals",
             outcome="success",
             trigger="scheduled",
         )
@@ -477,9 +539,18 @@ async def handle_task_reminder(payload: dict) -> dict:
                 "EXECUTE_REMINDER  task_id=%s  user=%s  title=%r",
                 task_id, user_id[:8], reminder_title[:60],
             )
-            return await _execute_reminder_via_manager(
+            result = await _execute_reminder_via_manager(
                 user_id, task_id, reminder_title, phone, payload
             )
+            # D-14: Auto-archive execute tasks immediately after execution
+            try:
+                async with AsyncSessionLocal() as archive_db:
+                    archive_store = MemoryStore(archive_db)
+                    await archive_store.archive_task(user_id, task_id)
+                    logger.info("AUTO_ARCHIVE_EXECUTE task=%s user=%s", task_id, user_id[:8])
+            except Exception:
+                logger.warning("AUTO_ARCHIVE_FAILED task=%s user=%s", task_id, user_id[:8], exc_info=True)
+            return result
 
         response = f"Reminder: {reminder_title}"
 
