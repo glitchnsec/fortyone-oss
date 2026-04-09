@@ -30,8 +30,23 @@ function RegisterPage() {
   const fromSlack = searchParams.get("from") === "slack";
   const slackId = searchParams.get("slack_id") || "";
 
-  // Auto-detect timezone from browser
+  // Auto-detect timezone from browser + build full IANA list
   const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const allTimezones = (() => {
+    try {
+      return Intl.supportedValuesOf("timeZone");
+    } catch {
+      // Fallback for older browsers
+      return [
+        "Pacific/Honolulu", "America/Anchorage", "America/Los_Angeles",
+        "America/Denver", "America/Chicago", "America/New_York",
+        "America/Toronto", "America/Halifax", "America/St_Johns",
+        "America/Sao_Paulo", "Europe/London", "Europe/Paris",
+        "Europe/Helsinki", "Asia/Dubai", "Asia/Kolkata", "Asia/Shanghai",
+        "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland",
+      ];
+    }
+  })();
 
   const {
     register,
@@ -157,24 +172,11 @@ function RegisterPage() {
                 {...register("timezone", { required: "Timezone is required." })}
                 className="flex h-10 w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2"
               >
-                <option value="Pacific/Honolulu">Hawaii (HST)</option>
-                <option value="America/Anchorage">Alaska (AKST)</option>
-                <option value="America/Los_Angeles">Pacific (PST)</option>
-                <option value="America/Denver">Mountain (MST)</option>
-                <option value="America/Chicago">Central (CST)</option>
-                <option value="America/New_York">Eastern (EST)</option>
-                <option value="America/Halifax">Atlantic (AST)</option>
-                <option value="America/St_Johns">Newfoundland (NST)</option>
-                <option value="America/Sao_Paulo">Brasilia (BRT)</option>
-                <option value="Europe/London">London (GMT)</option>
-                <option value="Europe/Paris">Central Europe (CET)</option>
-                <option value="Europe/Helsinki">Eastern Europe (EET)</option>
-                <option value="Asia/Dubai">Gulf (GST)</option>
-                <option value="Asia/Kolkata">India (IST)</option>
-                <option value="Asia/Shanghai">China (CST)</option>
-                <option value="Asia/Tokyo">Japan (JST)</option>
-                <option value="Australia/Sydney">Sydney (AEST)</option>
-                <option value="Pacific/Auckland">New Zealand (NZST)</option>
+                {allTimezones.map((tz) => (
+                  <option key={tz} value={tz}>
+                    {tz.replace(/_/g, " ")}
+                  </option>
+                ))}
               </select>
               <span className="text-xs text-neutral-400">Auto-detected from your browser</span>
             </div>
