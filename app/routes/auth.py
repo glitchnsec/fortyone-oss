@@ -48,6 +48,8 @@ class RegisterInput(BaseModel):
     email: EmailStr
     phone: str
     password: str
+    name: str | None = None  # How the user wants to be addressed
+    timezone: str | None = None  # IANA timezone (e.g. "America/New_York"), auto-detected by browser
     slack_user_id: str | None = None  # Optional: auto-link Slack on registration
 
 
@@ -97,6 +99,10 @@ async def register(body: RegisterInput, response: Response, db: AsyncSession = D
         # Upgrade SMS-only user → full account (preserves messages, memories, tasks)
         sms_user.email = body.email
         sms_user.password_hash = _hash_password(body.password)
+        if body.name:
+            sms_user.name = body.name
+        if body.timezone:
+            sms_user.timezone = body.timezone
         await db.commit()
         await db.refresh(sms_user)
         user = sms_user
@@ -107,6 +113,8 @@ async def register(body: RegisterInput, response: Response, db: AsyncSession = D
             email=body.email,
             phone=body.phone,
             password_hash=_hash_password(body.password),
+            name=body.name,
+            timezone=body.timezone or "America/New_York",
         )
         db.add(user)
         await db.commit()

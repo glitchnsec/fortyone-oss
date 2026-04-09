@@ -1,6 +1,8 @@
 import { createFileRoute, Link, useNavigate, useRouter } from "@tanstack/react-router";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, Controller } from "react-hook-form";
+import PhoneInput, { isValidPhoneNumber } from "react-phone-number-input";
+import "react-phone-number-input/style.css";
 import { Card, CardContent, CardHeader } from "../../components/ui/card";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -11,9 +13,11 @@ export const Route = createFileRoute("/auth/register")({ component: RegisterPage
 
 interface RegisterForm {
   email: string;
+  name: string;
   phone: string;
   password: string;
   confirmPassword: string;
+  timezone: string;
 }
 
 function RegisterPage() {
@@ -26,15 +30,21 @@ function RegisterPage() {
   const fromSlack = searchParams.get("from") === "slack";
   const slackId = searchParams.get("slack_id") || "";
 
+  // Auto-detect timezone from browser
+  const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+
   const {
     register,
     handleSubmit,
     watch,
+    control,
     formState: { errors, isSubmitting },
   } = useForm<RegisterForm>({
     defaultValues: {
       email: prefillEmail,
       phone: prefillPhone,
+      name: "",
+      timezone: detectedTimezone || "America/New_York",
     },
   });
   const [serverError, setServerError] = useState<string | null>(null);
@@ -49,6 +59,8 @@ function RegisterPage() {
       email: data.email,
       phone: data.phone,
       password: data.password,
+      name: data.name,
+      timezone: data.timezone,
     };
     // Pass slack_user_id for auto-linking (D-04)
     if (fromSlack && slackId) {
@@ -83,6 +95,21 @@ function RegisterPage() {
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
             <div className="flex flex-col gap-2">
+              <Label htmlFor="name">What should we call you?</Label>
+              <Input
+                id="name"
+                type="text"
+                placeholder="e.g. KC, Sarah, Dr. Smith"
+                {...register("name", { required: "We need a name to address you by." })}
+                aria-describedby={errors.name ? "name-error" : undefined}
+              />
+              {errors.name && (
+                <span id="name-error" className="text-sm text-red-600">
+                  {errors.name.message}
+                </span>
+              )}
+            </div>
+            <div className="flex flex-col gap-2">
               <Label htmlFor="email">Email</Label>
               <Input
                 id="email"
@@ -98,24 +125,58 @@ function RegisterPage() {
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="phone">Phone number</Label>
-              <Input
-                id="phone"
-                type="tel"
-                placeholder="+1 555 000 0000"
-                {...register("phone", {
+              <Controller
+                name="phone"
+                control={control}
+                rules={{
                   required: "This field is required.",
-                  pattern: {
-                    value: /^\+?[1-9]\d{1,14}$/,
-                    message: "Enter a valid phone number (e.g. +15550001234).",
-                  },
-                })}
-                aria-describedby={errors.phone ? "phone-error" : undefined}
+                  validate: (v) => (v && isValidPhoneNumber(v)) || "Enter a valid phone number.",
+                }}
+                render={({ field }) => (
+                  <PhoneInput
+                    {...field}
+                    id="phone"
+                    defaultCountry="US"
+                    international
+                    countryCallingCodeEditable={false}
+                    className="flex h-10 w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm ring-offset-white focus-within:ring-2 focus-within:ring-neutral-950 focus-within:ring-offset-2"
+                    aria-describedby={errors.phone ? "phone-error" : undefined}
+                  />
+                )}
               />
               {errors.phone && (
                 <span id="phone-error" className="text-sm text-red-600">
                   {errors.phone.message}
                 </span>
               )}
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="timezone">Your timezone</Label>
+              <select
+                id="timezone"
+                {...register("timezone", { required: "Timezone is required." })}
+                className="flex h-10 w-full rounded-md border border-neutral-200 bg-white px-3 py-2 text-sm ring-offset-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-neutral-950 focus-visible:ring-offset-2"
+              >
+                <option value="Pacific/Honolulu">Hawaii (HST)</option>
+                <option value="America/Anchorage">Alaska (AKST)</option>
+                <option value="America/Los_Angeles">Pacific (PST)</option>
+                <option value="America/Denver">Mountain (MST)</option>
+                <option value="America/Chicago">Central (CST)</option>
+                <option value="America/New_York">Eastern (EST)</option>
+                <option value="America/Halifax">Atlantic (AST)</option>
+                <option value="America/St_Johns">Newfoundland (NST)</option>
+                <option value="America/Sao_Paulo">Brasilia (BRT)</option>
+                <option value="Europe/London">London (GMT)</option>
+                <option value="Europe/Paris">Central Europe (CET)</option>
+                <option value="Europe/Helsinki">Eastern Europe (EET)</option>
+                <option value="Asia/Dubai">Gulf (GST)</option>
+                <option value="Asia/Kolkata">India (IST)</option>
+                <option value="Asia/Shanghai">China (CST)</option>
+                <option value="Asia/Tokyo">Japan (JST)</option>
+                <option value="Australia/Sydney">Sydney (AEST)</option>
+                <option value="Pacific/Auckland">New Zealand (NZST)</option>
+              </select>
+              <span className="text-xs text-neutral-400">Auto-detected from your browser</span>
             </div>
             <div className="flex flex-col gap-2">
               <Label htmlFor="password">Password</Label>
