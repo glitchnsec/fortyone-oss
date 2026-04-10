@@ -599,6 +599,16 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
             return f"update your {target.replace('_', ' ')} to \"{value}\""
         else:
             return f"update your {scope} settings"
+    elif tool_name.startswith("mcp_"):
+        # MCP tools are namespaced: mcp_{conn_id_short}_{original_name}
+        parts = tool_name.split("_", 2)
+        display_name = parts[2].replace("_", " ").replace("-", " ") if len(parts) > 2 else tool_name
+        # Summarize args if any are meaningful
+        meaningful = {k: v for k, v in args.items() if v} if isinstance(args, dict) else {}
+        if meaningful:
+            summary = ", ".join(f"{k}: {str(v)[:40]}" for k, v in list(meaningful.items())[:3])
+            return f"use {display_name} ({summary})"
+        return f"use {display_name}"
     else:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 

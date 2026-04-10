@@ -37,16 +37,25 @@ async def route_job(payload: dict) -> dict:
                 trigger="user_request",
             )
 
-        response = tool_result.get("result", tool_result.get("results", json.dumps(tool_result)))
-        if isinstance(response, dict):
-            response = json.dumps(response)
+        # Extract user-friendly response from tool result
+        if "error" in tool_result:
+            # Tool failed — use user_message if available, otherwise generic
+            response = tool_result.get(
+                "user_message",
+                "Sorry, I wasn't able to complete that action. Please try again later.",
+            )
+        else:
+            response = tool_result.get("result", tool_result.get("results", ""))
+            if isinstance(response, dict):
+                response = json.dumps(response)
+            response = f"Done! {str(response)[:300]}" if response else "Done!"
         return {
             "job_id": payload.get("job_id", ""),
             "phone": payload.get("phone", ""),
             "address": payload.get("address", payload.get("phone", "")),
             "channel": payload.get("channel", "sms"),
             "user_id": payload.get("user_id", ""),
-            "response": f"Done! {str(response)[:300]}",
+            "response": response,
         }
 
     intent_str: str = payload.get("intent", "general")
