@@ -120,6 +120,48 @@ async def list_capabilities(
             "persona_status": persona_status,
         })
 
+    # Add MCP connections as dynamic capability entries
+    # Group MCP connections by server URL to avoid duplicates across personas
+    mcp_servers: dict[str, dict] = {}  # server_url -> {tools, persona_statuses}
+    for conn in connections:
+        if conn.get("execution_type") != "mcp" or conn.get("provider") != "mcp":
+            continue
+        server_url = conn.get("mcp_server_url", "")
+        display_name = conn.get("display_name", "MCP Server")
+        if server_url not in mcp_servers:
+            mcp_servers[server_url] = {
+                "display_name": display_name,
+                "tools": [],
+                "persona_ids_connected": set(),
+            }
+            # Build tool list from mcp_tools
+            for tool in conn.get("mcp_tools", []):
+                tool_name = tool.get("name", "")
+                if tool_name:
+                    mcp_servers[server_url]["tools"].append({
+                        "name": tool_name,
+                        "description": tool.get("description", ""),
+                        "risk_level": "medium",
+                    })
+        if conn.get("status") == "connected":
+            mcp_servers[server_url]["persona_ids_connected"].add(conn.get("persona_id", ""))
+
+    for server_url, server_info in mcp_servers.items():
+        persona_status = []
+        for p in personas:
+            status = "connected" if p.id in server_info["persona_ids_connected"] else "disconnected"
+            persona_status.append({
+                "persona_id": p.id,
+                "persona_name": p.name,
+                "status": status,
+            })
+        capabilities.append({
+            "name": f"mcp_{server_info['display_name'].lower()}",
+            "description": f"MCP Server: {server_info['display_name']} ({server_url})",
+            "tools": server_info["tools"],
+            "persona_status": persona_status,
+        })
+
     return {"capabilities": capabilities}
 
 

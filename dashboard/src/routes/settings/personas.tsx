@@ -71,6 +71,9 @@ interface Connection {
   status: string;
   persona_id: string | null;
   capabilities?: Record<string, boolean>;
+  display_name?: string;
+  mcp_server_url?: string;
+  mcp_tools?: Array<{ name: string; description?: string }>;
 }
 
 interface ConnectionsResponse {
@@ -486,9 +489,12 @@ function PersonasSettingsPage() {
                         <div key={conn.id} className="flex items-center justify-between py-1.5 px-2 rounded bg-neutral-50">
                           <div className="flex items-center gap-2">
                             <div className="flex h-6 w-6 items-center justify-center rounded bg-white border border-neutral-200 text-xs font-semibold text-neutral-600">
-                              {conn.provider.charAt(0).toUpperCase()}
+                              {(conn.display_name ?? conn.provider).charAt(0).toUpperCase()}
                             </div>
-                            <span className="text-sm text-neutral-700 capitalize">{conn.provider}</span>
+                            <span className="text-sm text-neutral-700 capitalize">{conn.display_name ?? conn.provider}</span>
+                            {conn.provider === "mcp" && conn.mcp_tools && (
+                              <span className="text-xs text-neutral-400">{conn.mcp_tools.length} tool{conn.mcp_tools.length !== 1 ? "s" : ""}</span>
+                            )}
                             {/* Status badge */}
                             {conn.status === "connected" && (
                               <Badge className="bg-green-100 text-green-700 hover:bg-green-100 text-xs">Connected</Badge>
@@ -505,14 +511,14 @@ function PersonasSettingsPage() {
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <button className="text-xs text-neutral-400 hover:text-red-600 underline-offset-2 hover:underline">
-                                  Disconnect {conn.provider}
+                                  Disconnect {conn.display_name ?? conn.provider}
                                 </button>
                               </AlertDialogTrigger>
                               <AlertDialogContent>
                                 <AlertDialogHeader>
-                                  <AlertDialogTitle>Disconnect {conn.provider}?</AlertDialogTitle>
+                                  <AlertDialogTitle>Disconnect {conn.display_name ?? conn.provider}?</AlertDialogTitle>
                                   <AlertDialogDescription>
-                                    Your assistant will lose access to {conn.provider} for your {persona.name} persona. You can reconnect at any time.
+                                    Your assistant will lose access to {conn.display_name ?? conn.provider} for your {persona.name} persona. You can reconnect at any time.
                                   </AlertDialogDescription>
                                 </AlertDialogHeader>
                                 <AlertDialogFooter>
@@ -521,7 +527,7 @@ function PersonasSettingsPage() {
                                     onClick={() => disconnectMutation.mutate(conn.id)}
                                     className="bg-red-600 hover:bg-red-700"
                                   >
-                                    Disconnect {conn.provider}
+                                    Disconnect {conn.display_name ?? conn.provider}
                                   </AlertDialogAction>
                                 </AlertDialogFooter>
                               </AlertDialogContent>
