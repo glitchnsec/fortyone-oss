@@ -386,18 +386,27 @@ async def execute_mcp_tool(body: MCPExecuteInput, db: AsyncSession = Depends(_ge
             headers=auth_headers,
         )
     except MCPError as exc:
-        return {"error": "mcp_execution_failed", "detail": str(exc)}
+        logger.warning(
+            "MCP tool error connection_id=%s tool=%s error=%s",
+            body.connection_id, body.tool_name, exc,
+        )
+        return {
+            "error": "mcp_execution_failed",
+            "detail": str(exc),
+            "user_message": f"The MCP server returned an error for '{body.tool_name}': {exc.message}",
+        }
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(
             "MCP execution failed connection_id=%s tool=%s error=%s",
-            body.connection_id,
-            body.tool_name,
-            exc,
-            exc_info=True,
+            body.connection_id, body.tool_name, exc, exc_info=True,
         )
-        return {"error": "mcp_execution_failed", "detail": str(exc)}
+        return {
+            "error": "mcp_execution_failed",
+            "detail": str(exc),
+            "user_message": f"Something went wrong while running '{body.tool_name}'. Please try again.",
+        }
     return {"result": tool_result}
 
 

@@ -299,7 +299,25 @@ async def mcp_call(
     if content_length > MAX_RESPONSE_BYTES:
         raise MCPError(-1, f"Response too large: {content_length} bytes (max {MAX_RESPONSE_BYTES})")
 
-    resp.raise_for_status()
+    # Extract error details from response body before raising on HTTP errors.
+    # MCP servers often return JSON error details in 4xx/5xx responses.
+    if resp.status_code >= 400:
+        error_detail = f"HTTP {resp.status_code}"
+        try:
+            err_body = resp.json()
+            if isinstance(err_body, dict):
+                # JSON-RPC error or plain error object
+                err_msg = (
+                    err_body.get("error", {}).get("message")
+                    if isinstance(err_body.get("error"), dict)
+                    else err_body.get("message") or err_body.get("error") or str(err_body)
+                )
+                if err_msg:
+                    error_detail = f"HTTP {resp.status_code}: {str(err_msg)[:200]}"
+        except Exception:
+            if resp.text:
+                error_detail = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        raise MCPError(resp.status_code, error_detail)
     response_session_id = resp.headers.get("Mcp-Session-Id")
     data: dict[str, Any] = {}
     if resp.content:
