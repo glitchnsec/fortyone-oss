@@ -553,6 +553,12 @@ def _build_system_prompt(payload: dict) -> str:
     # Add persona context
     if persona and persona != "shared":
         parts.append(f"\nCurrent persona context: {persona}")
+    else:
+        parts.append(
+            "\nNo specific persona detected. If the same tool (e.g. Notion search) exists on "
+            "multiple personas, default to searching the most relevant one. If the user says "
+            "'both', 'all', or 'check everything', call the tool on each persona sequentially."
+        )
 
     # Cross-persona tool hints (tools available on other personas)
     cross_hints = payload.get("_cross_persona_hints", "")
