@@ -335,10 +335,11 @@ async def get_cross_persona_tool_hints(
             pass
 
         lines = [
-            "CROSS-PERSONA TOOLS: The following tools are available on OTHER personas "
-            "(not the current one). If the user's request matches one of these, suggest "
-            "they switch persona — e.g., 'That tool is available on your Personal persona. "
-            "Want me to use that one instead?'",
+            "IMPORTANT — CROSS-PERSONA TOOLS: The following tools exist on OTHER personas "
+            "(not the current one). BEFORE saying you can't do something, check this list. "
+            "If any tool here could fulfill the user's request, tell them: "
+            "'I can do that through your [Persona] persona. Want me to switch?' "
+            "NEVER say 'I don't have a tool for that' if a matching tool exists on another persona.",
         ]
         for pid, tool_list in other_persona_tools.items():
             name = persona_names.get(pid, pid)
