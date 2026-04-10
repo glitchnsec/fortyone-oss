@@ -6,6 +6,7 @@ from app.database import engine, Base
 from app.routes.oauth import router as oauth_router
 from app.routes.connections import router as conn_router
 from app.routes.tools import router as tools_router
+from app.routes.mcp import router as mcp_router
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -68,3 +69,4 @@ app = FastAPI(title="Connections Service", lifespan=lifespan)
 app.include_router(oauth_router, tags=["OAuth"])
 app.include_router(conn_router, tags=["Connections"])
 app.include_router(tools_router, tags=["Tools"])
+app.include_router(mcp_router, tags=["MCP"])
