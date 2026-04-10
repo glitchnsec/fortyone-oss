@@ -44,6 +44,9 @@ interface Connection {
   status: string;
   persona_id: string | null;
   error_message?: string;
+  execution_type?: string;
+  capabilities?: { tools?: string[] };
+  mcp_tools?: { name: string; description?: string; inputSchema?: Record<string, unknown> }[];
 }
 
 interface ConnectionsResponse {
@@ -189,26 +192,40 @@ function ConnectionsPage() {
 // ---- Read-only connection card ----
 
 function ReadOnlyConnectionCard({ connection }: { connection: Connection }) {
-  const providerName = connection.provider.charAt(0).toUpperCase() + connection.provider.slice(1);
+  const isMcp = connection.provider === "mcp";
+  const providerName = isMcp ? "MCP Server" : connection.provider.charAt(0).toUpperCase() + connection.provider.slice(1);
+  const iconLetter = isMcp ? "M" : providerName.charAt(0);
+
+  // Tool count: prefer mcp_tools length, fall back to capabilities.tools
+  const toolCount = isMcp
+    ? (connection.mcp_tools?.length ?? connection.capabilities?.tools?.length ?? 0)
+    : 0;
 
   return (
     <Card className="border border-neutral-200 bg-neutral-50">
       <CardHeader className="flex flex-row items-center justify-between pb-2">
-        <div className="flex h-8 w-8 items-center justify-center rounded-md bg-white border border-neutral-200 text-xs font-semibold text-neutral-600">
-          {providerName.charAt(0)}
+        <div className={`flex h-8 w-8 items-center justify-center rounded-md bg-white border border-neutral-200 text-xs font-semibold ${isMcp ? "text-purple-600 border-purple-200" : "text-neutral-600"}`}>
+          {iconLetter}
         </div>
-        {connection.status === "connected" && (
-          <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Connected</Badge>
-        )}
-        {connection.status === "needs_reauth" && (
-          <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">Needs reauth</Badge>
-        )}
-        {connection.status === "error" && (
-          <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Error</Badge>
-        )}
-        {connection.status === "not_connected" && (
-          <Badge variant="outline" className="text-neutral-500">Not connected</Badge>
-        )}
+        <div className="flex items-center gap-2">
+          {isMcp && toolCount > 0 && (
+            <Badge variant="outline" className="text-purple-600 border-purple-200 text-xs">
+              {toolCount} tool{toolCount !== 1 ? "s" : ""}
+            </Badge>
+          )}
+          {connection.status === "connected" && (
+            <Badge className="bg-green-100 text-green-700 hover:bg-green-100">Connected</Badge>
+          )}
+          {connection.status === "needs_reauth" && (
+            <Badge className="bg-yellow-100 text-yellow-700 hover:bg-yellow-100">Needs reauth</Badge>
+          )}
+          {connection.status === "error" && (
+            <Badge className="bg-red-100 text-red-700 hover:bg-red-100">Error</Badge>
+          )}
+          {connection.status === "not_connected" && (
+            <Badge variant="outline" className="text-neutral-500">Not connected</Badge>
+          )}
+        </div>
       </CardHeader>
       <CardContent>
         <p className="text-sm font-medium text-neutral-900">{providerName}</p>

@@ -11,7 +11,7 @@ import { useState, useEffect } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, Pencil, X, Check } from "lucide-react";
+import { Loader2, Plus, Trash2, Pencil, X, Check, Server } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,21 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { fetchWithAuth } from "@/lib/api";
 
 export const Route = createFileRoute("/settings/personas")({
@@ -69,6 +84,7 @@ function PersonasSettingsPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [connectingPersonaId, setConnectingPersonaId] = useState<string | null>(null);
+  const [mcpDialogPersonaId, setMcpDialogPersonaId] = useState<string | null>(null);
 
   // Create form state
   const [name, setName] = useState("");
@@ -122,6 +138,49 @@ function PersonasSettingsPage() {
       queryClient.invalidateQueries({ queryKey: ["connections"] });
     },
     onError: () => toast.error("Failed to disconnect. Please try again."),
+  });
+
+  const mcpConnectMutation = useMutation({
+    mutationFn: async ({
+      personaId,
+      serverUrl,
+      authType,
+      apiKey,
+      name: mcpName,
+    }: {
+      personaId: string;
+      serverUrl: string;
+      authType: string;
+      apiKey?: string;
+      name?: string;
+    }) => {
+      const res = await fetchWithAuth("/api/v1/mcp/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          persona_id: personaId,
+          server_url: serverUrl,
+          auth_type: authType,
+          api_key: apiKey || undefined,
+          name: mcpName || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({})) as { detail?: string; error?: string };
+        throw new Error(err.detail ?? err.error ?? "Failed to connect MCP server");
+      }
+      return res.json() as Promise<{ id: string; tools: string[]; warnings?: string[] }>;
+    },
+    onSuccess: (data) => {
+      const toolCount = data.tools?.length ?? 0;
+      toast.success(`MCP server connected with ${toolCount} tool${toolCount !== 1 ? "s" : ""}.`);
+      if (data.warnings?.length) {
+        toast.warning(`Warnings: ${data.warnings.join(", ")}`);
+      }
+      setMcpDialogPersonaId(null);
+      queryClient.invalidateQueries({ queryKey: ["connections"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
   });
 
   const createMutation = useMutation({
@@ -469,46 +528,189 @@ function PersonasSettingsPage() {
                       ))}
                     </div>
                   )}
-                  {/* Add / Reconnect button -- per D-01, one connection per provider per persona */}
-                  {(() => {
-                    const existingGoogle = getPersonaConnections(persona.id).find(
-                      (c) => c.provider === "google" && c.status === "connected"
-                    );
-                    return existingGoogle ? (
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="min-h-[44px] w-full"
-                        onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
-                        disabled={connectingPersonaId === persona.id}
-                      >
-                        {connectingPersonaId === persona.id ? (
-                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reconnecting...</>
-                        ) : (
-                          <>Reconnect Google</>
-                        )}
-                      </Button>
-                    ) : (
-                      <Button
-                        size="sm"
-                        className="bg-blue-600 hover:bg-blue-700 min-h-[44px] w-full"
-                        onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
-                        disabled={connectingPersonaId === persona.id}
-                      >
-                        {connectingPersonaId === persona.id ? (
-                          <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
-                        ) : (
-                          <><Plus className="mr-2 h-4 w-4" />Add Connection</>
-                        )}
-                      </Button>
-                    );
-                  })()}
+                  {/* Add / Reconnect buttons -- per D-01, one connection per provider per persona */}
+                  <div className="flex gap-2">
+                    {(() => {
+                      const existingGoogle = getPersonaConnections(persona.id).find(
+                        (c) => c.provider === "google" && c.status === "connected"
+                      );
+                      return existingGoogle ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-[44px] flex-1"
+                          onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
+                          disabled={connectingPersonaId === persona.id}
+                        >
+                          {connectingPersonaId === persona.id ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reconnecting...</>
+                          ) : (
+                            <>Reconnect Google</>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700 min-h-[44px] flex-1"
+                          onClick={() => initiateConnectionMutation.mutate({ provider: "google", personaId: persona.id })}
+                          disabled={connectingPersonaId === persona.id}
+                        >
+                          {connectingPersonaId === persona.id ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
+                          ) : (
+                            <><Plus className="mr-2 h-4 w-4" />Add Google</>
+                          )}
+                        </Button>
+                      );
+                    })()}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="min-h-[44px] flex-1"
+                      onClick={() => setMcpDialogPersonaId(persona.id)}
+                    >
+                      <Server className="mr-2 h-4 w-4" />
+                      Add MCP Server
+                    </Button>
+                  </div>
                 </div>
               )}
             </CardContent>
           </Card>
         ))}
       </div>
+
+      {/* MCP Connect Dialog */}
+      <MCPConnectDialog
+        personaId={mcpDialogPersonaId}
+        onClose={() => setMcpDialogPersonaId(null)}
+        onConnect={(data) => mcpConnectMutation.mutate(data)}
+        isPending={mcpConnectMutation.isPending}
+      />
     </div>
+  );
+}
+
+// ---- MCP Connect Dialog ----
+
+function MCPConnectDialog({
+  personaId,
+  onClose,
+  onConnect,
+  isPending,
+}: {
+  personaId: string | null;
+  onClose: () => void;
+  onConnect: (data: {
+    personaId: string;
+    serverUrl: string;
+    authType: string;
+    apiKey?: string;
+    name?: string;
+  }) => void;
+  isPending: boolean;
+}) {
+  const [serverUrl, setServerUrl] = useState("");
+  const [mcpName, setMcpName] = useState("");
+  const [authType, setAuthType] = useState("none");
+  const [apiKey, setApiKey] = useState("");
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!personaId || !serverUrl.trim()) return;
+    onConnect({
+      personaId,
+      serverUrl: serverUrl.trim(),
+      authType,
+      apiKey: authType === "api_key" ? apiKey : undefined,
+      name: mcpName.trim() || undefined,
+    });
+  };
+
+  const handleOpenChange = (open: boolean) => {
+    if (!open) {
+      setServerUrl("");
+      setMcpName("");
+      setAuthType("none");
+      setApiKey("");
+      onClose();
+    }
+  };
+
+  return (
+    <Dialog open={personaId !== null} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Add MCP Server</DialogTitle>
+          <DialogDescription>
+            Connect a remote MCP server. Tools will be discovered automatically.
+          </DialogDescription>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="mcp-server-url">Server URL</Label>
+            <Input
+              id="mcp-server-url"
+              placeholder="https://mcp.example.com/mcp"
+              value={serverUrl}
+              onChange={(e) => setServerUrl(e.target.value)}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="mcp-name">Name (optional)</Label>
+            <Input
+              id="mcp-name"
+              placeholder="My MCP Server"
+              value={mcpName}
+              onChange={(e) => setMcpName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="mcp-auth-type">Authentication</Label>
+            <Select value={authType} onValueChange={setAuthType}>
+              <SelectTrigger id="mcp-auth-type">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">No authentication</SelectItem>
+                <SelectItem value="api_key">API Key</SelectItem>
+                <SelectItem value="oauth">OAuth 2.1</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          {authType === "api_key" && (
+            <div className="space-y-2">
+              <Label htmlFor="mcp-api-key">API Key</Label>
+              <Input
+                id="mcp-api-key"
+                type="password"
+                placeholder="Enter your API key"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </div>
+          )}
+          {authType === "oauth" && (
+            <p className="text-xs text-neutral-500">
+              OAuth will redirect you to the server for authorization after connecting.
+            </p>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)}>
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              className="bg-blue-600 hover:bg-blue-700"
+              disabled={isPending || !serverUrl.trim()}
+            >
+              {isPending && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Connect
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }

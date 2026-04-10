@@ -233,6 +233,45 @@ async def list_connections(
         raise HTTPException(502, "Connections service unavailable")
 
 
+class MCPConnectBody(BaseModel):
+    persona_id: str | None = None
+    server_url: str
+    auth_type: str = "none"
+    api_key: str | None = None
+    name: str | None = None
+
+
+@router.post("/mcp/connect")
+async def proxy_mcp_connect(
+    body: MCPConnectBody,
+    user: User = Depends(get_current_user),
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Proxy MCP connect request to the connections service."""
+    try:
+        resp = await client.post(
+            "/mcp/connect",
+            json={
+                "user_id": str(user.id),
+                "persona_id": body.persona_id,
+                "server_url": body.server_url,
+                "auth_type": body.auth_type,
+                "api_key": body.api_key,
+                "name": body.name,
+            },
+        )
+        if resp.status_code >= 400:
+            data = resp.json()
+            raise HTTPException(resp.status_code, data.get("detail", "MCP connect failed"))
+        await _invalidate_user_capabilities(str(user.id))
+        return resp.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error("mcp connect proxy error: %s", e)
+        raise HTTPException(502, "Connections service unavailable")
+
+
 class InitiateBody(BaseModel):
     provider: str
     persona_id: str  # UUID — required per D-01 for per-persona connections
