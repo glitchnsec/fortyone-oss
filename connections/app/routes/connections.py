@@ -48,14 +48,18 @@ async def list_connections(user_id: str, persona_id: str | None = None, db: Asyn
             except (json.JSONDecodeError, TypeError):
                 mcp_tools = []
 
-        # Derive a display name for MCP connections from the server URL
+        # Display name: prefer stored name, then derive from URL, then provider
         display_name = c.provider
-        if c.provider == "mcp" and c.mcp_server_url:
-            from urllib.parse import urlparse
-            host = urlparse(c.mcp_server_url).hostname or c.mcp_server_url
-            # "mcp.notion.com" -> "Notion", "api.linear.app" -> "Linear"
-            parts = host.replace("mcp.", "").replace("api.", "").split(".")
-            display_name = parts[0].capitalize() if parts else "MCP Server"
+        if c.provider == "mcp":
+            if getattr(c, "display_name", None):
+                display_name = c.display_name
+            elif c.mcp_server_url:
+                from urllib.parse import urlparse
+                host = urlparse(c.mcp_server_url).hostname or c.mcp_server_url
+                parts = host.replace("mcp.", "").replace("api.", "").split(".")
+                display_name = parts[0].capitalize() if parts else "MCP Server"
+            else:
+                display_name = "MCP Server"
 
         out.append({
             "id": c.id,

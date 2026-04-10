@@ -27,6 +27,7 @@ class Connection(Base):
     execution_type = Column(String, default="native")   # "native" or "mcp"
     mcp_server_url = Column(Text, nullable=True)        # URL of the MCP server (mcp connections only)
     mcp_tools_json = Column(Text, nullable=True)        # JSON array of discovered tool schemas
+    display_name = Column(String, nullable=True)        # User-provided name (e.g. "Notion", "Linear")
     token = relationship("OAuthToken", back_populates="connection", uselist=False, cascade="all, delete-orphan")
 
 

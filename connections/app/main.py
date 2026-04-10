@@ -29,13 +29,14 @@ def _run_startup_migrations(sync_conn):
         else:
             logger.info("STARTUP_MIGRATION connections table not found — create_all will handle it")
 
-        # Add MCP-related columns to connections (Phase 09)
+        # Add MCP-related columns to connections (Phase 09 + display_name)
         if inspector.has_table("connections"):
             columns = {c["name"] for c in inspector.get_columns("connections")}
             for col_name, col_type in [
                 ("execution_type", "VARCHAR DEFAULT 'native'"),
                 ("mcp_server_url", "TEXT"),
                 ("mcp_tools_json", "TEXT"),
+                ("display_name", "VARCHAR"),
             ]:
                 if col_name not in columns:
                     sync_conn.execute(text(f"ALTER TABLE connections ADD COLUMN {col_name} {col_type}"))

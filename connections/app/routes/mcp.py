@@ -156,6 +156,7 @@ async def create_mcp_connection(body: MCPConnectInput, db: AsyncSession = Depend
         mcp_tools_json=json.dumps(valid_tools),
         granted_scopes=" ".join(tool_names),
         persona_id=body.persona_id,
+        display_name=body.name or None,
     )
     db.add(conn)
     await db.flush()
@@ -294,6 +295,7 @@ async def complete_mcp_oauth(body: MCPOAuthCallbackInput, db: AsyncSession = Dep
             mcp_server_url=metadata["server_url"],
             mcp_tools_json=json.dumps(valid_tools),
             granted_scopes=" ".join(tool_names),
+            display_name=metadata.get("name") or None,
         )
         db.add(conn)
         await db.flush()
