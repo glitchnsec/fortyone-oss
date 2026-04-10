@@ -24,6 +24,9 @@ class Connection(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     updated_at = Column(DateTime(timezone=True), default=_utcnow)
     persona_id = Column(String, nullable=True)   # which persona this connection belongs to (per D-09)
+    execution_type = Column(String, default="native")   # "native" or "mcp"
+    mcp_server_url = Column(Text, nullable=True)        # URL of the MCP server (mcp connections only)
+    mcp_tools_json = Column(Text, nullable=True)        # JSON array of discovered tool schemas
     token = relationship("OAuthToken", back_populates="connection", uselist=False, cascade="all, delete-orphan")
 
 

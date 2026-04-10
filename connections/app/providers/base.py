@@ -7,10 +7,7 @@ from typing import List
 @dataclass
 class CapabilityManifest:
     provider: str
-    can_read_email: bool = False
-    can_send_email: bool = False
-    can_read_calendar: bool = False
-    can_write_calendar: bool = False
+    tools: list[str] = field(default_factory=list)
 
 
 class AbstractProvider(ABC):

@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from app.database import AsyncSessionLocal
 from app.models import Connection
+from app.providers.base import CapabilityManifest
 from app.providers.google import get_provider
 
 router = APIRouter()
@@ -31,20 +32,19 @@ async def list_connections(user_id: str, persona_id: str | None = None, db: Asyn
     conns = result.scalars().all()
     out = []
     for c in conns:
-        p = get_provider(c.provider)
-        scopes = c.granted_scopes.split(" ") if c.granted_scopes else []
-        manifest = p.capability_manifest(scopes)
+        try:
+            p = get_provider(c.provider)
+            scopes = c.granted_scopes.split(" ") if c.granted_scopes else []
+            manifest = p.capability_manifest(scopes)
+        except ValueError:
+            manifest = CapabilityManifest(provider=c.provider, tools=[])
         out.append({
             "id": c.id,
             "provider": c.provider,
             "status": c.status,
             "persona_id": c.persona_id,
-            "capabilities": {
-                "can_read_email": manifest.can_read_email,
-                "can_send_email": manifest.can_send_email,
-                "can_read_calendar": manifest.can_read_calendar,
-                "can_write_calendar": manifest.can_write_calendar,
-            },
+            "execution_type": c.execution_type or "native",
+            "capabilities": {"tools": manifest.tools},
         })
     return {"connections": out}
 

@@ -7,6 +7,14 @@ _GMAIL_SEND = "https://www.googleapis.com/auth/gmail.send"
 _CAL_EVENTS = "https://www.googleapis.com/auth/calendar.events"
 _CAL_READONLY = "https://www.googleapis.com/auth/calendar.readonly"
 
+# Maps OAuth scopes to generic tool name strings (D-02)
+_SCOPE_TO_TOOL = {
+    _GMAIL_READONLY: "read_emails",
+    _GMAIL_SEND: "send_email",
+    _CAL_READONLY: "list_events",
+    _CAL_EVENTS: "create_event",
+}
+
 
 class GoogleProvider(AbstractProvider):
     name = "google"
@@ -15,13 +23,8 @@ class GoogleProvider(AbstractProvider):
     scopes: List[str] = [_GMAIL_READONLY, _GMAIL_SEND, _CAL_EVENTS, _CAL_READONLY]
 
     def capability_manifest(self, granted_scopes: List[str]) -> CapabilityManifest:
-        return CapabilityManifest(
-            provider="google",
-            can_read_email=_GMAIL_READONLY in granted_scopes,
-            can_send_email=_GMAIL_SEND in granted_scopes,
-            can_read_calendar=_CAL_READONLY in granted_scopes,
-            can_write_calendar=_CAL_EVENTS in granted_scopes,
-        )
+        tools = [tool for scope, tool in _SCOPE_TO_TOOL.items() if scope in granted_scopes]
+        return CapabilityManifest(provider="google", tools=tools)
 
 
 def get_provider(name: str) -> AbstractProvider:
