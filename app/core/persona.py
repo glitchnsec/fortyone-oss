@@ -28,6 +28,50 @@ logger = logging.getLogger(__name__)
 # Confidence threshold below which the assistant should ask for clarification
 CLARIFICATION_THRESHOLD = 0.4
 
+# Cache of persona → connected service names (populated by pipeline)
+# e.g. {"personal": ["Stan Store", "Notion"], "work": ["Google", "Notion"]}
+_persona_tools: dict[str, list[str]] = {}
+_persona_tools_user: str = ""  # user_id for cache invalidation
+
+
+async def refresh_persona_tools(user_id: str, personas: list["Persona"]) -> None:
+    """Fetch connected services per persona for richer detection context.
+
+    Called once per inbound message in the pipeline. Cached per user_id —
+    only re-fetches when the user changes.
+    """
+    global _persona_tools, _persona_tools_user
+    if _persona_tools_user == user_id and _persona_tools:
+        return  # already cached for this user
+
+    import httpx
+    from app.config import get_settings
+
+    try:
+        settings = get_settings()
+        url = f"{settings.connections_service_url}/connections/{user_id}"
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+
+        connections = resp.json().get("connections", [])
+        tools_by_persona: dict[str, list[str]] = {}
+        persona_id_to_name = {str(p.id): p.name.lower() for p in personas}
+
+        for conn in connections:
+            if conn.get("status") != "connected":
+                continue
+            pid = conn.get("persona_id", "")
+            pname = persona_id_to_name.get(pid, "shared")
+            display = conn.get("display_name") or conn.get("provider", "").capitalize()
+            if display and display not in tools_by_persona.get(pname, []):
+                tools_by_persona.setdefault(pname, []).append(display)
+
+        _persona_tools = tools_by_persona
+        _persona_tools_user = user_id
+    except Exception as exc:
+        logger.debug("refresh_persona_tools failed: %s", exc)
+
 # Work signals — strong indicators that the message is work context
 _WORK_SIGNALS = [
     "meeting", "standup", "sprint", "client", "deadline", "project",
@@ -43,11 +87,14 @@ _PERSONAL_SIGNALS = [
 ]
 
 _PERSONA_SYSTEM = """\
-Classify the user's message as 'work' or 'personal' context.
-Work: job, meetings, colleagues, professional tasks, work email, projects.
-Personal: family, health, hobbies, social plans, home tasks, personal appointments.
+Classify the user's message into the correct persona context.
+Consider:
+1. The message content and intent
+2. Which persona has the relevant connected services (listed below)
+3. Recent conversation context
+If the user mentions a specific service (e.g. "Stan Store", "Notion"), route to the persona that has it connected.
 If genuinely unclear, return "shared".
-Return JSON only: {"persona": "work"|"personal"|"shared", "confidence": 0.0-1.0}"""
+Return JSON only: {"persona": "<persona_name>", "confidence": 0.0-1.0}"""
 
 
 async def detect_persona(
@@ -55,6 +102,7 @@ async def detect_persona(
     user_personas: list["Persona"],
     recent_messages: list[dict],
     last_persona: Optional[str] = None,
+    user_context: Optional[dict] = None,
 ) -> tuple[str, float, bool]:
     """
     Returns (persona_name, confidence, needs_clarification).
@@ -64,6 +112,9 @@ async def detect_persona(
     needs_clarification: True when LLM confidence < CLARIFICATION_THRESHOLD
         and the message is not a trivial follow-up. The pipeline (Plan 05)
         should send a clarifying question and return early — never guess wrong.
+
+    user_context: optional dict with user profile info (name, timezone, etc.)
+        from the pipeline's context assembly. Gives the LLM more signal.
 
     Never raises — falls back to ("shared", 0.5, False) on any error.
     """
@@ -101,9 +152,19 @@ async def detect_persona(
     # LLM disambiguation for genuinely ambiguous messages
     try:
         from app.tasks._llm import llm_messages_json
-        persona_descriptions = "\n".join(
-            f"{p.name}: {p.description or 'no description'}" for p in user_personas
-        )
+
+        # Build rich persona descriptions including connected tools/services
+        persona_lines = []
+        for p in user_personas:
+            desc = p.description or "no description"
+            line = f"{p.name}: {desc}"
+            # Include connected services if available (fetched by pipeline)
+            tools = _persona_tools.get(p.name.lower(), [])
+            if tools:
+                line += f" | Connected services: {', '.join(tools)}"
+            persona_lines.append(line)
+        persona_descriptions = "\n".join(persona_lines)
+
         history = [
             {
                 "role": "user" if m.get("direction") == "inbound" else "assistant",
@@ -111,11 +172,21 @@ async def detect_persona(
             }
             for m in recent_messages[-4:]
         ]
+        # Add user context if available (name, profile, etc.)
+        user_info = ""
+        if user_context:
+            name = user_context.get("name")
+            if name:
+                user_info += f"\nUser's name: {name}"
+            tz = user_context.get("timezone")
+            if tz:
+                user_info += f"\nTimezone: {tz}"
+
         result = await llm_messages_json(
             messages=[
                 {
                     "role": "system",
-                    "content": _PERSONA_SYSTEM + f"\n\nUser's personas:\n{persona_descriptions}",
+                    "content": _PERSONA_SYSTEM + f"\n\nUser's personas:\n{persona_descriptions}{user_info}",
                 },
                 *history,
                 {"role": "user", "content": body},

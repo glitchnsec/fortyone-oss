@@ -227,12 +227,17 @@ class MessagePipeline:
         persona_name, persona_confidence, needs_clarification = ("shared", 0.5, False)
         if user_personas:
             try:
-                from app.core.persona import detect_persona
+                from app.core.persona import detect_persona, refresh_persona_tools
+                await refresh_persona_tools(user.id, user_personas)
                 persona_name, persona_confidence, needs_clarification = await detect_persona(
                     body=body,
                     user_personas=user_personas,
                     recent_messages=recent_messages,
                     last_persona=last_persona,
+                    user_context={
+                        "name": getattr(user, "name", None),
+                        "timezone": getattr(user, "timezone", None),
+                    },
                 )
             except Exception as exc:
                 logger.warning("PERSONA_DETECT failed=%s — using shared", exc)
