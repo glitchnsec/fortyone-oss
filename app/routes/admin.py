@@ -392,6 +392,25 @@ async def hard_purge_user(
     # Delete the user row
     await db.delete(user)
     await db.commit()
+
+    # Clean up scheduled Redis jobs for this user (prevents orphaned reminders/proactive)
+    try:
+        from app.queue.client import queue_client
+        r = queue_client._redis
+        if r:
+            # Scan scheduled_jobs sorted set and remove entries for this user
+            all_jobs = await r.zrangebyscore("scheduled_jobs", "-inf", "+inf")
+            import json as _json
+            for job_json in all_jobs:
+                try:
+                    job = _json.loads(job_json)
+                    if job.get("user_id") == user_id:
+                        await r.zrem("scheduled_jobs", job_json)
+                except (ValueError, TypeError):
+                    pass
+    except Exception as exc:
+        logger.warning("PURGE_REDIS_CLEANUP_FAILED user_id=%s error=%s", user_id, exc)
+
     logger.info("USER_HARD_PURGED user_id=%s by_admin=%s", user_id, admin.id)
     return {"status": "purged"}
 

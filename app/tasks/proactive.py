@@ -530,6 +530,12 @@ async def handle_task_reminder(payload: dict) -> dict:
     async with AsyncSessionLocal() as db:
         store = MemoryStore(db)
 
+        # Verify user still exists (may have been deleted since job was scheduled)
+        user = await _get_user_by_id(store, user_id)
+        if not user:
+            logger.warning("REMINDER_SKIP_DELETED_USER  task_id=%s  user=%s", task_id, user_id[:8])
+            return _empty_result(job_id, user_id)
+
         # Fetch current task state (title may have been edited)
         from sqlalchemy import select
         from app.memory.models import Task as TaskModel
