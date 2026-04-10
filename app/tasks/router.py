@@ -14,6 +14,58 @@ from app.core.intent import IntentType
 logger = logging.getLogger(__name__)
 
 
+def _extract_tool_response_text(tool_result: dict) -> str:
+    """Extract human-readable text from a tool execution result.
+
+    Handles multiple result formats:
+    - MCP content blocks: {"result": {"content": [{"type": "text", "text": "..."}]}}
+    - Plain result string: {"result": "some text"}
+    - Plain result dict: {"result": {"key": "value"}}
+    - Results list: {"results": [...]}
+    """
+    import json
+
+    raw = tool_result.get("result", tool_result.get("results", ""))
+
+    # MCP content block format — extract text from content array
+    if isinstance(raw, dict) and "content" in raw:
+        content = raw["content"]
+        if isinstance(content, list):
+            texts = []
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    texts.append(block.get("text", ""))
+            if texts:
+                raw = "\n".join(texts)
+
+    # If raw is still a dict/list, serialize it
+    if isinstance(raw, (dict, list)):
+        raw = json.dumps(raw)
+
+    text = str(raw).strip() if raw else ""
+    if not text:
+        return "Done!"
+
+    # Try to parse as JSON and extract meaningful fields (e.g. Notion search results)
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, dict) and "results" in parsed:
+            results = parsed["results"]
+            if isinstance(results, list):
+                titles = [r.get("title", r.get("name", "")) for r in results[:10] if isinstance(r, dict)]
+                titles = [t for t in titles if t]
+                if titles:
+                    summary = "\n".join(f"- {t}" for t in titles)
+                    return f"Found {len(results)} result{'s' if len(results) != 1 else ''}:\n{summary}"
+    except (json.JSONDecodeError, TypeError):
+        pass
+
+    # Plain text result — cap at reasonable SMS length
+    if len(text) > 1200:
+        text = text[:1200].rstrip() + "..."
+    return f"Done! {text}" if not text.startswith(("Found", "Done")) else text
+
+
 async def route_job(payload: dict) -> dict:
     # Handle confirmed pending actions (from confirmation flow in pipeline)
     confirmed_action = payload.get("confirmed_action")
@@ -45,10 +97,7 @@ async def route_job(payload: dict) -> dict:
                 "Sorry, I wasn't able to complete that action. Please try again later.",
             )
         else:
-            response = tool_result.get("result", tool_result.get("results", ""))
-            if isinstance(response, dict):
-                response = json.dumps(response)
-            response = f"Done! {str(response)[:300]}" if response else "Done!"
+            response = _extract_tool_response_text(tool_result)
         return {
             "job_id": payload.get("job_id", ""),
             "phone": payload.get("phone", ""),
