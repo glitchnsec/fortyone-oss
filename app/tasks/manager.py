@@ -197,7 +197,11 @@ async def manager_dispatch(payload: dict) -> dict:
                     pending = await store.create_pending_action(
                         user_id=user_id,
                         action_type=tool_name,
-                        action_params=tool_args_parsed,
+                        action_params={
+                            **tool_args_parsed,
+                            "_persona": persona,
+                            "_persona_id": payload.get("persona_id"),
+                        },
                         risk_level=risk,
                     )
                     await store.log_action(

@@ -188,6 +188,10 @@ class MessagePipeline:
                     # Queue the tool execution — do NOT send an ACK here.
                     # The worker result will be delivered by ResponseListener
                     # (or the race pattern) as the single response message.
+                    action_params = json.loads(pending.action_params_json)
+                    # Recover persona context from the pending action
+                    confirmed_persona = action_params.pop("_persona", "shared")
+                    confirmed_persona_id = action_params.pop("_persona_id", None)
                     await self.queue.push_job({
                         "channel": self.channel.name,
                         "address": address,
@@ -196,10 +200,11 @@ class MessagePipeline:
                         "intent": "needs_manager",
                         "context": await self.store.get_context_full(user.id, channel=self.channel.name, query=body),
                         "user_id": user.id,
-                        "persona": "shared",
+                        "persona": confirmed_persona,
+                        "persona_id": confirmed_persona_id,
                         "confirmed_action": {
                             "type": pending.action_type,
-                            "params": json.loads(pending.action_params_json),
+                            "params": action_params,
                         },
                     })
                     logger.info("CONFIRMATION_CONFIRMED  user=%s  action=%s", user.id[:8], pending.action_type)

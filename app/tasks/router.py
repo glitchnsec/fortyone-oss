@@ -32,10 +32,14 @@ async def _summarize_tool_result_via_llm(
     channel = payload.get("channel", "sms")
     max_tokens = 320 if channel == "sms" else 500
 
+    persona = payload.get("persona", "shared")
+    persona_note = f"This action was executed via the user's {persona} persona. " if persona != "shared" else ""
+
     messages = [
         {"role": "system", "content": (
             "You are a helpful assistant. The user confirmed a tool action and it has been "
-            "executed. Summarize the result naturally and concisely for the user. "
+            f"executed. {persona_note}"
+            "Summarize the result naturally and concisely for the user. "
             "Never expose raw JSON, IDs, or technical details. "
             "If the result contains a list of items, show the most important ones as bullets. "
             "Keep it SMS-friendly — short and clear."
