@@ -636,13 +636,13 @@ function MCPConnectDialog({
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!personaId || !serverUrl.trim()) return;
+    if (!personaId || !serverUrl.trim() || !mcpName.trim()) return;
     onConnect({
       personaId,
       serverUrl: serverUrl.trim(),
       authType,
       apiKey: authType === "api_key" ? apiKey : undefined,
-      name: mcpName.trim() || undefined,
+      name: mcpName.trim(),
     });
   };
 
@@ -677,12 +677,13 @@ function MCPConnectDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="mcp-name">Name (optional)</Label>
+            <Label htmlFor="mcp-name">Name</Label>
             <Input
               id="mcp-name"
-              placeholder="My MCP Server"
+              placeholder="e.g. Notion, Linear, Slack"
               value={mcpName}
               onChange={(e) => setMcpName(e.target.value)}
+              required
             />
           </div>
           <div className="space-y-2">
