@@ -81,21 +81,6 @@ async def manager_dispatch(payload: dict) -> dict:
     persona = payload.get("persona", "shared")
     llm_max_tokens = _SMS_LLM_MAX_TOKENS if channel == "sms" else 500
 
-    # Build system prompt with personality and context
-    system_prompt = _build_system_prompt(payload)
-
-    # Build conversation messages from context
-    messages = [{"role": "system", "content": system_prompt}]
-
-    # Add recent conversation history from context
-    recent = context.get("recent_messages", [])
-    for msg in recent[-6:]:  # Last 6 messages for context window
-        role = "user" if msg.get("direction") == "inbound" else "assistant"
-        messages.append({"role": role, "content": msg.get("body", "")})
-
-    # Current user message
-    messages.append({"role": "user", "content": body})
-
     # Get available tool schemas (built-in + user's custom agents)
     tools = get_tool_schemas()
     # Append user's custom agent tools — do NOT mutate the cached list
@@ -111,6 +96,7 @@ async def manager_dispatch(payload: dict) -> dict:
             tools = tools + mcp_schemas
 
     # Fetch cross-persona tool hints (tools available on other personas)
+    # Must happen BEFORE _build_system_prompt so hints are in the payload
     if user_id:
         cross_hints = await get_cross_persona_tool_hints(
             user_id,
@@ -119,6 +105,21 @@ async def manager_dispatch(payload: dict) -> dict:
         )
         if cross_hints:
             payload["_cross_persona_hints"] = cross_hints
+
+    # Build system prompt with personality, context, and cross-persona hints
+    system_prompt = _build_system_prompt(payload)
+
+    # Build conversation messages from context
+    messages = [{"role": "system", "content": system_prompt}]
+
+    # Add recent conversation history from context
+    recent = context.get("recent_messages", [])
+    for msg in recent[-6:]:  # Last 6 messages for context window
+        role = "user" if msg.get("direction") == "inbound" else "assistant"
+        messages.append({"role": role, "content": msg.get("body", "")})
+
+    # Current user message
+    messages.append({"role": "user", "content": body})
 
     # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
     # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
