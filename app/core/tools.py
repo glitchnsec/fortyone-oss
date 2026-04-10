@@ -187,6 +187,25 @@ async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> l
         data = resp.json()
         connections = data.get("connections", [])
 
+        # Resolve persona names so tool descriptions include which persona owns them.
+        # This helps the LLM pick the right tool when shared/undetected persona
+        # exposes MCP tools from multiple personas.
+        persona_names: dict[str, str] = {}
+        persona_ids_seen = {c.get("persona_id") for c in connections if c.get("persona_id")}
+        if persona_ids_seen:
+            try:
+                from app.database import AsyncSessionLocal
+                from app.memory.models import Persona
+                from sqlalchemy import select as sa_select
+                async with AsyncSessionLocal() as db:
+                    result = await db.execute(
+                        sa_select(Persona).where(Persona.user_id == user_id)
+                    )
+                    for p in result.scalars().all():
+                        persona_names[str(p.id)] = p.name
+            except Exception:
+                pass
+
         schemas: list[dict] = []
         for conn in connections:
             if conn.get("execution_type") != "mcp":
@@ -196,7 +215,18 @@ async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> l
 
             conn_id = conn.get("id", "")
             conn_id_short = conn_id[:8]
+            conn_persona_id = conn.get("persona_id")
+            conn_persona_name = persona_names.get(conn_persona_id or "", "")
+            conn_display_name = conn.get("display_name", "")
             mcp_tools = conn.get("mcp_tools", [])
+
+            # Build a prefix like "[Personal / Notion]" for multi-persona clarity
+            label_parts = []
+            if conn_persona_name:
+                label_parts.append(conn_persona_name)
+            if conn_display_name:
+                label_parts.append(conn_display_name)
+            persona_label = " / ".join(label_parts)
 
             for tool in mcp_tools:
                 tool_name = tool.get("name", "")
@@ -204,11 +234,15 @@ async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> l
                     continue
                 namespaced_name = f"mcp_{conn_id_short}_{tool_name}"
 
+                desc = tool.get("description", "")
+                if persona_label:
+                    desc = f"[{persona_label}] {desc}"
+
                 schemas.append({
                     "type": "function",
                     "function": {
                         "name": namespaced_name,
-                        "description": tool.get("description", ""),
+                        "description": desc,
                         "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
                     },
                 })
