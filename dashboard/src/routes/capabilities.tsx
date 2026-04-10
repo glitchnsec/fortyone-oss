@@ -250,22 +250,22 @@ function CapabilityCard({ cap }: { cap: Capability }) {
   );
 
   return (
-    <Card>
-      <CardHeader className="pb-2">
+    <Card className="flex flex-col h-[320px]">
+      <CardHeader className="pb-2 shrink-0">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold">{formatAgentName(cap.name)}</span>
-          <Badge variant="secondary">
+          <span className="text-sm font-semibold truncate">{formatAgentName(cap.name)}</span>
+          <Badge variant="secondary" className="shrink-0 ml-2">
             {cap.tools.length} {cap.tools.length === 1 ? "tool" : "tools"}
           </Badge>
         </div>
-        <p className="text-xs text-muted-foreground mt-1">{cap.description}</p>
+        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cap.description}</p>
       </CardHeader>
-      <CardContent>
-        <ul className="space-y-1.5">
+      <CardContent className="flex-1 overflow-hidden flex flex-col min-h-0">
+        <ul className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1">
           {cap.tools.map((tool) => (
             <li key={tool.name} className="flex items-start gap-2 text-xs">
               <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-neutral-400" />
-              <span className="flex-1">
+              <span className="flex-1 min-w-0">
                 <span className="font-medium">{tool.name}</span>
                 {tool.description && (
                   <span className="text-muted-foreground"> &mdash; {tool.description}</span>
