@@ -223,6 +223,104 @@ async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> l
         return []
 
 
+async def get_cross_persona_tool_hints(
+    user_id: str,
+    current_persona_id: str | None,
+    current_persona_name: str = "shared",
+) -> str:
+    """Return a text block listing tools available on OTHER personas.
+
+    Used to inject into the system prompt so the LLM can suggest persona
+    switching when the user asks for a capability that exists elsewhere.
+    Returns empty string if no cross-persona tools exist.
+    """
+    import httpx
+    from app.config import get_settings
+
+    if not user_id:
+        return ""
+
+    try:
+        settings = get_settings()
+        url = f"{settings.connections_service_url}/connections/{user_id}"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)  # No persona filter = all connections
+            resp.raise_for_status()
+
+        data = resp.json()
+        connections = data.get("connections", [])
+
+        # Group tools by persona, excluding current persona
+        other_persona_tools: dict[str, list[str]] = {}  # persona_id -> tool descriptions
+        persona_names: dict[str, str] = {}  # persona_id -> display name
+
+        for conn in connections:
+            conn_persona_id = conn.get("persona_id")
+            # Skip connections on the current persona (already available)
+            if conn_persona_id == current_persona_id:
+                continue
+            if conn.get("status") != "connected":
+                continue
+
+            provider = conn.get("provider", "unknown")
+            tools_on_conn: list[str] = []
+
+            if conn.get("execution_type") == "mcp":
+                for tool in conn.get("mcp_tools", []):
+                    name = tool.get("name", "")
+                    desc = tool.get("description", "")
+                    if name:
+                        label = name.replace("_", " ").replace("-", " ")
+                        tools_on_conn.append(f"{label}" + (f" — {desc[:60]}" if desc else ""))
+            else:
+                # Native connections (Google etc.)
+                cap_tools = conn.get("capabilities", {}).get("tools", [])
+                for t in cap_tools:
+                    tools_on_conn.append(t.replace("_", " "))
+
+            if tools_on_conn:
+                pid = conn_persona_id or "shared"
+                other_persona_tools.setdefault(pid, []).extend(tools_on_conn)
+
+        if not other_persona_tools:
+            return ""
+
+        # Build the hint text — we need persona names. Fetch them.
+        try:
+            from app.database import AsyncSessionLocal
+            from app.memory.models import Persona
+            from sqlalchemy import select as sa_select
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(Persona).where(Persona.user_id == user_id)
+                )
+                for p in result.scalars().all():
+                    persona_names[str(p.id)] = p.name
+        except Exception:
+            pass
+
+        lines = [
+            "CROSS-PERSONA TOOLS: The following tools are available on OTHER personas "
+            "(not the current one). If the user's request matches one of these, suggest "
+            "they switch persona — e.g., 'That tool is available on your Personal persona. "
+            "Want me to use that one instead?'",
+        ]
+        for pid, tool_list in other_persona_tools.items():
+            name = persona_names.get(pid, pid)
+            tools_str = "; ".join(tool_list[:8])  # Cap at 8 to save tokens
+            lines.append(f"  • {name} persona: {tools_str}")
+
+        return "\n".join(lines)
+
+    except Exception as exc:
+        logger.warning(
+            "cross_persona_hints failed user=%s error=%s",
+            user_id[:8] if user_id else "?", exc,
+        )
+        return ""
+
+
 async def get_custom_agent_schemas(user_id: str) -> list[dict]:
     """Return OpenAI-format tool schemas for a user's enabled custom agents.
 

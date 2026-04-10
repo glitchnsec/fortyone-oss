@@ -23,7 +23,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.core.capabilities import get_capabilities, resolve_capability_persona
-from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas, get_mcp_tool_schemas
+from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas, get_mcp_tool_schemas, get_cross_persona_tool_hints
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +109,16 @@ async def manager_dispatch(payload: dict) -> dict:
         mcp_schemas = await get_mcp_tool_schemas(user_id, persona_id=payload.get("persona_id"))
         if mcp_schemas:
             tools = tools + mcp_schemas
+
+    # Fetch cross-persona tool hints (tools available on other personas)
+    if user_id:
+        cross_hints = await get_cross_persona_tool_hints(
+            user_id,
+            current_persona_id=payload.get("persona_id"),
+            current_persona_name=persona,
+        )
+        if cross_hints:
+            payload["_cross_persona_hints"] = cross_hints
 
     # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
     # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
@@ -528,6 +538,11 @@ def _build_system_prompt(payload: dict) -> str:
     # Add persona context
     if persona and persona != "shared":
         parts.append(f"\nCurrent persona context: {persona}")
+
+    # Cross-persona tool hints (tools available on other personas)
+    cross_hints = payload.get("_cross_persona_hints", "")
+    if cross_hints:
+        parts.append(f"\n{cross_hints}")
 
     if channel == "sms":
         parts.append(
