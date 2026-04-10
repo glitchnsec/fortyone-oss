@@ -380,9 +380,11 @@ async def mcp_notify(
         resp.raise_for_status()
 
 
-async def discover_tools(server_url: str, auth_headers: dict | None = None) -> list[dict]:
-    t0 = time.monotonic()
-    session_id: str | None = None
+async def init_session(server_url: str, auth_headers: dict | None = None) -> str | None:
+    """Perform MCP initialize handshake and return the session ID.
+
+    Returns None if the server doesn't require sessions (stateless mode).
+    """
     try:
         _, session_id = await mcp_call(
             server_url,
@@ -401,13 +403,18 @@ async def discover_tools(server_url: str, auth_headers: dict | None = None) -> l
             headers=auth_headers,
             session_id=session_id,
         )
+        return session_id
     except Exception as exc:
         logger.warning(
-            "MCP init handshake failed url=%s error=%s — trying tools/list directly",
-            server_url,
-            exc,
+            "MCP init handshake failed url=%s error=%s — continuing without session",
+            server_url, exc,
         )
+        return None
 
+
+async def discover_tools(server_url: str, auth_headers: dict | None = None) -> list[dict]:
+    t0 = time.monotonic()
+    session_id = await init_session(server_url, auth_headers)
     result = await mcp_call(server_url, "tools/list", headers=auth_headers, session_id=session_id)
     tools = result.get("tools", [])
     elapsed_ms = int((time.monotonic() - t0) * 1000)

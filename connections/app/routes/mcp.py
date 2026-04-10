@@ -23,6 +23,7 @@ from app.providers.mcp import (
     discover_tools,
     exchange_oauth_code,
     generate_pkce_pair,
+    init_session,
     mcp_call,
     refresh_oauth_token,
     register_oauth_client,
@@ -381,11 +382,15 @@ async def execute_mcp_tool(body: MCPExecuteInput, db: AsyncSession = Depends(_ge
 
     auth_headers = await _get_connection_auth_headers(conn, db)
     try:
+        # Initialize session — some MCP servers (e.g. Notion) require Mcp-Session-Id
+        session_id = await init_session(conn.mcp_server_url, auth_headers)
+
         tool_result = await mcp_call(
             conn.mcp_server_url,
             "tools/call",
             params={"name": body.tool_name, "arguments": body.arguments},
             headers=auth_headers,
+            session_id=session_id,
         )
     except MCPError as exc:
         logger.warning(
