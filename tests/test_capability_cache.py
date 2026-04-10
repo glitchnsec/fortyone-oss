@@ -214,6 +214,120 @@ async def test_cache_key_uses_v2_prefix():
 
 # -- Error message formatting ----------------------------------------------
 
+# -- MCP tools in capability cache -------------------------------------------
+
+@pytest.mark.asyncio
+async def test_capabilities_include_mcp_tools():
+    """MCP tool names should appear in the tools list with namespaced prefix."""
+    from app.core.capabilities import _fetch_capabilities
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "connections": [
+            {
+                "id": "conn-mcp-1234-5678",
+                "provider": "mcp",
+                "execution_type": "mcp",
+                "status": "connected",
+                "capabilities": {"tools": []},
+                "mcp_tools": [
+                    {"name": "get_weather", "description": "Get weather"},
+                    {"name": "translate", "description": "Translate text"},
+                ],
+            },
+            {
+                "id": "c2",
+                "provider": "google",
+                "capabilities": {"tools": ["read_emails"]},
+            },
+        ]
+    }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, params=None):
+            return mock_response
+
+    with patch("app.core.capabilities.httpx.AsyncClient", return_value=FakeClient()):
+        caps = await _fetch_capabilities("user-mcp-test")
+
+    # MCP tools should be namespaced
+    assert "mcp_conn-mcp_get_weather" in caps["tools"]
+    assert "mcp_conn-mcp_translate" in caps["tools"]
+    # Google tools too
+    assert "read_emails" in caps["tools"]
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_connections_mapping():
+    """mcp_tool_connections dict should map namespaced tool names to connection IDs."""
+    from app.core.capabilities import _fetch_capabilities
+
+    conn_id = "mcp-conn-abcdef12"
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {
+        "connections": [
+            {
+                "id": conn_id,
+                "provider": "mcp",
+                "execution_type": "mcp",
+                "status": "connected",
+                "capabilities": {"tools": []},
+                "mcp_tools": [
+                    {"name": "fetch_data", "description": "Fetch data"},
+                ],
+            },
+        ]
+    }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, params=None):
+            return mock_response
+
+    with patch("app.core.capabilities.httpx.AsyncClient", return_value=FakeClient()):
+        caps = await _fetch_capabilities("user-mcp-map")
+
+    short_id = conn_id[:8]
+    namespaced = f"mcp_{short_id}_fetch_data"
+    assert namespaced in caps["tools"]
+    assert "mcp_tool_connections" in caps
+    assert caps["mcp_tool_connections"][namespaced] == conn_id
+
+
+@pytest.mark.asyncio
+async def test_graceful_degradation_includes_mcp():
+    """On connection error, degradation returns a tools list (basic tools)."""
+    from app.core.capabilities import get_capabilities
+
+    fake_redis = FakeRedis()
+
+    with patch("app.core.capabilities.httpx.AsyncClient", side_effect=ConnectionError("down")):
+        caps = await get_capabilities(fake_redis, "user-mcp-degrade")
+
+    # Should return a list of tools (graceful degradation)
+    assert isinstance(caps["tools"], list)
+    assert len(caps["tools"]) > 0
+    # Should include standard built-in tools
+    assert "read_emails" in caps["tools"]
+
+
+# -- Error message formatting ----------------------------------------------
+
 class TestErrorMessages:
     def test_send_email_message(self):
         from app.tasks.manager import _tool_failure_user_message
