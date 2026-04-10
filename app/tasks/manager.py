@@ -90,10 +90,19 @@ async def manager_dispatch(payload: dict) -> dict:
             tools = tools + custom_schemas
 
     # Append MCP tool schemas from user's MCP connections
+    # Also build tool_name → persona label mapping for confirmation messages
+    mcp_tool_persona_labels: dict[str, str] = {}
     if user_id:
         mcp_schemas = await get_mcp_tool_schemas(user_id, persona_id=payload.get("persona_id"))
         if mcp_schemas:
             tools = tools + mcp_schemas
+            for schema in mcp_schemas:
+                name = schema["function"]["name"]
+                desc = schema["function"].get("description", "")
+                # Extract persona label from "[Personal / Notion] ..." prefix
+                if desc.startswith("[") and "]" in desc:
+                    label = desc[1:desc.index("]")]
+                    mcp_tool_persona_labels[name] = label
 
     # Fetch cross-persona tool hints (tools available on other personas)
     # Must happen BEFORE _build_system_prompt so hints are in the payload
@@ -213,7 +222,8 @@ async def manager_dispatch(payload: dict) -> dict:
                     )
 
                 description = _format_action_description(
-                    tool_name, tool_args_raw, persona=persona)
+                    tool_name, tool_args_raw, persona=persona,
+                    mcp_tool_label=mcp_tool_persona_labels.get(tool_name, ""))
                 logger.info(
                     "CONFIRMATION_PROMPT  tool=%s  persona=%s  description=%s",
                     tool_name, persona, description[:80],
@@ -607,7 +617,7 @@ def _build_system_prompt(payload: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _format_action_description(tool_name: str, tool_args_raw: str, persona: str = "shared") -> str:
+def _format_action_description(tool_name: str, tool_args_raw: str, persona: str = "shared", mcp_tool_label: str = "") -> str:
     """Format a human-readable description of a tool call for confirmation."""
     try:
         args = json.loads(tool_args_raw) if isinstance(
@@ -643,15 +653,14 @@ def _format_action_description(tool_name: str, tool_args_raw: str, persona: str 
         # MCP tools are namespaced: mcp_{conn_id_short}_{original_name}
         parts = tool_name.split("_", 2)
         display_name = parts[2].replace("_", " ").replace("-", " ") if len(parts) > 2 else tool_name
-        # Always include persona so the user knows which workspace is being accessed.
-        # This is their last checkpoint before execution.
-        if persona and persona not in ("shared", ""):
+        # Always include persona/service so the user knows which workspace is accessed.
+        # mcp_tool_label comes from the schema description: "Personal / Notion"
+        if mcp_tool_label:
+            persona_label = f" on {mcp_tool_label}"
+        elif persona and persona not in ("shared", ""):
             persona_label = f" on your {persona} persona"
         else:
-            # For shared/undetected, try to resolve persona from the connection ID
-            # embedded in the tool name (mcp_{conn_id_short}_{name})
-            conn_id_short = parts[1] if len(parts) > 1 else ""
-            persona_label = f" (connection {conn_id_short})" if conn_id_short else ""
+            persona_label = ""
         # Summarize args if any are meaningful
         meaningful = {k: v for k, v in args.items() if v} if isinstance(args, dict) else {}
         if meaningful:
