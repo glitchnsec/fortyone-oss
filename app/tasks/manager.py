@@ -213,7 +213,7 @@ async def manager_dispatch(payload: dict) -> dict:
                     )
 
                 description = _format_action_description(
-                    tool_name, tool_args_raw)
+                    tool_name, tool_args_raw, persona=persona)
                 response_text = f"I'd like to {description}. Should I go ahead? (Reply YES or NO)"
 
                 return {
@@ -597,7 +597,7 @@ def _build_system_prompt(payload: dict) -> str:
     return "\n\n".join(parts)
 
 
-def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
+def _format_action_description(tool_name: str, tool_args_raw: str, persona: str = "shared") -> str:
     """Format a human-readable description of a tool call for confirmation."""
     try:
         args = json.loads(tool_args_raw) if isinstance(
@@ -633,12 +633,14 @@ def _format_action_description(tool_name: str, tool_args_raw: str) -> str:
         # MCP tools are namespaced: mcp_{conn_id_short}_{original_name}
         parts = tool_name.split("_", 2)
         display_name = parts[2].replace("_", " ").replace("-", " ") if len(parts) > 2 else tool_name
+        # Include persona so user knows which workspace is being accessed
+        persona_label = f" on your {persona} persona" if persona and persona != "shared" else ""
         # Summarize args if any are meaningful
         meaningful = {k: v for k, v in args.items() if v} if isinstance(args, dict) else {}
         if meaningful:
             summary = ", ".join(f"{k}: {str(v)[:40]}" for k, v in list(meaningful.items())[:3])
-            return f"use {display_name} ({summary})"
-        return f"use {display_name}"
+            return f"use {display_name}{persona_label} ({summary})"
+        return f"use {display_name}{persona_label}"
     else:
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
