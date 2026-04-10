@@ -250,6 +250,7 @@ async def llm_tools(
     mock_text: str,
     timeout_s: float = 15.0,
     model: str | None = None,
+    max_tokens: int = 500,
 ) -> dict:
     """
     Call the capable model with tool definitions.
@@ -274,7 +275,7 @@ async def llm_tools(
                 messages=messages,
                 tools=tools if tools else None,
                 temperature=0.3,
-                max_tokens=500,
+                max_tokens=max_tokens,
             ),
             timeout=timeout_s,
         )

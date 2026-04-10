@@ -28,6 +28,36 @@ from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_sch
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 3  # Hard limit per Pitfall 2
+_SMS_RESPONSE_CHAR_TARGET = 1200
+_SMS_LLM_MAX_TOKENS = 320
+
+
+def _enforce_channel_response_budget(text: str, channel: str) -> str:
+    """Enforce channel-specific length budgets on manager replies."""
+    if channel != "sms":
+        return text
+    if not text:
+        return text
+    if len(text) <= _SMS_RESPONSE_CHAR_TARGET:
+        return text
+
+    # Prefer ending cleanly at sentence punctuation before hard cutoff.
+    cutoff = _SMS_RESPONSE_CHAR_TARGET
+    window_start = max(0, cutoff - 220)
+    punctuation_cut = max(
+        text.rfind(". ", window_start, cutoff),
+        text.rfind("! ", window_start, cutoff),
+        text.rfind("? ", window_start, cutoff),
+    )
+    if punctuation_cut != -1:
+        trimmed = text[: punctuation_cut + 1].rstrip()
+    else:
+        word_cut = text.rfind(" ", window_start, cutoff)
+        trimmed = text[:word_cut].rstrip() if word_cut != -1 else text[:cutoff].rstrip()
+
+    if not trimmed.endswith(("...", ".", "!", "?")):
+        trimmed = f"{trimmed}..."
+    return f"{trimmed}\n\nReply 'continue' if you want the rest."
 
 
 async def manager_dispatch(payload: dict) -> dict:
@@ -49,6 +79,7 @@ async def manager_dispatch(payload: dict) -> dict:
     context = payload.get("context", {})
     user_id = payload.get("user_id", "")
     persona = payload.get("persona", "shared")
+    llm_max_tokens = _SMS_LLM_MAX_TOKENS if channel == "sms" else 500
 
     # Build system prompt with personality and context
     system_prompt = _build_system_prompt(payload)
@@ -104,6 +135,7 @@ async def manager_dispatch(payload: dict) -> dict:
             tools=tools,
             mock_text=f"I understand you said: '{body[:50]}'. Let me help with that.",
             timeout_s=15.0,
+            max_tokens=llm_max_tokens,
         )
 
         tool_calls = result.get("tool_calls")
@@ -278,6 +310,7 @@ async def manager_dispatch(payload: dict) -> dict:
             tools=[],  # No tools — force text response
             mock_text="I've been working on your request. Here's what I found so far.",
             timeout_s=10.0,
+            max_tokens=llm_max_tokens,
         )
         response_text = result.get(
             "content") or "I've been working on your request but need a bit more time."
@@ -295,6 +328,8 @@ async def manager_dispatch(payload: dict) -> dict:
                                "not available", "couldn't search", "unavailable"]
         if not any(kw in response_text.lower() for kw in limitation_keywords):
             response_text = f"Heads up: {failure_note}\n\n{response_text}"
+
+    response_text = _enforce_channel_response_budget(response_text, channel)
 
     # D-12: Passive profile learning — extract profile-relevant facts from conversation
     # Runs asynchronously after response to avoid adding latency
@@ -384,6 +419,7 @@ def _build_system_prompt(payload: dict) -> str:
     """Build the manager's system prompt with personality and context."""
     context = payload.get("context", {})
     persona = payload.get("persona", "shared")
+    channel = payload.get("channel", "sms")
 
     # Start with identity preamble if available
     # User info is nested under context["user"] (from MemoryStore.get_context_standard/full)
@@ -492,6 +528,13 @@ def _build_system_prompt(payload: dict) -> str:
     # Add persona context
     if persona and persona != "shared":
         parts.append(f"\nCurrent persona context: {persona}")
+
+    if channel == "sms":
+        parts.append(
+            "\nChannel is SMS. Keep your final response concise and phone-friendly. "
+            "Target under 1200 characters. Prefer a short direct answer and up to 3 bullets. "
+            "If more detail exists, provide the most useful summary first."
+        )
 
     # Add user memories/preferences from context
     # memories is a dict {key: value} from MemoryStore.get_context_standard/full
