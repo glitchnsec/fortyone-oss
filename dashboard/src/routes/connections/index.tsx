@@ -47,6 +47,8 @@ interface Connection {
   execution_type?: string;
   capabilities?: { tools?: string[] };
   mcp_tools?: { name: string; description?: string; inputSchema?: Record<string, unknown> }[];
+  display_name?: string;
+  mcp_server_url?: string;
 }
 
 interface ConnectionsResponse {
@@ -193,8 +195,9 @@ function ConnectionsPage() {
 
 function ReadOnlyConnectionCard({ connection }: { connection: Connection }) {
   const isMcp = connection.provider === "mcp";
-  const providerName = isMcp ? "MCP Server" : connection.provider.charAt(0).toUpperCase() + connection.provider.slice(1);
-  const iconLetter = isMcp ? "M" : providerName.charAt(0);
+  const providerName = connection.display_name
+    ?? (isMcp ? "MCP Server" : connection.provider.charAt(0).toUpperCase() + connection.provider.slice(1));
+  const iconLetter = providerName.charAt(0).toUpperCase();
 
   // Tool count: prefer mcp_tools length, fall back to capabilities.tools
   const toolCount = isMcp
