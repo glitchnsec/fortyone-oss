@@ -11,8 +11,10 @@ Three-tier persona scoping (resolve_capability_persona):
   3. Proactive / scheduled sources -> return None (query all connections)
 
 On any failure fetching from the Connections Service the module degrades
-gracefully by returning all capabilities as True, so the assistant
-never blocks a user action due to an infrastructure hiccup.
+gracefully by returning all known tools, so the assistant never blocks a
+user action due to an infrastructure hiccup.
+
+Response format: {"tools": ["read_emails", "send_email", ...]}
 """
 import json
 import logging
@@ -24,14 +26,6 @@ import redis.asyncio as aioredis
 from app.config import get_settings
 
 logger = logging.getLogger(__name__)
-
-# ── Static mapping: tool name -> required capability flag ──────────────
-TOOL_CAPABILITY_MAP: dict[str, str] = {
-    "read_emails": "can_read_email",
-    "send_email": "can_send_email",
-    "list_events": "can_read_calendar",
-    "create_event": "can_write_calendar",
-}
 
 # Cache TTL in seconds (30 minutes)
 CACHE_TTL = 1800
@@ -46,34 +40,38 @@ _UNSCOPED_SOURCES = frozenset({
     "recap",
 })
 
-_ALL_TRUE: dict[str, bool] = {
-    "can_read_email": True,
-    "can_send_email": True,
-    "can_read_calendar": True,
-    "can_write_calendar": True,
-}
+# All known built-in tool names — used for graceful degradation
+_ALL_TOOLS: list[str] = [
+    "read_emails",
+    "send_email",
+    "list_events",
+    "create_event",
+    "web_search",
+]
+
+_ALL_TOOLS_RESPONSE: dict = {"tools": _ALL_TOOLS}
 
 
 async def get_capabilities(
     r: aioredis.Redis,
     user_id: str,
     persona_id: Optional[str] = None,
-) -> dict[str, bool]:
+) -> dict:
     """
-    Return capability flags for a user (optionally scoped to a persona).
+    Return capability dict with a ``tools`` key listing available tool names.
 
     Checks Redis cache first; on miss, fetches from the Connections Service
     and caches the result for CACHE_TTL seconds.
     """
-    cache_key = f"capabilities:{user_id}:{persona_id or 'all'}"
+    cache_key = f"capabilities_v2:{user_id}:{persona_id or 'all'}"
 
-    # ── Cache hit ──────────────────────────────────────────────────────
+    # -- Cache hit ---------------------------------------------------------
     cached = await r.get(cache_key)
     if cached is not None:
         logger.info("CAPABILITIES cache_hit key=%s", cache_key)
         return json.loads(cached)
 
-    # ── Cache miss — fetch from Connections Service ────────────────────
+    # -- Cache miss — fetch from Connections Service -----------------------
     logger.info("CAPABILITIES cache_miss key=%s", cache_key)
     caps = await _fetch_capabilities(user_id, persona_id)
     await r.set(cache_key, json.dumps(caps), ex=CACHE_TTL)
@@ -83,12 +81,12 @@ async def get_capabilities(
 async def _fetch_capabilities(
     user_id: str,
     persona_id: Optional[str] = None,
-) -> dict[str, bool]:
+) -> dict:
     """
     Query the Connections Service for a user's active connections and
-    aggregate capability flags (OR across all connections).
+    aggregate tool names across all connections (union / deduplicate).
 
-    On ANY error, returns all-True (graceful degradation per D-08).
+    On ANY error, returns all tools (graceful degradation per D-08).
     """
     try:
         settings = get_settings()
@@ -104,20 +102,14 @@ async def _fetch_capabilities(
         data = resp.json()
         connections = data.get("connections", [])
 
-        # Aggregate: OR all capability flags together
-        caps = {
-            "can_read_email": False,
-            "can_send_email": False,
-            "can_read_calendar": False,
-            "can_write_calendar": False,
-        }
+        # Aggregate: union all tool names across connections
+        tools_set: set[str] = set()
         for conn in connections:
             conn_caps = conn.get("capabilities", {})
-            for flag in caps:
-                if conn_caps.get(flag, False):
-                    caps[flag] = True
+            conn_tools = conn_caps.get("tools", [])
+            tools_set.update(conn_tools)
 
-        return caps
+        return {"tools": sorted(tools_set)}
 
     except Exception as exc:
         logger.warning(
@@ -126,12 +118,7 @@ async def _fetch_capabilities(
             exc,
         )
         # Graceful degradation: assume all capabilities available
-        return {
-            "can_read_email": True,
-            "can_send_email": True,
-            "can_read_calendar": True,
-            "can_write_calendar": True,
-        }
+        return {"tools": list(_ALL_TOOLS)}
 
 
 async def invalidate_capabilities(r: aioredis.Redis, user_id: str) -> None:
@@ -139,11 +126,13 @@ async def invalidate_capabilities(r: aioredis.Redis, user_id: str) -> None:
     Delete all cached capability entries for a user (all persona variants).
 
     Uses SCAN to find matching keys without blocking Redis.
+    Cleans up both v1 and v2 cache keys.
     """
     deleted = 0
-    async for key in r.scan_iter(match=f"capabilities:{user_id}:*", count=100):
-        await r.delete(key)
-        deleted += 1
+    for prefix in ("capabilities:", "capabilities_v2:"):
+        async for key in r.scan_iter(match=f"{prefix}{user_id}:*", count=100):
+            await r.delete(key)
+            deleted += 1
     logger.info("CAPABILITIES invalidated user=%s keys_deleted=%d", user_id[:8] if user_id else "?", deleted)
 
 

@@ -1,11 +1,10 @@
-"""Integration tests for dynamic capability discovery (Phase 08).
+"""Integration tests for dynamic capability discovery (Phase 08/09).
 
 Covers:
   - resolve_capability_persona: persona scoping (proactive, shared, low conf, explicit)
-  - TOOL_CAPABILITY_MAP: completeness check
-  - get_capabilities: caching in Redis, graceful degradation
-  - invalidate_capabilities: cache key deletion
-  - _fetch_capabilities: aggregation across multiple connections
+  - get_capabilities: caching in Redis, graceful degradation (tools list format)
+  - invalidate_capabilities: cache key deletion (v1 + v2)
+  - _fetch_capabilities: aggregation across multiple connections (tools list)
   - _tool_failure_user_message: error message formatting
 """
 import json
@@ -14,7 +13,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
-# ── Helpers: dict-backed async Redis mock ───────────────────────────────
+# -- Helpers: dict-backed async Redis mock ---------------------------------
 
 class FakeRedis:
     """Minimal async Redis mock backed by a plain dict."""
@@ -38,7 +37,7 @@ class FakeRedis:
                 yield k
 
 
-# ── Persona resolution tests ───────────────────────────────────────────
+# -- Persona resolution tests ----------------------------------------------
 
 class TestResolveCapabilityPersona:
     def test_proactive_returns_none(self):
@@ -67,16 +66,7 @@ class TestResolveCapabilityPersona:
         assert result == "abc-123"
 
 
-# ── TOOL_CAPABILITY_MAP completeness ────────────────────────────────────
-
-class TestToolCapabilityMap:
-    def test_completeness(self):
-        from app.core.capabilities import TOOL_CAPABILITY_MAP
-        expected_tools = {"read_emails", "send_email", "list_events", "create_event"}
-        assert set(TOOL_CAPABILITY_MAP.keys()) == expected_tools
-
-
-# ── Cache behaviour (async) ─────────────────────────────────────────────
+# -- Cache behaviour (async) -----------------------------------------------
 
 @pytest.mark.asyncio
 async def test_get_capabilities_caches_in_redis():
@@ -90,7 +80,7 @@ async def test_get_capabilities_caches_in_redis():
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {
         "connections": [
-            {"id": "c1", "capabilities": {"can_read_email": True, "can_send_email": True, "can_read_calendar": False, "can_write_calendar": False}}
+            {"id": "c1", "capabilities": {"tools": ["read_emails", "send_email"]}}
         ]
     }
 
@@ -113,52 +103,53 @@ async def test_get_capabilities_caches_in_redis():
         caps2 = await get_capabilities(fake_redis, "user1")
 
     assert call_count == 1, f"Expected 1 HTTP call (cache hit on second), got {call_count}"
-    assert caps1["can_read_email"] is True
-    assert caps1["can_send_email"] is True
+    assert "read_emails" in caps1["tools"]
+    assert "send_email" in caps1["tools"]
     assert caps2 == caps1
 
 
 @pytest.mark.asyncio
 async def test_get_capabilities_graceful_degradation():
-    """On connection error, all capabilities should be True (D-08)."""
-    from app.core.capabilities import get_capabilities
+    """On connection error, all known tools should be returned (D-08)."""
+    from app.core.capabilities import get_capabilities, _ALL_TOOLS
 
     fake_redis = FakeRedis()
 
     with patch("app.core.capabilities.httpx.AsyncClient", side_effect=ConnectionError("down")):
         caps = await get_capabilities(fake_redis, "user-err")
 
-    assert caps["can_read_email"] is True
-    assert caps["can_send_email"] is True
-    assert caps["can_read_calendar"] is True
-    assert caps["can_write_calendar"] is True
+    assert isinstance(caps["tools"], list)
+    for tool in ["read_emails", "send_email", "list_events", "create_event", "web_search"]:
+        assert tool in caps["tools"], f"Expected {tool} in degraded tools list"
 
 
-# ── Invalidation ────────────────────────────────────────────────────────
+# -- Invalidation ----------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_invalidate_capabilities():
-    """invalidate_capabilities should delete all user cache keys."""
+    """invalidate_capabilities should delete all user cache keys (v1 and v2)."""
     from app.core.capabilities import invalidate_capabilities
 
     fake_redis = FakeRedis()
-    fake_redis._store["capabilities:user123:all"] = json.dumps({"can_read_email": True})
-    fake_redis._store["capabilities:user123:persona1"] = json.dumps({"can_send_email": True})
-    fake_redis._store["capabilities:other_user:all"] = json.dumps({"can_read_email": False})
+    fake_redis._store["capabilities:user123:all"] = json.dumps({"tools": ["read_emails"]})
+    fake_redis._store["capabilities_v2:user123:all"] = json.dumps({"tools": ["read_emails"]})
+    fake_redis._store["capabilities_v2:user123:persona1"] = json.dumps({"tools": ["send_email"]})
+    fake_redis._store["capabilities_v2:other_user:all"] = json.dumps({"tools": []})
 
     await invalidate_capabilities(fake_redis, "user123")
 
     assert "capabilities:user123:all" not in fake_redis._store
-    assert "capabilities:user123:persona1" not in fake_redis._store
+    assert "capabilities_v2:user123:all" not in fake_redis._store
+    assert "capabilities_v2:user123:persona1" not in fake_redis._store
     # Other user's key should be untouched
-    assert "capabilities:other_user:all" in fake_redis._store
+    assert "capabilities_v2:other_user:all" in fake_redis._store
 
 
-# ── Multi-connection aggregation ────────────────────────────────────────
+# -- Multi-connection aggregation ------------------------------------------
 
 @pytest.mark.asyncio
 async def test_fetch_aggregates_multiple_connections():
-    """_fetch_capabilities should OR capabilities across multiple connections."""
+    """_fetch_capabilities should union tool names across multiple connections."""
     from app.core.capabilities import _fetch_capabilities
 
     mock_response = MagicMock()
@@ -166,8 +157,8 @@ async def test_fetch_aggregates_multiple_connections():
     mock_response.raise_for_status = MagicMock()
     mock_response.json.return_value = {
         "connections": [
-            {"id": "c1", "capabilities": {"can_read_email": True, "can_send_email": False, "can_read_calendar": False, "can_write_calendar": False}},
-            {"id": "c2", "capabilities": {"can_read_email": False, "can_send_email": True, "can_read_calendar": False, "can_write_calendar": False}},
+            {"id": "c1", "capabilities": {"tools": ["read_emails"]}},
+            {"id": "c2", "capabilities": {"tools": ["send_email", "read_emails"]}},
         ]
     }
 
@@ -184,13 +175,44 @@ async def test_fetch_aggregates_multiple_connections():
     with patch("app.core.capabilities.httpx.AsyncClient", return_value=FakeClient()):
         caps = await _fetch_capabilities("user-multi")
 
-    assert caps["can_read_email"] is True
-    assert caps["can_send_email"] is True
-    assert caps["can_read_calendar"] is False
-    assert caps["can_write_calendar"] is False
+    assert "read_emails" in caps["tools"]
+    assert "send_email" in caps["tools"]
+    # Deduplication: read_emails should appear only once
+    assert caps["tools"].count("read_emails") == 1
 
 
-# ── Error message formatting ────────────────────────────────────────────
+# -- Cache key uses v2 prefix ----------------------------------------------
+
+@pytest.mark.asyncio
+async def test_cache_key_uses_v2_prefix():
+    """Cache key should use capabilities_v2 prefix to avoid stale v1 entries."""
+    from app.core.capabilities import get_capabilities
+
+    fake_redis = FakeRedis()
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.raise_for_status = MagicMock()
+    mock_response.json.return_value = {"connections": []}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def get(self, url, params=None):
+            return mock_response
+
+    with patch("app.core.capabilities.httpx.AsyncClient", return_value=FakeClient()):
+        await get_capabilities(fake_redis, "user-v2-test")
+
+    assert "capabilities_v2:user-v2-test:all" in fake_redis._store
+    assert "capabilities:user-v2-test:all" not in fake_redis._store
+
+
+# -- Error message formatting ----------------------------------------------
 
 class TestErrorMessages:
     def test_send_email_message(self):

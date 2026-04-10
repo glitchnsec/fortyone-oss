@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.config import get_settings
-from app.core.capabilities import get_capabilities, TOOL_CAPABILITY_MAP, resolve_capability_persona
+from app.core.capabilities import get_capabilities, resolve_capability_persona
 from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas
 
 logger = logging.getLogger(__name__)
@@ -587,15 +587,16 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
     persona_id = payload.get("persona_id")
     persona_name = payload.get("persona", "shared")
 
-    # ── Capability pre-check (D-01): check cached capabilities before dispatch ──
-    required_cap = TOOL_CAPABILITY_MAP.get(tool_name)
-    if required_cap:
+    # ── Capability pre-check (D-01): check tool_name in tools list ──
+    CONNECTION_TOOLS = frozenset({"read_emails", "send_email", "list_events", "create_event"})
+    if tool_name in CONNECTION_TOOLS:
         from app.queue.client import queue_client
         r = queue_client._redis
         if r is not None:
             cap_persona_id = resolve_capability_persona(payload)
             caps = await get_capabilities(r, user_id, cap_persona_id)
-            if not caps.get(required_cap, False):
+            available_tools = caps.get("tools", [])
+            if tool_name not in available_tools:
                 settings = get_settings()
                 return {
                     "error": "missing_capability",
