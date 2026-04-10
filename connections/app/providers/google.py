@@ -30,4 +30,7 @@ class GoogleProvider(AbstractProvider):
 def get_provider(name: str) -> AbstractProvider:
     if name == "google":
         return GoogleProvider()
+    if name == "mcp":
+        from app.providers.mcp import MCPProvider
+        return MCPProvider()
     raise ValueError(f"Unknown provider: {name}")
