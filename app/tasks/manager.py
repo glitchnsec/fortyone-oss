@@ -214,6 +214,10 @@ async def manager_dispatch(payload: dict) -> dict:
 
                 description = _format_action_description(
                     tool_name, tool_args_raw, persona=persona)
+                logger.info(
+                    "CONFIRMATION_PROMPT  tool=%s  persona=%s  description=%s",
+                    tool_name, persona, description[:80],
+                )
                 response_text = f"I'd like to {description}. Should I go ahead? (Reply YES or NO)"
 
                 return {
@@ -639,8 +643,15 @@ def _format_action_description(tool_name: str, tool_args_raw: str, persona: str 
         # MCP tools are namespaced: mcp_{conn_id_short}_{original_name}
         parts = tool_name.split("_", 2)
         display_name = parts[2].replace("_", " ").replace("-", " ") if len(parts) > 2 else tool_name
-        # Include persona so user knows which workspace is being accessed
-        persona_label = f" on your {persona} persona" if persona and persona != "shared" else ""
+        # Always include persona so the user knows which workspace is being accessed.
+        # This is their last checkpoint before execution.
+        if persona and persona not in ("shared", ""):
+            persona_label = f" on your {persona} persona"
+        else:
+            # For shared/undetected, try to resolve persona from the connection ID
+            # embedded in the tool name (mcp_{conn_id_short}_{name})
+            conn_id_short = parts[1] if len(parts) > 1 else ""
+            persona_label = f" (connection {conn_id_short})" if conn_id_short else ""
         # Summarize args if any are meaningful
         meaningful = {k: v for k, v in args.items() if v} if isinstance(args, dict) else {}
         if meaningful:
