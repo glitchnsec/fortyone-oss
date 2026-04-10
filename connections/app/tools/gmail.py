@@ -48,52 +48,94 @@ async def _get_fresh_token(conn: Connection, token: OAuthToken, db: AsyncSession
         raise HTTPException(401, "Your Google connection needs reauthorization. Reconnect to restore full access.")
 
 
-async def _get_connection(user_id: str, db: AsyncSession, persona_id: str | None = None):
-    """Fetch Connection + OAuthToken for user. Optionally scoped by persona_id. Raises 404 if not connected."""
+async def _get_all_connections(user_id: str, db: AsyncSession, persona_id: str | None = None) -> list[tuple]:
+    """Return (Connection, OAuthToken) pairs for Google connections.
+
+    When persona_id is set: returns the single matching connection.
+    When persona_id is None (shared/undetected): returns ALL connections
+    across personas so read operations can merge results.
+    """
     query = select(Connection).where(Connection.user_id == user_id, Connection.provider == "google")
     if persona_id:
         query = query.where(Connection.persona_id == persona_id)
+    query = query.order_by(Connection.updated_at.desc())
     result = await db.execute(query)
-    conn = result.scalar_one_or_none()
-    if not conn:
+    conns = result.scalars().all()
+    if not conns:
         raise HTTPException(404, "No Google connection found for this user")
-    tok_result = await db.execute(select(OAuthToken).where(OAuthToken.connection_id == conn.id))
-    token = tok_result.scalar_one_or_none()
-    if not token:
+
+    pairs = []
+    for conn in conns:
+        tok = (await db.execute(select(OAuthToken).where(OAuthToken.connection_id == conn.id))).scalar_one_or_none()
+        if tok:
+            pairs.append((conn, tok))
+    if not pairs:
         raise HTTPException(404, "No OAuth token found")
-    return conn, token
+    return pairs
+
+
+async def _get_connection(user_id: str, db: AsyncSession, persona_id: str | None = None):
+    """Return a single (Connection, OAuthToken) — for write operations like send_email."""
+    pairs = await _get_all_connections(user_id, db, persona_id=persona_id)
+    return pairs[0]
+
+
+async def _fetch_emails_for_connection(conn, token, db, client, max_results: int) -> list:
+    """Fetch emails from a single Gmail connection."""
+    access_token = await _get_fresh_token(conn, token, db)
+    resp = await client.get(
+        f"{GMAIL_BASE}/messages",
+        params={"maxResults": max_results},
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    resp.raise_for_status()
+    ids = [m["id"] for m in resp.json().get("messages", [])]
+    results = []
+    for msg_id in ids[:max_results]:
+        detail = await client.get(
+            f"{GMAIL_BASE}/messages/{msg_id}",
+            params={"format": "metadata", "metadataHeaders": ["Subject", "From", "Date"]},
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
+        if detail.status_code == 200:
+            payload_data = detail.json()
+            hdrs = {h["name"]: h["value"] for h in payload_data.get("payload", {}).get("headers", [])}
+            results.append({
+                "id": msg_id,
+                "subject": hdrs.get("Subject", "(no subject)"),
+                "from": hdrs.get("From", ""),
+                "snippet": payload_data.get("snippet", ""),
+                "date": hdrs.get("Date", ""),
+            })
+    return results
 
 
 async def read_emails(user_id: str, max_results: int = 10, db: AsyncSession = None, persona_id: str | None = None) -> list:
-    """Return list of recent email summaries."""
-    conn, token = await _get_connection(user_id, db, persona_id=persona_id)
-    access_token = await _get_fresh_token(conn, token, db)
+    """Return list of recent email summaries.
+
+    When persona_id is set: emails from that persona's Gmail only.
+    When persona_id is None (shared/undetected): merges emails across
+    all connected Gmail accounts, sorted by date.
+    """
+    pairs = await _get_all_connections(user_id, db, persona_id=persona_id)
+
+    if len(pairs) == 1:
+        conn, token = pairs[0]
+        async with httpx.AsyncClient() as client:
+            return await _fetch_emails_for_connection(conn, token, db, client, max_results)
+
+    # Multiple connections (shared/undetected) — merge across all
+    all_emails = []
     async with httpx.AsyncClient() as client:
-        # List message IDs
-        resp = await client.get(
-            f"{GMAIL_BASE}/messages",
-            params={"maxResults": max_results},
-            headers={"Authorization": f"Bearer {access_token}"},
-        )
-        resp.raise_for_status()
-        ids = [m["id"] for m in resp.json().get("messages", [])]
-        results = []
-        for msg_id in ids[:max_results]:
-            detail = await client.get(
-                f"{GMAIL_BASE}/messages/{msg_id}",
-                params={"format": "metadata", "metadataHeaders": ["Subject", "From"]},
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
-            if detail.status_code == 200:
-                payload = detail.json()
-                headers = {h["name"]: h["value"] for h in payload.get("payload", {}).get("headers", [])}
-                results.append({
-                    "id": msg_id,
-                    "subject": headers.get("Subject", "(no subject)"),
-                    "from": headers.get("From", ""),
-                    "snippet": payload.get("snippet", ""),
-                })
-        return results
+        for conn, token in pairs:
+            try:
+                emails = await _fetch_emails_for_connection(conn, token, db, client, max_results)
+                all_emails.extend(emails)
+            except Exception as exc:
+                logger.warning("gmail fetch failed conn=%s error=%s", conn.id[:8], exc)
+
+    all_emails.sort(key=lambda e: e.get("date") or "", reverse=True)
+    return all_emails[:max_results]
 
 
 async def send_email(user_id: str, to: str, subject: str, body: str, db: AsyncSession = None, persona_id: str | None = None) -> dict:
