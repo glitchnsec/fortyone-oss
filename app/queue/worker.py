@@ -38,6 +38,12 @@ class Worker:
             encoding="utf-8",
             decode_responses=True,
         )
+        # Share Redis with queue_client singleton so that code importing
+        # queue_client._redis (e.g. capabilities lookup in _call_mcp_tool)
+        # works in the worker process.
+        from app.queue.client import queue_client
+        if queue_client._redis is None:
+            await queue_client.connect()
         # Create consumer group; ignore error if it already exists (D-12, Pitfall 4)
         try:
             await self._redis.xgroup_create(
