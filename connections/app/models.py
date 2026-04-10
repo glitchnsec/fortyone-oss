@@ -45,4 +45,5 @@ class OAuthState(Base):
     state = Column(String, primary_key=True)       # CSRF token
     user_id = Column(String, nullable=False)
     persona_id = Column(String, nullable=True)     # which persona initiated this OAuth flow
+    metadata_json = Column("metadata", Text, nullable=True)  # flow-specific JSON payload
     created_at = Column(DateTime(timezone=True), default=_utcnow)

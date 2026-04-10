@@ -7,7 +7,7 @@
  * connections with status badges, disconnect action, and "Add Connection" button
  * that initiates OAuth with persona_id.
  */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -17,7 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -154,24 +154,37 @@ function PersonasSettingsPage() {
       apiKey?: string;
       name?: string;
     }) => {
-      const res = await fetchWithAuth("/api/v1/mcp/connect", {
+      const url = authType === "oauth" ? "/api/v1/mcp/oauth/initiate" : "/api/v1/mcp/connect";
+      const payload = authType === "oauth"
+        ? {
+            persona_id: personaId,
+            server_url: serverUrl,
+            name: mcpName || undefined,
+          }
+        : {
+            persona_id: personaId,
+            server_url: serverUrl,
+            auth_type: authType,
+            api_key: apiKey || undefined,
+            name: mcpName || undefined,
+          };
+      const res = await fetchWithAuth(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          persona_id: personaId,
-          server_url: serverUrl,
-          auth_type: authType,
-          api_key: apiKey || undefined,
-          name: mcpName || undefined,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({})) as { detail?: string; error?: string };
-        throw new Error(err.detail ?? err.error ?? "Failed to connect MCP server");
+        const detail = typeof err.detail === "string" ? err.detail : err.error;
+        throw new Error(detail ?? "Failed to connect MCP server");
       }
-      return res.json() as Promise<{ id: string; tools: string[]; warnings?: string[] }>;
+      return res.json() as Promise<{ id?: string; tools?: string[]; warnings?: string[]; auth_url?: string }>;
     },
     onSuccess: (data) => {
+      if (data.auth_url) {
+        window.location.href = data.auth_url;
+        return;
+      }
       const toolCount = data.tools?.length ?? 0;
       toast.success(`MCP server connected with ${toolCount} tool${toolCount !== 1 ? "s" : ""}.`);
       if (data.warnings?.length) {

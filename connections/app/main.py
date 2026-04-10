@@ -49,6 +49,11 @@ def _run_startup_migrations(sync_conn):
                 logger.info("STARTUP_MIGRATION added oauth_states.persona_id column")
             else:
                 logger.info("STARTUP_MIGRATION oauth_states.persona_id already exists — skipping")
+            if "metadata" not in columns:
+                sync_conn.execute(text("ALTER TABLE oauth_states ADD COLUMN metadata TEXT"))
+                logger.info("STARTUP_MIGRATION added oauth_states.metadata column")
+            else:
+                logger.info("STARTUP_MIGRATION oauth_states.metadata already exists — skipping")
         else:
             logger.info("STARTUP_MIGRATION oauth_states table not found — create_all will handle it")
     except Exception as exc:

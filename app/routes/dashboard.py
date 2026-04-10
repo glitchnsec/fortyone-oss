@@ -241,6 +241,30 @@ class MCPConnectBody(BaseModel):
     name: str | None = None
 
 
+class MCPOAuthInitiateBody(BaseModel):
+    persona_id: str | None = None
+    server_url: str
+    name: str | None = None
+
+
+class MCPOAuthCallbackBody(BaseModel):
+    code: str
+    state: str
+
+
+@router.get("/mcp/oauth/client-metadata")
+async def mcp_oauth_client_metadata():
+    """Public client metadata document for MCP auth servers using metadata-based client IDs."""
+    settings = get_settings()
+    return {
+        "client_name": "Operator MCP Client",
+        "redirect_uris": [f"{settings.dashboard_url}/connections/callback"],
+        "grant_types": ["authorization_code", "refresh_token"],
+        "response_types": ["code"],
+        "token_endpoint_auth_method": "none",
+    }
+
+
 @router.post("/mcp/connect")
 async def proxy_mcp_connect(
     body: MCPConnectBody,
@@ -269,6 +293,53 @@ async def proxy_mcp_connect(
         raise
     except httpx.HTTPError as e:
         logger.error("mcp connect proxy error: %s", e)
+        raise HTTPException(502, "Connections service unavailable")
+
+
+@router.post("/mcp/oauth/initiate")
+async def proxy_mcp_oauth_initiate(
+    body: MCPOAuthInitiateBody,
+    user: User = Depends(get_current_user),
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Proxy MCP OAuth initiation to the connections service."""
+    try:
+        resp = await client.post(
+            "/mcp/oauth/initiate",
+            json={
+                "user_id": str(user.id),
+                "persona_id": body.persona_id,
+                "server_url": body.server_url,
+                "name": body.name,
+            },
+        )
+        if resp.status_code >= 400:
+            raise HTTPException(resp.status_code, resp.json())
+        return resp.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error("mcp oauth initiate proxy error: %s", e)
+        raise HTTPException(502, "Connections service unavailable")
+
+
+@router.post("/mcp/oauth/callback")
+async def proxy_mcp_oauth_callback(
+    body: MCPOAuthCallbackBody,
+    user: User = Depends(get_current_user),
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Complete the MCP OAuth flow after the browser returns to the dashboard."""
+    try:
+        resp = await client.post("/mcp/oauth/callback", json=body.model_dump())
+        if resp.status_code >= 400:
+            raise HTTPException(resp.status_code, resp.json())
+        await _invalidate_user_capabilities(str(user.id))
+        return resp.json()
+    except HTTPException:
+        raise
+    except httpx.HTTPError as e:
+        logger.error("mcp oauth callback proxy error: %s", e)
         raise HTTPException(502, "Connections service unavailable")
 
 

@@ -84,10 +84,15 @@ class TestToolNameValidation:
         assert "64" in reason
 
     def test_tool_name_special_chars(self):
-        for name in ["my-tool", "my.tool", "my tool", "tool@home"]:
+        for name in ["my.tool", "my tool", "tool@home"]:
             ok, reason = validate_tool_name(name)
             assert ok is False, f"Expected '{name}' to be rejected"
             assert "invalid characters" in reason.lower()
+
+    def test_tool_name_hyphen_allowed(self):
+        """Hyphens are allowed in MCP tool names (e.g. Notion tools)."""
+        ok, reason = validate_tool_name("my-tool")
+        assert ok is True, f"Expected 'my-tool' to be accepted, got: {reason}"
 
     def test_tool_name_reserved(self):
         for reserved in ["web_search", "send_email", "list_events"]:
@@ -135,6 +140,7 @@ class TestMCPCall:
         class FakeResponse:
             status_code = 200
             content = b'{"jsonrpc":"2.0","id":1,"result":{"ok":true}}'
+            headers = {}
 
             def raise_for_status(self):
                 pass
@@ -168,6 +174,7 @@ class TestMCPCall:
         class FakeResponse:
             status_code = 200
             content = b'{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}'
+            headers = {}
 
             def raise_for_status(self):
                 pass
@@ -200,6 +207,7 @@ class TestMCPCall:
         class FakeResponse:
             status_code = 200
             content = big_content
+            headers = {}
 
             def raise_for_status(self):
                 pass
