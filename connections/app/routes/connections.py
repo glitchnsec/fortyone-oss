@@ -1,4 +1,5 @@
 """List, update, and delete user connections."""
+import json
 import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
@@ -38,6 +39,15 @@ async def list_connections(user_id: str, persona_id: str | None = None, db: Asyn
             manifest = p.capability_manifest(scopes)
         except ValueError:
             manifest = CapabilityManifest(provider=c.provider, tools=[])
+        # Include full MCP tool schemas for MCP connections so the main API
+        # can build LLM tool definitions without a second round-trip.
+        mcp_tools = []
+        if c.provider == "mcp" and c.mcp_tools_json:
+            try:
+                mcp_tools = json.loads(c.mcp_tools_json)
+            except (json.JSONDecodeError, TypeError):
+                mcp_tools = []
+
         out.append({
             "id": c.id,
             "provider": c.provider,
@@ -45,6 +55,7 @@ async def list_connections(user_id: str, persona_id: str | None = None, db: Asyn
             "persona_id": c.persona_id,
             "execution_type": c.execution_type or "native",
             "capabilities": {"tools": manifest.tools},
+            "mcp_tools": mcp_tools,
         })
     return {"connections": out}
 

@@ -153,6 +153,73 @@ def get_tool_risk(tool_name: str) -> str:
     return TOOL_RISK.get(tool_name, "high")  # Default to high if unknown
 
 
+async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> list[dict]:
+    """Return OpenAI-format tool schemas for a user's MCP connections.
+
+    Fetches MCP connections from the connections service, parses the
+    mcp_tools list from each, and builds namespaced tool definitions
+    so the LLM can invoke MCP tools alongside built-in ones.
+
+    Tool names are namespaced as ``mcp_{connection_id_short}_{tool_name}``
+    to avoid collisions between connections.  Each MCP tool is registered
+    as "medium" risk in TOOL_RISK (external tools).
+
+    On any error (connections service down, parse failure) returns an empty
+    list — graceful degradation.
+    """
+    import httpx
+    from app.config import get_settings
+
+    try:
+        settings = get_settings()
+        url = f"{settings.connections_service_url}/connections/{user_id}"
+        params: dict[str, str] = {}
+        if persona_id is not None:
+            params["persona_id"] = persona_id
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url, params=params)
+            resp.raise_for_status()
+
+        data = resp.json()
+        connections = data.get("connections", [])
+
+        schemas: list[dict] = []
+        for conn in connections:
+            if conn.get("execution_type") != "mcp":
+                continue
+            if conn.get("status") != "connected":
+                continue
+
+            conn_id = conn.get("id", "")
+            conn_id_short = conn_id[:8]
+            mcp_tools = conn.get("mcp_tools", [])
+
+            for tool in mcp_tools:
+                tool_name = tool.get("name", "")
+                if not tool_name:
+                    continue
+                namespaced_name = f"mcp_{conn_id_short}_{tool_name}"
+
+                schemas.append({
+                    "type": "function",
+                    "function": {
+                        "name": namespaced_name,
+                        "description": tool.get("description", ""),
+                        "parameters": tool.get("inputSchema", {"type": "object", "properties": {}}),
+                    },
+                })
+
+                # Register MCP tools as medium risk (external tools)
+                TOOL_RISK[namespaced_name] = "medium"
+
+        return schemas
+
+    except Exception as exc:
+        logger.warning("get_mcp_tool_schemas failed user=%s error=%s", user_id[:8] if user_id else "?", exc)
+        return []
+
+
 async def get_custom_agent_schemas(user_id: str) -> list[dict]:
     """Return OpenAI-format tool schemas for a user's enabled custom agents.
 

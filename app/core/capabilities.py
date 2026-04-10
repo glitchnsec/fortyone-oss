@@ -104,12 +104,27 @@ async def _fetch_capabilities(
 
         # Aggregate: union all tool names across connections
         tools_set: set[str] = set()
+        mcp_tool_connections: dict[str, str] = {}
         for conn in connections:
             conn_caps = conn.get("capabilities", {})
             conn_tools = conn_caps.get("tools", [])
             tools_set.update(conn_tools)
 
-        return {"tools": sorted(tools_set)}
+            # MCP connections: build namespaced tool names and map to connection ID
+            if conn.get("execution_type") == "mcp" and conn.get("status") == "connected":
+                conn_id = conn.get("id", "")
+                conn_id_short = conn_id[:8]
+                for mcp_tool in conn.get("mcp_tools", []):
+                    tool_name = mcp_tool.get("name", "")
+                    if tool_name:
+                        namespaced = f"mcp_{conn_id_short}_{tool_name}"
+                        tools_set.add(namespaced)
+                        mcp_tool_connections[namespaced] = conn_id
+
+        return {
+            "tools": sorted(tools_set),
+            "mcp_tool_connections": mcp_tool_connections,
+        }
 
     except Exception as exc:
         logger.warning(
