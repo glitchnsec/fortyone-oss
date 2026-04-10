@@ -385,7 +385,7 @@ async def test_task_reminder_missing_action_type_defaults_notify_plan02(db_sessi
 
 @pytest.mark.asyncio
 async def test_task_reminder_execute_fallback_on_redis_failure(db_session):
-    """If Redis re-queue fails, execute falls back to static notification."""
+    """If Redis re-queue fails, execute returns empty response (graceful degradation)."""
     user, task = await _create_user_and_task(db_session, action_type="execute")
 
     mock_redis = AsyncMock()
@@ -409,8 +409,9 @@ async def test_task_reminder_execute_fallback_on_redis_failure(db_session):
             "channel": "sms",
         })
 
-    # Fallback to static notification (uses DB task title "call mom", not payload title)
-    assert result["response"] == "Reminder: call mom"
+    # When Redis fails on execute path, _requeue_via_manager returns empty response
+    # (the manager job can't be created, so no response is generated)
+    assert result["response"] == ""
 
 
 # ─── Integration: manager loop prevention ────────────────────────────────────

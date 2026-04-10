@@ -240,11 +240,12 @@ async def test_detect_persona_inherits_last():
 
 @pytest.mark.asyncio
 async def test_detect_persona_needs_clarification():
-    """LLM returns confidence < 0.6 on non-trivial body → needs_clarification=True."""
-    from app.core.persona import detect_persona
+    """LLM returns confidence < threshold on non-trivial body → needs_clarification=True."""
+    from app.core.persona import detect_persona, CLARIFICATION_THRESHOLD
     personas = [_make_persona("work"), _make_persona("personal")]
 
-    mock_response = {"persona": "shared", "confidence": 0.4}
+    # Return confidence below CLARIFICATION_THRESHOLD (0.4) to trigger needs_clarification
+    mock_response = {"persona": "shared", "confidence": CLARIFICATION_THRESHOLD - 0.1}
     with patch("app.tasks._llm.llm_messages_json", new_callable=AsyncMock) as mock_llm:
         mock_llm.return_value = mock_response
         name, conf, needs_clarification = await detect_persona(

@@ -15,39 +15,39 @@ from app.core.intent import IntentType, classify_intent
 # ── Intent classification: recall/meta patterns ─────────────────────────────
 
 class TestRecallMetaClassification:
-    """Recall/meta questions must classify as RECALL, not FOLLOWUP or GENERAL."""
+    """Recall/meta questions route to NEEDS_MANAGER (Phase 4: LLM classifies all non-regex)."""
 
     def test_what_do_you_know_about_me(self):
         result = classify_intent("What do you know about me?")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
     def test_what_do_you_remember_about_me(self):
         result = classify_intent("What do you remember about me?")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
     def test_tell_me_what_you_remember(self):
         result = classify_intent("Tell me what you remember")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
     def test_what_have_you_learned_about_me(self):
         result = classify_intent("What have you learned about me?")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
     def test_what_information_do_you_have_about_me(self):
         result = classify_intent("What information do you have about me?")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
 
 class TestRecallNoRegression:
-    """Existing patterns must not break."""
+    """All non-regex intents route to NEEDS_MANAGER (Phase 4)."""
 
-    def test_remind_me_still_reminder(self):
+    def test_remind_me_routes_to_manager(self):
         result = classify_intent("remind me to call Bob")
-        assert result.type == IntentType.REMINDER
+        assert result.type == IntentType.NEEDS_MANAGER
 
-    def test_what_reminders_do_i_have_still_recall(self):
+    def test_what_reminders_routes_to_manager(self):
         result = classify_intent("What reminders do I have?")
-        assert result.type == IntentType.RECALL
+        assert result.type == IntentType.NEEDS_MANAGER
 
 
 # ── Pipeline: persona clarification bypass ───────────────────────────────────

@@ -56,11 +56,15 @@ async def client():
 
 @pytest.mark.asyncio
 async def test_sms_inbound_mock_mode_skips_validation(client):
-    """In mock SMS mode (default dev), signature validation is skipped."""
-    resp = await client.post(
-        "/sms/inbound",
-        data={"From": "+15551234567", "Body": "hello"},
-    )
+    """In mock SMS mode, signature validation is skipped."""
+    with patch("app.routes.sms.get_settings") as mock_settings:
+        s = MagicMock()
+        s.is_mock_sms = True
+        mock_settings.return_value = s
+        resp = await client.post(
+            "/sms/inbound",
+            data={"From": "+15551234567", "Body": "hello"},
+        )
     # Should not return 403 — mock mode skips signature check
     assert resp.status_code != 403
 

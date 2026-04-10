@@ -70,14 +70,15 @@ async def test_schedule_intent_uses_full_context():
 
 
 @pytest.mark.asyncio
-async def test_reminder_intent_uses_standard_context():
-    """REMINDER intent must call get_context_standard, not get_context_full."""
+async def test_reminder_text_uses_full_context():
+    """Reminder text now classifies as NEEDS_MANAGER (Phase 4) which uses full context."""
     pipeline = _make_pipeline(race_result={"response": "Reminder set!", "learn": {}})
     with patch("app.core.pipeline.get_smart_ack", new=AsyncMock(return_value="On it!")):
         await pipeline.handle("+15551234567", "remind me at 3pm to call Bob")
 
-    pipeline.store.get_context_standard.assert_called_once()
-    pipeline.store.get_context_full.assert_not_called()
+    # Phase 4: all non-regex intents → NEEDS_MANAGER → full context
+    pipeline.store.get_context_full.assert_called_once()
+    pipeline.store.get_context_standard.assert_not_called()
 
 
 @pytest.mark.asyncio

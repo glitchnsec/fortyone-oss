@@ -104,6 +104,9 @@ def load_subagents() -> list[dict]:
         for tool in agent.get("tools", []):
             TOOL_RISK[tool["name"]] = tool.get("risk_level", "low")
 
+    # Always ensure built-in tool risks are set (survives cache clears in tests)
+    TOOL_RISK.setdefault("update_setting", "medium")
+
     return _subagents
 
 

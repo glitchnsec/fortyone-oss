@@ -94,7 +94,7 @@ def auth_header(token):
 
 @pytest.mark.asyncio
 async def test_get_returns_all_categories_with_defaults(client):
-    """GET /proactive-preferences returns all 8 categories with default values."""
+    """GET /proactive-preferences returns all 9 categories with default values."""
     token, _ = await register_user(client)
     resp = await client.get("/api/v1/proactive-preferences", headers=auth_header(token))
     assert resp.status_code == 200
@@ -102,19 +102,23 @@ async def test_get_returns_all_categories_with_defaults(client):
 
     assert "categories" in data
     assert "global_settings" in data
-    assert len(data["categories"]) == 8
+    assert len(data["categories"]) == 9  # Phase 4.3: 9 categories (added afternoon_followup + feature_discovery)
 
-    # All should be enabled with no overrides
+    # No overrides for any category
     for cat in data["categories"]:
-        assert cat["enabled"] is True
         assert cat["has_override"] is False
         assert cat["description"] != ""
         assert cat["window_start_hour"] == cat["default_window_start"]
         assert cat["window_end_hour"] == cat["default_window_end"]
 
-    # Global defaults
+    # Most categories default to disabled; only profile_nudge and feature_discovery default to enabled
+    enabled_by_default = {c["name"] for c in data["categories"] if c["enabled"] is True}
+    assert "profile_nudge" in enabled_by_default
+    assert "feature_discovery" in enabled_by_default
+
+    # Global defaults (Phase 4.3: max_daily reduced from 5 to 3 for noise reduction)
     gs = data["global_settings"]
-    assert gs["max_daily_messages"] == 5
+    assert gs["max_daily_messages"] == 3
     assert gs["quiet_hours_start"] == 22
     assert gs["quiet_hours_end"] == 7
     assert gs["enabled"] is True

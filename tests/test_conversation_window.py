@@ -132,46 +132,46 @@ async def test_get_context_null_channel_fallback(db_session):
 
 # ─── classify_intent: FOLLOWUP detection ─────────────────────────────────────
 
-def test_followup_intent_fires_for_short_message():
-    """classify_intent('ok') must return FOLLOWUP (short message, no rule fires)."""
+def test_short_message_routes_to_needs_manager():
+    """classify_intent('ok') must return NEEDS_MANAGER (Phase 4: all non-regex → manager)."""
     from app.core.intent import classify_intent, IntentType
 
     result = classify_intent("ok")
-    assert result.type == IntentType.FOLLOWUP, (
-        f"Expected FOLLOWUP for 'ok', got {result.type}"
+    assert result.type == IntentType.NEEDS_MANAGER, (
+        f"Expected NEEDS_MANAGER for 'ok', got {result.type}"
     )
     assert result.requires_worker is True
 
 
-def test_followup_fires_for_other_short_ambiguous_messages():
-    """Short clarification phrases must also return FOLLOWUP."""
+def test_short_ambiguous_messages_route_to_needs_manager():
+    """Short clarification phrases must route to NEEDS_MANAGER (Phase 4)."""
     from app.core.intent import classify_intent, IntentType
 
     for text in ["I meant Friday", "actually 3pm", "no, work email", "sure", "yeah ok"]:
         result = classify_intent(text)
-        assert result.type == IntentType.FOLLOWUP, (
-            f"Expected FOLLOWUP for '{text}', got {result.type}"
+        assert result.type == IntentType.NEEDS_MANAGER, (
+            f"Expected NEEDS_MANAGER for '{text}', got {result.type}"
         )
 
 
-def test_followup_does_not_override_reminder():
-    """classify_intent('remind me tomorrow') must return REMINDER, not FOLLOWUP."""
+def test_reminder_text_routes_to_needs_manager():
+    """classify_intent('remind me tomorrow') must return NEEDS_MANAGER (Phase 4: LLM classifies)."""
     from app.core.intent import classify_intent, IntentType
 
     result = classify_intent("remind me tomorrow")
-    assert result.type == IntentType.REMINDER, (
-        f"Expected REMINDER, got {result.type}"
+    assert result.type == IntentType.NEEDS_MANAGER, (
+        f"Expected NEEDS_MANAGER, got {result.type}"
     )
 
 
-def test_followup_does_not_fire_for_long_messages():
-    """Messages with 15+ words must fall through to GENERAL, not FOLLOWUP."""
+def test_long_messages_route_to_needs_manager():
+    """Messages with 15+ words route to NEEDS_MANAGER (Phase 4: all non-regex → manager)."""
     from app.core.intent import classify_intent, IntentType
 
     long_msg = "this is a long message that does not match any rule pattern and has many words here"
     assert len(long_msg.split()) >= 15, "Test setup: need 15+ words"
 
     result = classify_intent(long_msg)
-    assert result.type == IntentType.GENERAL, (
-        f"Expected GENERAL for long message, got {result.type}"
+    assert result.type == IntentType.NEEDS_MANAGER, (
+        f"Expected NEEDS_MANAGER for long message, got {result.type}"
     )

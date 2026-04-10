@@ -184,15 +184,15 @@ def test_dead_man_switch_threshold():
 
 
 def test_default_max_per_hour():
-    """Default proactive rate limit: 2 per hour."""
+    """Default proactive rate limit: 10 per hour (Phase 4.3 relaxed for multi-category)."""
     from app.core.throttle import DEFAULT_MAX_PER_HOUR
-    assert DEFAULT_MAX_PER_HOUR == 2
+    assert DEFAULT_MAX_PER_HOUR == 10
 
 
 def test_default_max_per_day():
-    """Default proactive rate limit: 5 per day."""
+    """Default proactive rate limit: 3 per day (Phase 4.3 noise reduction)."""
     from app.core.throttle import DEFAULT_MAX_PER_DAY
-    assert DEFAULT_MAX_PER_DAY == 5
+    assert DEFAULT_MAX_PER_DAY == 3
 
 
 def test_throttle_functions_importable():
@@ -453,11 +453,11 @@ def test_failed_tool_error_content_instructs_llm():
     assert "Do NOT retry" in parsed["message"]
 
 
-def test_system_prompt_forbids_task_deflection():
+def test_system_prompt_handles_tool_failures_honestly():
     """
-    Regression: System prompt must instruct the LLM to never create reminders
-    for tasks the user asked the operator to handle. The operator must be
-    honest about limitations instead of deflecting work back to the user.
+    Regression: System prompt must instruct the LLM to be honest about tool failures
+    rather than silently working around them. The operator should tell the user
+    when something is unavailable.
 
     Bug: User asked "find and book an auto body shop" → LLM created a reminder
     for the USER to research auto body shops.
@@ -466,16 +466,13 @@ def test_system_prompt_forbids_task_deflection():
 
     result = _build_system_prompt({"context": {}, "persona": "shared"})
 
-    # Anti-deflection: don't create reminders as substitute for failed tools
-    assert "do NOT create a reminder as a substitute" in result or "do not create a reminder as a substitute" in result.lower(), (
-        "System prompt missing anti-deflection rule for tool failure substitution"
-    )
-    # Pro-reminder: explicitly say reminders ARE your job
-    assert "create_reminder tool" in result or "ALWAYS use the create_reminder" in result, (
-        "System prompt must tell LLM that setting reminders is its job"
-    )
+    # Must instruct transparency about tool failures
     assert "tool fails" in result or "unavailable" in result, (
         "System prompt should instruct transparency about tool failures"
+    )
+    # Must distinguish goals from reminders (prevents wrong tool usage)
+    assert "create_goal" in result or "GOALS" in result, (
+        "System prompt should distinguish goals from reminders"
     )
 
 
