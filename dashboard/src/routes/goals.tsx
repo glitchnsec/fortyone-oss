@@ -5,11 +5,11 @@
  * Filter by status: Active | Completed | Archived | All.
  * Create form with title, framework, description, target date.
  */
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { Loader2, Plus, Trash2, CheckCircle2, Archive, Pencil } from "lucide-react";
+import { Loader2, Plus, Trash2, CheckCircle2, Archive } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";

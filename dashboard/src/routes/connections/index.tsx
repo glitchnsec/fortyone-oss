@@ -7,7 +7,7 @@
  * On page load: reads ?connected=<provider>&persona_id=<id> or ?error=<reason>
  * query params for OAuth callback toast.
  */
-import { useState, useEffect } from "react";
+import { useEffect } from "react";
 import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
