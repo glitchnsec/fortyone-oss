@@ -23,7 +23,7 @@ from typing import Any
 
 from app.config import get_settings
 from app.core.capabilities import get_capabilities, resolve_capability_persona
-from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas
+from app.core.tools import get_tool_schemas, get_tool_risk, get_custom_agent_schemas, get_mcp_tool_schemas
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +72,12 @@ async def manager_dispatch(payload: dict) -> dict:
         custom_schemas = await get_custom_agent_schemas(user_id)
         if custom_schemas:
             tools = tools + custom_schemas
+
+    # Append MCP tool schemas from user's MCP connections
+    if user_id:
+        mcp_schemas = await get_mcp_tool_schemas(user_id, persona_id=payload.get("persona_id"))
+        if mcp_schemas:
+            tools = tools + mcp_schemas
 
     # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
     # (Research Pitfall 1). Remove create_reminder tool and instruct direct execution.
@@ -587,6 +593,22 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
     persona_id = payload.get("persona_id")
     persona_name = payload.get("persona", "shared")
 
+    # ── MCP tool dispatch (D-10): tools prefixed with "mcp_" route to connections service ──
+    if tool_name.startswith("mcp_"):
+        # Capability pre-check for MCP tools
+        from app.queue.client import queue_client
+        r = queue_client._redis
+        if r is not None:
+            cap_persona_id = resolve_capability_persona(payload)
+            caps = await get_capabilities(r, user_id, cap_persona_id)
+            available_tools = caps.get("tools", [])
+            if tool_name not in available_tools:
+                return {
+                    "error": "missing_capability",
+                    "user_message": "This MCP tool is not available. Check your MCP server connections in the dashboard.",
+                }
+        return await _call_mcp_tool(tool_name, tool_args, payload)
+
     # ── Capability pre-check (D-01): check tool_name in tools list ──
     CONNECTION_TOOLS = frozenset({"read_emails", "send_email", "list_events", "create_event"})
     if tool_name in CONNECTION_TOOLS:
@@ -796,6 +818,67 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
         logger.error("Tool execution failed tool=%s error=%s",
                      tool_name, exc, exc_info=True)
         return {"error": f"Tool {tool_name} failed: {str(exc)[:200]}"}
+
+
+async def _call_mcp_tool(tool_name: str, tool_args: dict, payload: dict) -> dict:
+    """Execute an MCP tool via the connections service JSON-RPC proxy.
+
+    MCP tool names are namespaced as ``mcp_{conn_id_short}_{original_name}``.
+    The connection_id is resolved from the cached capability data
+    (mcp_tool_connections mapping).
+    """
+    import httpx
+
+    user_id = payload.get("user_id", "")
+    persona_id = payload.get("persona_id")
+
+    # Resolve connection_id from cached capabilities
+    from app.queue.client import queue_client
+    r = queue_client._redis
+    cap_persona_id = resolve_capability_persona(payload)
+    caps = await get_capabilities(r, user_id, cap_persona_id) if r else {}
+    connection_id = caps.get("mcp_tool_connections", {}).get(tool_name)
+
+    if not connection_id:
+        return {
+            "error": "mcp_connection_not_found",
+            "user_message": "Could not find the MCP connection for this tool.",
+        }
+
+    # Extract original tool name: mcp_{conn_id_short}_{original_name}
+    # Split on _ and rejoin from index 2 onwards
+    parts = tool_name.split("_")
+    original_tool_name = "_".join(parts[2:]) if len(parts) > 2 else tool_name
+
+    settings = get_settings()
+    try:
+        async with httpx.AsyncClient(
+            base_url=settings.connections_service_url, timeout=30.0,
+        ) as client:
+            resp = await client.post(
+                "/tools/mcp/execute",
+                json={
+                    "user_id": user_id,
+                    "connection_id": connection_id,
+                    "tool_name": original_tool_name,
+                    "arguments": tool_args,
+                    "persona_id": persona_id,
+                },
+            )
+            if resp.status_code == 404:
+                return {
+                    "error": "mcp_connection_not_found",
+                    "user_message": "The MCP server connection was not found.",
+                }
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.ConnectError:
+        return {"error": "mcp_service_unavailable", "user_message": "MCP service is currently unavailable."}
+    except httpx.TimeoutException:
+        return {"error": "mcp_timeout", "user_message": "The MCP server took too long to respond."}
+    except Exception as exc:
+        logger.error("MCP tool execution failed tool=%s error=%s", tool_name, exc, exc_info=True)
+        return {"error": f"MCP tool failed: {str(exc)[:200]}"}
 
 
 async def _call_connections_tool(
