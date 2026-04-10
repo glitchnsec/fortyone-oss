@@ -177,6 +177,17 @@ async def manager_dispatch(payload: dict) -> dict:
 
             risk = get_tool_risk(tool_name)
 
+            # Parse tool arguments (LLMs sometimes emit malformed JSON)
+            try:
+                tool_args_parsed = json.loads(tool_args_raw) if isinstance(
+                    tool_args_raw, str) else tool_args_raw
+            except json.JSONDecodeError as parse_err:
+                logger.warning(
+                    "TOOL_ARGS_PARSE_FAILED tool=%s error=%s raw=%s",
+                    tool_name, parse_err, tool_args_raw[:200],
+                )
+                tool_args_parsed = {}
+
             # D-04: Confirmation for medium/high risk tools
             if risk in ("medium", "high"):
                 from app.database import AsyncSessionLocal
@@ -186,8 +197,7 @@ async def manager_dispatch(payload: dict) -> dict:
                     pending = await store.create_pending_action(
                         user_id=user_id,
                         action_type=tool_name,
-                        action_params=json.loads(tool_args_raw) if isinstance(
-                            tool_args_raw, str) else tool_args_raw,
+                        action_params=tool_args_parsed,
                         risk_level=risk,
                     )
                     await store.log_action(
