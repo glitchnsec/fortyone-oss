@@ -331,11 +331,13 @@ class MessagePipeline:
             response_text = result.get("response", "")
             if response_text:
                 await self.channel.send(address, response_text)
+                tool_metadata = result.get("tool_metadata")
                 await self.store.store_message(
                     user_id=user.id, direction="outbound", body=response_text,
                     state=MessageState.CONFIRM.value, channel=self.channel.name,
                     persona_tag=persona_name if persona_name != "shared" else None,
                     job_id=job_id,
+                    metadata=tool_metadata,
                 )
                 logger.info(
                     "RACE_WON  job_id=%s  channel=%s  address=%s  (single message)",
@@ -454,6 +456,7 @@ class ResponseListener:
                 user = await store.get_or_create_user(address)
                 user_id = user.id
 
+            tool_metadata = result.get("tool_metadata")
             await store.store_message(
                 user_id=user_id,
                 direction="outbound",
@@ -461,6 +464,7 @@ class ResponseListener:
                 state=MessageState.CONFIRM.value,
                 job_id=job_id,
                 channel=channel_name,
+                metadata=tool_metadata,
             )
 
             learn_signals: dict = result.get("learn", {})

@@ -60,6 +60,108 @@ def _enforce_channel_response_budget(text: str, channel: str) -> str:
     return f"{trimmed}\n\nReply 'continue' if you want the rest."
 
 
+_HISTORY_TOKEN_BUDGET = 10000  # D-05: ~10k tokens for history window
+
+
+def _reconstruct_tool_messages(recent_messages: list[dict]) -> list[dict]:
+    """
+    Convert stored message history into OpenAI-compatible messages array.
+    Handles messages with and without tool metadata (D-04).
+
+    For outbound messages WITH metadata.tool_calls:
+      - assistant msg with tool_calls
+      - tool result msgs for each tool_results entry
+    For all other messages: simple user/assistant text.
+    """
+    openai_msgs: list[dict] = []
+    for msg in recent_messages:
+        if msg["direction"] == "inbound":
+            openai_msgs.append({"role": "user", "content": msg.get("body", "")})
+        else:
+            metadata = msg.get("metadata") or {}
+            tool_calls = metadata.get("tool_calls")
+            tool_results = metadata.get("tool_results")
+            body = msg.get("body", "")
+
+            if tool_calls:
+                # Assistant message with tool calls
+                assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
+                if body:
+                    assistant_msg["content"] = body
+                openai_msgs.append(assistant_msg)
+
+                # Tool result messages
+                if tool_results:
+                    for tr in tool_results:
+                        openai_msgs.append({
+                            "role": "tool",
+                            "tool_call_id": tr["tool_call_id"],
+                            "content": tr.get("content", ""),
+                        })
+            else:
+                # Simple text message
+                if body:
+                    openai_msgs.append({"role": "assistant", "content": body})
+    return openai_msgs
+
+
+def _apply_token_budget(openai_msgs: list[dict], budget: int = _HISTORY_TOKEN_BUDGET) -> tuple[list[dict], list[dict]]:
+    """
+    Walk turns newest-first, keep whole turns until budget exhausted (D-05).
+    A turn = user message + all following non-user messages until next user message.
+    Returns (kept_messages, dropped_messages).
+    Never splits an assistant+tool_calls from its tool results.
+    """
+    # Group into turns (each starting with a user message)
+    turns: list[list[dict]] = []
+    current_turn: list[dict] = []
+    for msg in openai_msgs:
+        if msg["role"] == "user" and current_turn:
+            turns.append(current_turn)
+            current_turn = []
+        current_turn.append(msg)
+    if current_turn:
+        turns.append(current_turn)
+
+    # Walk newest-first, accumulate token cost
+    kept_turns: list[list[dict]] = []
+    dropped_turns: list[list[dict]] = []
+    total_tokens = 0
+    for turn in reversed(turns):
+        turn_tokens = sum(len(json.dumps(m)) // 4 for m in turn)
+        if total_tokens + turn_tokens > budget:
+            dropped_turns.insert(0, turn)
+        else:
+            kept_turns.insert(0, turn)
+            total_tokens += turn_tokens
+
+    kept = [msg for turn in kept_turns for msg in turn]
+    dropped = [msg for turn in dropped_turns for msg in turn]
+    return kept, dropped
+
+
+def _summarize_dropped_turns(dropped: list[dict]) -> str:
+    """
+    Template-based summary of dropped turns for D-06.
+    Extracts tool names and key result snippets from dropped messages.
+    """
+    if not dropped:
+        return ""
+    tool_summaries: list[str] = []
+    for msg in dropped:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            for tc in msg["tool_calls"]:
+                tool_summaries.append(tc["function"]["name"])
+        if msg.get("role") == "tool":
+            content = msg.get("content", "")
+            if len(content) > 150:
+                content = content[:150] + "..."
+            tool_summaries.append(f"result: {content}")
+    if not tool_summaries:
+        return ""
+    return f"[Earlier in this conversation, these tools were used: {', '.join(tool_summaries[:10])}]"
+
+
 async def manager_dispatch(payload: dict) -> dict:
     """
     Process a NEEDS_MANAGER job using LLM tool-calling.
@@ -118,14 +220,23 @@ async def manager_dispatch(payload: dict) -> dict:
     # Build system prompt with personality, context, and cross-persona hints
     system_prompt = _build_system_prompt(payload)
 
-    # Build conversation messages from context
+    # Build conversation messages from context with tool metadata (D-04)
     messages = [{"role": "system", "content": system_prompt}]
 
-    # Add recent conversation history from context
+    # Reconstruct full conversation history including tool calls/results
     recent = context.get("recent_messages", [])
-    for msg in recent[-6:]:  # Last 6 messages for context window
-        role = "user" if msg.get("direction") == "inbound" else "assistant"
-        messages.append({"role": role, "content": msg.get("body", "")})
+    history_msgs = _reconstruct_tool_messages(recent)
+
+    # Apply token budget sliding window (D-05)
+    kept, dropped = _apply_token_budget(history_msgs)
+
+    # Add dropped turn summary to system prompt if needed (D-06)
+    if dropped:
+        summary = _summarize_dropped_turns(dropped)
+        if summary:
+            messages[0]["content"] += f"\n\n{summary}"
+
+    messages.extend(kept)
 
     # Current user message
     messages.append({"role": "user", "content": body})
@@ -148,6 +259,7 @@ async def manager_dispatch(payload: dict) -> dict:
     learn_signals = {}
     tool_failure_counts: dict[str, int] = {}  # Track per-tool failure count
     failed_tools: dict[str, str] = {}  # tool_name -> user-facing reason
+    intermediate_texts: list[str] = []  # D-08: accumulate text from rounds with tool calls
 
     for round_num in range(MAX_TOOL_ROUNDS):
         result = await llm_tools(
@@ -165,6 +277,10 @@ async def manager_dispatch(payload: dict) -> dict:
             # No tool calls — LLM produced a direct response
             response_text = content or f"I heard you. Let me think about '{body[:30]}'..."
             break
+
+        # D-08: Accumulate intermediate text from rounds that also have tool calls
+        if content and content.strip():
+            intermediate_texts.append(content.strip())
 
         # Execute tool calls and feed results back
         # Append assistant message with tool calls
@@ -354,6 +470,34 @@ async def manager_dispatch(payload: dict) -> dict:
         response_text = result.get(
             "content") or "I've been working on your request but need a bit more time."
 
+    # D-08: Prepend accumulated intermediate texts to final response
+    if intermediate_texts and response_text:
+        unique_intermediates = [
+            t for t in intermediate_texts
+            if t not in response_text  # Simple dedup
+        ]
+        if unique_intermediates:
+            response_text = "\n\n".join(unique_intermediates) + "\n\n" + response_text
+
+    # Collect tool metadata for message storage (D-01, D-02, D-03)
+    all_tool_calls = []
+    all_tool_results = []
+    for msg in messages:
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            all_tool_calls.extend(msg["tool_calls"])
+        if msg.get("role") == "tool":
+            all_tool_results.append({
+                "tool_call_id": msg["tool_call_id"],
+                "content": msg["content"][:2048],  # Cap per Pitfall 2 in research
+            })
+
+    tool_metadata = None
+    if all_tool_calls:
+        tool_metadata = {
+            "tool_calls": all_tool_calls,
+            "tool_results": all_tool_results,
+        }
+
     # TRANSPARENCY GUARD: If any tools failed during this dispatch,
     # ensure the response acknowledges the limitation. The LLM often
     # produces responses that gloss over failures — prepend a clear note.
@@ -383,6 +527,7 @@ async def manager_dispatch(payload: dict) -> dict:
         "response": response_text,
         "learn": learn_signals,
         "user_id": user_id,
+        "tool_metadata": tool_metadata,
     }
 
 
@@ -526,6 +671,10 @@ def _build_system_prompt(payload: dict) -> str:
         "  After creating a goal, acknowledge it and offer to help: break it down into steps, "
         "suggest a schedule, or coach them through it. Don't just silently track it.\n"
         "- Do not mention technical details like API keys or configuration to the user.\n"
+        "- IMPORTANT: When you need to use a tool, do NOT include substantive information in your text response alongside the tool call. "
+        "Wait for the tool result and then provide a complete, consolidated response to the user. "
+        "For example, if the user asks about two restaurants and you know one address but need to search for the other, "
+        "call the search tool first, then respond with BOTH addresses together.\n"
         "- CRITICAL: To change any user setting (proactive messages, quiet hours, profile, etc.), "
         "you MUST call the update_setting tool. NEVER claim you have changed a setting without "
         "actually calling the tool. If you cannot determine the right parameters, ask the user "

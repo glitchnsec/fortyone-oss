@@ -230,6 +230,7 @@ class MemoryStore:
                     "body": m.body,
                     "at": m.created_at.isoformat(),
                     "intent": m.intent,
+                    "metadata": json.loads(m.metadata_json) if getattr(m, "metadata_json", None) else None,
                 }
                 for m in reversed(recent_messages)
             ],
@@ -415,6 +416,7 @@ class MemoryStore:
         job_id: Optional[str] = None,
         channel: Optional[str] = None,      # NEW — per D-01, D-02: scopes history per channel
         persona_tag: Optional[str] = None,  # NEW — per D-08: records active persona at send time
+        metadata: Optional[dict] = None,    # CONV-01: tool_calls + tool_results for context reconstruction
     ) -> Message:
         message = Message(
             user_id=user_id,
@@ -425,6 +427,7 @@ class MemoryStore:
             job_id=job_id,
             channel=channel or "sms",   # default sms for backward compat
             persona_tag=persona_tag,
+            metadata_json=json.dumps(metadata) if metadata else None,
         )
         self.db.add(message)
         await self.db.commit()
@@ -438,6 +441,98 @@ class MemoryStore:
             )
         )
         return len(result.scalars().all())
+
+    # ─── Task Sessions (CONV-03, D-11) ──────────────────────────────────────
+
+    async def get_active_session(
+        self, user_id: str, channel: str = "sms",
+    ) -> Optional["TaskSession"]:
+        """Get the most recent in_progress task session for this user+channel.
+
+        Auto-abandons sessions older than 24h (D-11 TTL).
+        """
+        from app.memory.models import TaskSession
+        from datetime import timedelta
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+
+        # Abandon stale sessions
+        stale = await self.db.execute(
+            select(TaskSession).where(
+                TaskSession.user_id == user_id,
+                TaskSession.status == "in_progress",
+                TaskSession.last_active < cutoff,
+            )
+        )
+        for s in stale.scalars().all():
+            s.status = "abandoned"
+        await self.db.commit()
+
+        # Fetch active
+        result = await self.db.execute(
+            select(TaskSession).where(
+                TaskSession.user_id == user_id,
+                TaskSession.status == "in_progress",
+                TaskSession.channel == channel,
+            ).order_by(TaskSession.last_active.desc()).limit(1)
+        )
+        return result.scalars().first()
+
+    async def upsert_session(
+        self,
+        user_id: str,
+        session_id: str,
+        original_intent: str,
+        channel: str = "sms",
+        persona_tag: Optional[str] = None,
+        gathered_context: Optional[str] = None,
+        pending_action: Optional[str] = None,
+        tools_called: Optional[list[str]] = None,
+        status: str = "in_progress",
+    ) -> "TaskSession":
+        """Create or update a task session (D-11)."""
+        import json as _json
+        from app.memory.models import TaskSession
+
+        result = await self.db.execute(
+            select(TaskSession).where(TaskSession.session_id == session_id)
+        )
+        existing = result.scalars().first()
+        if existing:
+            existing.gathered_context = gathered_context
+            existing.pending_action = pending_action
+            existing.tools_called = _json.dumps(tools_called) if tools_called else existing.tools_called
+            existing.status = status
+            existing.last_active = datetime.now(timezone.utc)
+            await self.db.commit()
+            return existing
+
+        session = TaskSession(
+            user_id=user_id,
+            session_id=session_id,
+            original_intent=original_intent,
+            channel=channel,
+            persona_tag=persona_tag,
+            gathered_context=gathered_context,
+            pending_action=pending_action,
+            tools_called=_json.dumps(tools_called) if tools_called else None,
+            status=status,
+        )
+        self.db.add(session)
+        await self.db.commit()
+        await self.db.refresh(session)
+        return session
+
+    async def complete_session(self, session_id: str) -> None:
+        """Mark a task session as completed."""
+        from app.memory.models import TaskSession
+        result = await self.db.execute(
+            select(TaskSession).where(TaskSession.session_id == session_id)
+        )
+        session = result.scalars().first()
+        if session:
+            session.status = "completed"
+            session.last_active = datetime.now(timezone.utc)
+            await self.db.commit()
 
     # ─── Personas ────────────────────────────────────────────────────────────
 
@@ -760,6 +855,7 @@ class MemoryStore:
                     "body": m.body,
                     "at": m.created_at.isoformat(),
                     "intent": m.intent,
+                    "metadata": json.loads(m.metadata_json) if getattr(m, "metadata_json", None) else None,
                 }
                 for m in reversed(recent)
             ],
@@ -826,6 +922,7 @@ class MemoryStore:
                     "body": m.body,
                     "at": m.created_at.isoformat(),
                     "intent": m.intent,
+                    "metadata": json.loads(m.metadata_json) if getattr(m, "metadata_json", None) else None,
                 }
                 for m in reversed(recent)
             ],
