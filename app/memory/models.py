@@ -75,6 +75,7 @@ class User(Base):
     proactive_preferences = relationship("ProactivePreference", back_populates="user", cascade="all, delete-orphan")
     custom_agents = relationship("CustomAgent", back_populates="user", cascade="all, delete-orphan")
     feature_milestones = relationship("FeatureMilestone", backref="user", cascade="all, delete-orphan")
+    task_sessions = relationship("TaskSession", backref="user", cascade="all, delete-orphan")
 
 
 class Memory(Base):
@@ -149,6 +150,7 @@ class Message(Base):
     created_at = Column(DateTime(timezone=True), default=_utcnow)
     channel = Column(String, nullable=True, default="sms")      # D-01, D-02: scopes history per channel
     persona_tag = Column(String, nullable=True)                  # D-08: active persona at send time
+    metadata_json = Column(Text, nullable=True)  # D-01: tool_calls + tool_results JSON
 
     user = relationship("User", back_populates="messages")
 
@@ -311,6 +313,31 @@ class FeatureMilestone(Base):
     achieved_at = Column(DateTime(timezone=True), default=_utcnow)
 
     __table_args__ = (UniqueConstraint("user_id", "milestone_name", name="uq_user_milestone"),)
+
+
+class TaskSession(Base):
+    """
+    Persistent task session for multi-turn workflows (CONV-03, D-09/D-10/D-11).
+
+    Stores the user's original intent and accumulated context so follow-up
+    messages can continue a multi-step task without re-explaining the goal.
+    Status lifecycle: in_progress -> completed | abandoned
+    Abandoned after 24h of inactivity (checked at query time, not via cron).
+    """
+    __tablename__ = "task_sessions"
+
+    id = Column(String, primary_key=True, default=_uuid)
+    user_id = Column(String, ForeignKey("users.id"), nullable=False, index=True)
+    session_id = Column(String, nullable=False, unique=True, index=True)
+    original_intent = Column(Text, nullable=False)
+    gathered_context = Column(Text, nullable=True)   # JSON: accumulated facts
+    pending_action = Column(Text, nullable=True)      # JSON: what's next
+    tools_called = Column(Text, nullable=True)         # JSON: list of tool names used
+    status = Column(String, default="in_progress")     # in_progress | completed | abandoned
+    channel = Column(String, nullable=True)
+    persona_tag = Column(String, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_utcnow)
+    last_active = Column(DateTime(timezone=True), default=_utcnow)
 
 
 # Import UserSession so SQLAlchemy can resolve the User.sessions relationship string reference.
