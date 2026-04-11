@@ -6,6 +6,7 @@ Patterns are checked in priority order; first match wins.
 """
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone, timedelta
 from enum import Enum
 from typing import Optional
 
@@ -71,6 +72,59 @@ def classify_intent(text: str) -> Intent:
         requires_worker=True,
         raw_text=text,
     )
+
+
+# ─── Session Continuation Detection (CONV-03, D-12) ────────────────────────
+
+# Signals that a message is starting a NEW intent (not continuing a session)
+_NEW_INTENT_SIGNALS = re.compile(
+    r"^(remind me|set a reminder|search for|what'?s the weather|"
+    r"tell me a joke|send (an )?email|create a goal|"
+    r"check my calendar|list my tasks|update my|change my|set my)",
+    re.IGNORECASE,
+)
+
+
+def continues_active_session(
+    message: str,
+    session_last_active: datetime | None,
+    session_original_intent: str | None,
+    recency_threshold_minutes: int = 10,
+) -> bool:
+    """
+    Heuristic check: does this message continue an active task session? (D-12)
+
+    Returns True if:
+    1. Session exists and was active within recency_threshold_minutes
+    2. Message does NOT match new-intent signals (remind me, search for, etc.)
+
+    The LLM receives the intent envelope regardless, so false negatives are
+    recoverable — the model self-corrects using session context.
+    """
+    if not session_last_active or not session_original_intent:
+        return False
+
+    # Check recency
+    elapsed = datetime.now(timezone.utc) - session_last_active
+    if elapsed > timedelta(minutes=recency_threshold_minutes):
+        return False
+
+    # Check for explicit new-intent signals
+    stripped = message.strip()
+    if _NEW_INTENT_SIGNALS.match(stripped):
+        return False
+
+    # Short follow-ups are very likely continuations
+    # "yes", "put it under Getting Started", "the first one", etc.
+    if len(stripped.split()) <= 15:
+        return True
+
+    # Longer messages: default to continuation if session is very recent (< 5 min)
+    if elapsed < timedelta(minutes=5):
+        return True
+
+    # Ambiguous — default to new intent (LLM has envelope context to self-correct)
+    return False
 
 
 def intent_label(intent_type: IntentType) -> str:

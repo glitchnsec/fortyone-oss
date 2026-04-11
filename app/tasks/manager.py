@@ -183,6 +183,30 @@ async def manager_dispatch(payload: dict) -> dict:
     persona = payload.get("persona", "shared")
     llm_max_tokens = _SMS_LLM_MAX_TOKENS if channel == "sms" else 500
 
+    # ── CONV-03: Task session lookup (D-12) ──
+    active_session = None
+    session_continues = False
+    if user_id:
+        from app.database import AsyncSessionLocal
+        from app.memory.store import MemoryStore
+        async with AsyncSessionLocal() as db:
+            store = MemoryStore(db)
+            active_session = await store.get_active_session(user_id, channel=channel)
+
+        if active_session:
+            from app.core.intent import continues_active_session
+            session_continues = continues_active_session(
+                message=body,
+                session_last_active=active_session.last_active,
+                session_original_intent=active_session.original_intent,
+            )
+            if not session_continues:
+                # New intent detected — complete the old session
+                async with AsyncSessionLocal() as db:
+                    store = MemoryStore(db)
+                    await store.complete_session(active_session.session_id)
+                active_session = None
+
     # Get available tool schemas (built-in + user's custom agents)
     tools = get_tool_schemas()
     # Append user's custom agent tools — do NOT mutate the cached list
@@ -218,7 +242,7 @@ async def manager_dispatch(payload: dict) -> dict:
             payload["_cross_persona_hints"] = cross_hints
 
     # Build system prompt with personality, context, and cross-persona hints
-    system_prompt = _build_system_prompt(payload)
+    system_prompt = _build_system_prompt(payload, active_session=active_session)
 
     # Build conversation messages from context with tool metadata (D-04)
     messages = [{"role": "system", "content": system_prompt}]
@@ -514,6 +538,56 @@ async def manager_dispatch(payload: dict) -> dict:
 
     response_text = _enforce_channel_response_budget(response_text, channel)
 
+    # ── CONV-03: Session lifecycle (D-11) ──
+    if tool_metadata and user_id:
+        # Tools were called — create or update session
+        import uuid as _uuid_mod
+        tool_names = [tc["function"]["name"] for tc in tool_metadata.get("tool_calls", [])]
+
+        session_id = active_session.session_id if active_session else str(_uuid_mod.uuid4())
+        original = active_session.original_intent if active_session else body
+
+        # Build gathered_context from tool results (summarize, don't store full results)
+        result_summaries = []
+        for tr in tool_metadata.get("tool_results", []):
+            tr_content = tr.get("content", "")
+            if len(tr_content) > 300:
+                tr_content = tr_content[:300] + "..."
+            result_summaries.append(tr_content)
+        gathered = json.dumps(result_summaries) if result_summaries else None
+
+        # Merge with existing tools_called list
+        existing_tools = []
+        if active_session and active_session.tools_called:
+            try:
+                existing_tools = json.loads(active_session.tools_called)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        all_tools = existing_tools + tool_names
+
+        from app.database import AsyncSessionLocal as _ASL2
+        from app.memory.store import MemoryStore as _MS2
+        async with _ASL2() as db:
+            store = _MS2(db)
+            await store.upsert_session(
+                user_id=user_id,
+                session_id=session_id,
+                original_intent=original,
+                channel=channel,
+                persona_tag=persona,
+                gathered_context=gathered,
+                tools_called=all_tools,
+                status="in_progress",
+            )
+    elif not tool_metadata and active_session and response_text:
+        # No tools called and session exists — task likely completed
+        # (LLM responded directly, meaning it had enough context to answer)
+        from app.database import AsyncSessionLocal as _ASL3
+        from app.memory.store import MemoryStore as _MS3
+        async with _ASL3() as db:
+            store = _MS3(db)
+            await store.complete_session(active_session.session_id)
+
     # D-12: Passive profile learning — extract profile-relevant facts from conversation
     # Runs asynchronously after response to avoid adding latency
     if user_id and body:
@@ -599,7 +673,7 @@ async def _passive_profile_learn(user_id: str, message_text: str, persona: str =
         logger.warning("Passive profile learning failed: %s", exc)
 
 
-def _build_system_prompt(payload: dict) -> str:
+def _build_system_prompt(payload: dict, active_session: object | None = None) -> str:
     """Build the manager's system prompt with personality and context."""
     context = payload.get("context", {})
     persona = payload.get("persona", "shared")
@@ -762,6 +836,24 @@ def _build_system_prompt(payload: dict) -> str:
             for e in profile_entries[:15]
         )
         parts.append(f"\nUser profile (TELOS):\n{entry_text}")
+
+    # D-09/D-10: Intent envelope injection for active task sessions (CONV-03)
+    if active_session:
+        gathered = getattr(active_session, "gathered_context", None) or "none yet"
+        tools_used = getattr(active_session, "tools_called", None) or "none yet"
+        pending = getattr(active_session, "pending_action", None) or "continue based on user input"
+
+        envelope = (
+            "\n\n## Active Task Session\n"
+            f"The user is working on: {active_session.original_intent}\n"
+            f"Context gathered so far: {gathered}\n"
+            f"Tools already used: {tools_used}\n"
+            f"Next step needed: {pending}\n"
+            "Use this context to continue the task without asking the user to repeat themselves. "
+            "If the user's message relates to this task, continue it. If they're asking about something "
+            "completely unrelated, respond to their new question instead."
+        )
+        parts.append(envelope)
 
     return "\n\n".join(parts)
 
