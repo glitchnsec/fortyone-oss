@@ -74,7 +74,18 @@ async def route_job(payload: dict) -> dict:
         from app.tasks.manager import _execute_tool
         tool_name = confirmed_action["type"]
         tool_args = json.dumps(confirmed_action["params"])
+
+        logger.info(
+            "CONFIRMED_TOOL_CALL  tool=%s  args=%s",
+            tool_name, tool_args[:500],
+        )
+
         tool_result = await _execute_tool(tool_name, tool_args, payload)
+
+        logger.info(
+            "CONFIRMED_TOOL_RESULT  tool=%s  has_error=%s  result=%s",
+            tool_name, "error" in tool_result, json.dumps(tool_result)[:500],
+        )
 
         # Log the confirmed action
         from app.database import AsyncSessionLocal

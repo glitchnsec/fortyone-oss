@@ -225,6 +225,13 @@ async def manager_dispatch(payload: dict) -> dict:
             for schema in mcp_schemas:
                 name = schema["function"]["name"]
                 desc = schema["function"].get("description", "")
+                params = schema["function"].get("parameters", {})
+                required = params.get("required", [])
+                props = list(params.get("properties", {}).keys())
+                logger.info(
+                    "MCP_TOOL_SCHEMA  tool=%s  properties=%s  required=%s",
+                    name, props, required,
+                )
                 # Extract persona label from "[Personal / Notion] ..." prefix
                 if desc.startswith("[") and "]" in desc:
                     label = desc[1:desc.index("]")]
@@ -337,6 +344,12 @@ async def manager_dispatch(payload: dict) -> dict:
                 )
                 tool_args_parsed = {}
 
+            # Debug: log exactly what the LLM is passing to the tool
+            logger.info(
+                "LLM_TOOL_CALL  tool=%s  args=%s  job_id=%s",
+                tool_name, json.dumps(tool_args_parsed)[:500], job_id,
+            )
+
             # D-04: Confirmation for medium/high risk tools
             if risk in ("medium", "high"):
                 from app.database import AsyncSessionLocal
@@ -385,7 +398,8 @@ async def manager_dispatch(payload: dict) -> dict:
             is_failed = "error" in tool_result
             error_type = tool_result.get("error", "") if is_failed else ""
             is_retryable = error_type in (
-                "date_parse_failed", "invalid_input", "validation_error")
+                "date_parse_failed", "invalid_input", "validation_error",
+                "mcp_tool_error")
 
             if is_failed and is_retryable:
                 # RETRYABLE: The tool works but the LLM sent bad input.
@@ -396,21 +410,35 @@ async def manager_dispatch(payload: dict) -> dict:
                     "TOOL_RETRYABLE  tool=%s  error=%s  attempt=%d  job_id=%s",
                     tool_name, error_type, tool_failure_counts[tool_name], job_id,
                 )
-                now_utc = datetime.now(timezone.utc).isoformat()
-                _user_tz = context.get("user", {}).get("timezone") or "America/New_York"
+
+                # Build error-type-specific hint
+                error_msg = tool_result.get("user_message", tool_result.get("result", ""))
+                if error_type == "mcp_tool_error":
+                    hint = (
+                        f"The MCP tool returned an error. Read the error message carefully — "
+                        f"it tells you what's wrong with your arguments. "
+                        f"Check required fields and their formats, then retry with corrected arguments. "
+                        f"If you need information from the user (like a parent page ID), "
+                        f"ask them instead of guessing."
+                    )
+                else:
+                    now_utc = datetime.now(timezone.utc).isoformat()
+                    _user_tz = context.get("user", {}).get("timezone") or "America/New_York"
+                    hint = (
+                        f"The date you provided was invalid or in the past. "
+                        f"The current UTC time is {now_utc}. "
+                        f"The user's timezone is {_user_tz}. All user times are in their local timezone. "
+                        f"Please retry with a correct future date in ISO 8601 UTC format, "
+                        f"converting from the user's local time."
+                    )
+
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call_id,
                     "content": json.dumps({
                         "error": error_type,
-                        "message": tool_result.get("user_message", tool_result.get("result", "")),
-                        "hint": (
-                            f"The date you provided was invalid or in the past. "
-                            f"The current UTC time is {now_utc}. "
-                            f"The user's timezone is {_user_tz}. All user times are in their local timezone. "
-                            f"Please retry with a correct future date in ISO 8601 UTC format, "
-                            f"converting from the user's local time."
-                        ),
+                        "message": error_msg,
+                        "hint": hint,
                     }),
                 })
                 # Do NOT remove the tool — let the LLM retry with corrected input
@@ -1223,7 +1251,35 @@ async def _call_mcp_tool(tool_name: str, tool_args: dict, payload: dict) -> dict
                     "user_message": "The MCP server connection was not found.",
                 }
             resp.raise_for_status()
-            return resp.json()
+            result = resp.json()
+
+            logger.info(
+                "MCP_TOOL_RESULT  tool=%s  status=%d  is_error=%s  result=%s",
+                tool_name, resp.status_code,
+                result.get("result", {}).get("isError", False) if isinstance(result.get("result"), dict) else False,
+                json.dumps(result)[:800],
+            )
+
+            # Check MCP isError flag — this means the tool ran but returned
+            # an application-level error (e.g., missing required fields).
+            # Surface as a retryable error so the LLM can self-correct.
+            nested = result.get("result")
+            if isinstance(nested, dict) and nested.get("isError") and "error" not in result:
+                error_text = ""
+                for block in nested.get("content", []):
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        error_text += block.get("text", "")
+                error_text = error_text.strip() or "The tool reported an error"
+                logger.warning(
+                    "MCP_TOOL_ERROR  tool=%s  is_error=true  error=%s",
+                    tool_name, error_text[:500],
+                )
+                return {
+                    "error": "mcp_tool_error",
+                    "user_message": error_text[:500],
+                }
+
+            return result
     except httpx.ConnectError:
         return {"error": "mcp_service_unavailable", "user_message": "MCP service is currently unavailable."}
     except httpx.TimeoutException:
