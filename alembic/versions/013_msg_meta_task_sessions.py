@@ -1,6 +1,6 @@
 """Add metadata_json to messages table + task_sessions table.
 
-Revision ID: 013_message_metadata_task_sessions
+Revision ID: 013_msg_meta_task_sessions
 Revises: 012_oauth_state_metadata
 Create Date: 2026-04-11
 
@@ -13,7 +13,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = '013_message_metadata_task_sessions'
+revision: str = '013_msg_meta_task_sessions'
 down_revision: Union[str, Sequence[str], None] = '012_oauth_state_metadata'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
