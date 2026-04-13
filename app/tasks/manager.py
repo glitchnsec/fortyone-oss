@@ -964,10 +964,25 @@ def _format_action_description(tool_name: str, tool_args_raw: str, persona: str 
         return f"perform {tool_name} with {json.dumps(args)[:100]}"
 
 
-def _tool_failure_user_message(tool_name: str, persona_name: str = "", dashboard_url: str = "") -> str:
-    """Map tool names to user-friendly failure explanations with persona and dashboard link."""
+async def _tool_failure_user_message(
+    tool_name: str, persona_name: str = "", dashboard_url: str = "",
+    user_id: str = "", persona_id: str | None = None,
+) -> str:
+    """Map tool names to user-friendly failure explanations with persona and dashboard link.
+
+    When another persona has the required tool, the message names that persona
+    so the LLM can suggest switching (UAT Test 4 fix).
+    """
+    from app.core.capabilities import find_persona_with_tool
+
     base = f"{dashboard_url}/connections" if dashboard_url else "/connections"
     persona_label = f"your {persona_name} persona" if persona_name and persona_name not in ("your", "shared") else "your account"
+
+    # Check if another persona has this tool
+    other_persona = None
+    if user_id:
+        other_persona = await find_persona_with_tool(user_id, tool_name, exclude_persona_id=persona_id)
+
     messages = {
         "web_search": "I can't search the web right now — that feature isn't available at the moment.",
         "send_email": f"I can't send emails — {persona_label} doesn't have Gmail connected. Set it up at {base}",
@@ -980,7 +995,12 @@ def _tool_failure_user_message(tool_name: str, persona_name: str = "", dashboard
         "create_reminder": "I wasn't able to create that reminder.",
         "list_tasks": "I wasn't able to check your tasks.",
     }
-    return messages.get(tool_name, f"This tool requires a connection that isn't set up yet. Visit {base} to connect it.")
+    msg = messages.get(tool_name, f"This tool requires a connection that isn't set up yet. Visit {base} to connect it.")
+
+    if other_persona:
+        msg += f" However, your {other_persona} persona has this connected. Want me to use that instead?"
+
+    return msg
 
 
 async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> dict:
@@ -1032,8 +1052,9 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 settings = get_settings()
                 return {
                     "error": "missing_capability",
-                    "user_message": _tool_failure_user_message(
+                    "user_message": await _tool_failure_user_message(
                         tool_name, persona_name, settings.dashboard_url,
+                        user_id=user_id, persona_id=persona_id,
                     ),
                 }
 
@@ -1371,14 +1392,31 @@ async def _call_connections_tool(
                 }
             # D-07: Fallback when active persona lacks this connection
             if resp.status_code == 404:
+                from app.core.capabilities import find_persona_with_tool
+
                 display_name = persona_name or "your current persona"
                 dash_url = settings.dashboard_url
                 conn_url = f"{dash_url}/connections" if dash_url else "/connections"
+
+                # Check if another persona has this tool
+                other_persona = await find_persona_with_tool(
+                    user_id, action, exclude_persona_id=persona_id,
+                )
+
+                if other_persona:
+                    return {
+                        "error": "no_persona_connection",
+                        "message": (
+                            f"Your {display_name} persona doesn't have this service connected. "
+                            f"However, your {other_persona} persona has it. "
+                            f"Want me to use your {other_persona} persona for this?"
+                        ),
+                    }
                 return {
                     "error": "no_persona_connection",
                     "message": (
                         f"Your {display_name} persona doesn't have this service connected. "
-                        f"Check your other personas or connect it at {conn_url}"
+                        f"Connect it at {conn_url}"
                     ),
                 }
             resp.raise_for_status()

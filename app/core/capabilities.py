@@ -154,6 +154,92 @@ async def invalidate_capabilities(r: aioredis.Redis, user_id: str) -> None:
     logger.info("CAPABILITIES invalidated user=%s keys_deleted=%d", user_id[:8] if user_id else "?", deleted)
 
 
+async def find_persona_with_tool(
+    user_id: str,
+    tool_name: str,
+    exclude_persona_id: str | None = None,
+) -> str | None:
+    """Find which persona has a specific tool, excluding the given persona.
+
+    Returns the persona name (e.g., "Personal") or None if no other persona
+    has it. Used to produce actionable error messages when a tool call fails
+    due to wrong-persona routing.
+    """
+    if not user_id:
+        return None
+
+    try:
+        settings = get_settings()
+        url = f"{settings.connections_service_url}/connections/{user_id}"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)  # No persona filter = all connections
+            resp.raise_for_status()
+
+        data = resp.json()
+        connections = data.get("connections", [])
+
+        # Find a connection on a different persona that has the tool
+        matching_persona_id = None
+        for conn in connections:
+            conn_persona_id = conn.get("persona_id")
+            # Skip connections on the excluded persona
+            if conn_persona_id == exclude_persona_id:
+                continue
+            if conn.get("status") != "connected":
+                continue
+
+            # Check native tools
+            conn_tools = conn.get("capabilities", {}).get("tools", [])
+            if tool_name in conn_tools:
+                matching_persona_id = conn_persona_id
+                break
+
+            # Check MCP tools
+            if conn.get("execution_type") == "mcp":
+                for mcp_tool in conn.get("mcp_tools", []):
+                    conn_id_short = conn.get("id", "")[:8]
+                    namespaced = f"mcp_{conn_id_short}_{mcp_tool.get('name', '')}"
+                    if namespaced == tool_name or mcp_tool.get("name") == tool_name:
+                        matching_persona_id = conn_persona_id
+                        break
+                if matching_persona_id:
+                    break
+
+        if not matching_persona_id:
+            return None
+
+        # Look up the persona name from the database
+        try:
+            from app.database import AsyncSessionLocal
+            from app.memory.models import Persona
+            from sqlalchemy import select as sa_select
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(Persona).where(
+                        Persona.id == matching_persona_id,
+                        Persona.user_id == user_id,
+                    )
+                )
+                persona = result.scalars().first()
+                if persona:
+                    return persona.name
+        except Exception:
+            pass
+
+        return None
+
+    except Exception as exc:
+        logger.warning(
+            "find_persona_with_tool failed user=%s tool=%s error=%s",
+            user_id[:8] if user_id else "?",
+            tool_name,
+            exc,
+        )
+        return None
+
+
 def resolve_capability_persona(payload: dict) -> Optional[str]:
     """
     Determine whether to scope the capability query to a specific persona.
