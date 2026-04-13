@@ -285,6 +285,21 @@ async def get_cross_persona_tool_hints(
         data = resp.json()
         connections = data.get("connections", [])
 
+        # Collect tools the current persona already has (to skip duplicates in hints)
+        current_persona_tools: set[str] = set()
+        for conn in connections:
+            if conn.get("persona_id") != current_persona_id:
+                continue
+            if conn.get("status") != "connected":
+                continue
+            if conn.get("execution_type") == "mcp":
+                for tool in conn.get("mcp_tools", []):
+                    if tool.get("name"):
+                        current_persona_tools.add(tool["name"].replace("_", " ").replace("-", " "))
+            else:
+                for t in conn.get("capabilities", {}).get("tools", []):
+                    current_persona_tools.add(t.replace("_", " "))
+
         # Group tools by persona, excluding current persona
         other_persona_tools: dict[str, list[str]] = {}  # persona_id -> tool descriptions
         persona_names: dict[str, str] = {}  # persona_id -> display name
@@ -306,12 +321,17 @@ async def get_cross_persona_tool_hints(
                     desc = tool.get("description", "")
                     if name:
                         label = name.replace("_", " ").replace("-", " ")
-                        tools_on_conn.append(f"{label}" + (f" — {desc[:60]}" if desc else ""))
+                        # Skip tools the current persona already has
+                        if label not in current_persona_tools:
+                            tools_on_conn.append(f"{label}" + (f" — {desc[:60]}" if desc else ""))
             else:
-                # Native connections (Google etc.)
+                # Native connections (Google, Slack, etc.)
                 cap_tools = conn.get("capabilities", {}).get("tools", [])
                 for t in cap_tools:
-                    tools_on_conn.append(t.replace("_", " "))
+                    label = t.replace("_", " ")
+                    # Skip tools the current persona already has
+                    if label not in current_persona_tools:
+                        tools_on_conn.append(label)
 
             if tools_on_conn:
                 pid = conn_persona_id or "shared"
