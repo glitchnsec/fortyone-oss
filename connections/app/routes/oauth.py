@@ -2,10 +2,12 @@
 import secrets
 import logging
 from datetime import datetime, timezone, timedelta
+from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
+import httpx
 from authlib.integrations.httpx_client import AsyncOAuth2Client
 from app.config import get_settings
 from app.database import AsyncSessionLocal
@@ -29,6 +31,21 @@ async def initiate_oauth(provider: str, user_id: str, persona_id: str, db: Async
     state = secrets.token_urlsafe(32)
     db.add(OAuthState(state=state, user_id=user_id, persona_id=persona_id))
     await db.commit()
+
+    if provider == "slack":
+        params = {
+            "client_id": s.slack_client_id,
+            "user_scope": " ".join(p.scopes),
+            "redirect_uri": s.slack_redirect_uri,
+            "state": state,
+        }
+        auth_url = f"https://slack.com/oauth/v2/authorize?{urlencode(params)}"
+        return {"auth_url": auth_url}
+
+    if provider != "google":
+        raise HTTPException(400, f"OAuth not supported for provider: {provider}")
+
+    # Google OAuth path (unchanged)
     client = AsyncOAuth2Client(
         client_id=s.google_client_id,
         client_secret=s.google_client_secret,
@@ -54,21 +71,49 @@ async def oauth_callback(provider: str, code: str, state: str, db: AsyncSession 
 
     s = get_settings()
     p = get_provider(provider)
-    client = AsyncOAuth2Client(
-        client_id=s.google_client_id,
-        client_secret=s.google_client_secret,
-        redirect_uri=s.google_redirect_uri,
-    )
-    try:
-        token_data = await client.fetch_token(p.token_url, code=code, grant_type="authorization_code")
-    except Exception as e:
-        logger.error("OAuth token exchange failed provider=%s error=%s", provider, e, exc_info=True)
-        return RedirectResponse(f"{s.dashboard_url}/connections?error=token_exchange_failed")
 
-    access_token = token_data.get("access_token", "")
-    refresh_token = token_data.get("refresh_token", "")
-    expires_in = token_data.get("expires_in")
-    granted_scopes = token_data.get("scope", "")
+    if provider == "slack":
+        # Slack token exchange via httpx (Slack API doesn't follow standard OAuth2)
+        async with httpx.AsyncClient() as http:
+            resp = await http.post("https://slack.com/api/oauth.v2.access", data={
+                "client_id": s.slack_client_id,
+                "client_secret": s.slack_client_secret,
+                "code": code,
+                "redirect_uri": s.slack_redirect_uri,
+            })
+            data = resp.json()
+            if not data.get("ok"):
+                logger.error("Slack token exchange failed error=%s", data.get("error"))
+                return RedirectResponse(f"{s.dashboard_url}/connections?error=token_exchange_failed")
+
+        # CRITICAL: User token is nested under authed_user, NOT top-level
+        authed_user = data.get("authed_user")
+        if not authed_user or "access_token" not in authed_user:
+            logger.error("Slack OAuth missing authed_user block data_keys=%s", list(data.keys()))
+            return RedirectResponse(f"{s.dashboard_url}/connections?error=missing_user_token")
+
+        access_token = authed_user["access_token"]
+        refresh_token = authed_user.get("refresh_token", "")
+        expires_in = authed_user.get("expires_in")
+        # Slack returns comma-separated scopes; normalize to space-separated
+        granted_scopes = authed_user.get("scope", "").replace(",", " ")
+    else:
+        # Google OAuth path (unchanged)
+        client = AsyncOAuth2Client(
+            client_id=s.google_client_id,
+            client_secret=s.google_client_secret,
+            redirect_uri=s.google_redirect_uri,
+        )
+        try:
+            token_data = await client.fetch_token(p.token_url, code=code, grant_type="authorization_code")
+        except Exception as e:
+            logger.error("OAuth token exchange failed provider=%s error=%s", provider, e, exc_info=True)
+            return RedirectResponse(f"{s.dashboard_url}/connections?error=token_exchange_failed")
+
+        access_token = token_data.get("access_token", "")
+        refresh_token = token_data.get("refresh_token", "")
+        expires_in = token_data.get("expires_in")
+        granted_scopes = token_data.get("scope", "")
 
     # Upsert: remove old connection for this user+provider+persona before creating new one
     old = await db.execute(

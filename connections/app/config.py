@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
     google_redirect_uri: str = "http://localhost:8001/oauth/callback/google"
+    slack_client_id: str = ""
+    slack_client_secret: str = ""
+    slack_redirect_uri: str = "http://localhost:8001/oauth/callback/slack"
     mcp_oauth_redirect_uri: str = "http://localhost:8000/connections/callback"
     dashboard_url: str = "http://localhost:8000"
     mcp_allowlist: str = ""  # Comma-separated MCP server URL patterns. Empty = allow all.
