@@ -579,8 +579,10 @@ async def manager_dispatch(payload: dict) -> dict:
     # produces responses that gloss over failures — prepend a clear note.
     if failed_tools and response_text:
         settings = get_settings()
-        failure_summaries = [_tool_failure_user_message(
-            name, "your", settings.dashboard_url) for name in failed_tools]
+        failure_summaries = await asyncio.gather(*[
+            _tool_failure_user_message(name, "your", settings.dashboard_url)
+            for name in failed_tools
+        ])
         failure_note = " ".join(failure_summaries)
         # Only prepend if the response doesn't already mention the limitation
         limitation_keywords = ["can't search", "unable to search",
