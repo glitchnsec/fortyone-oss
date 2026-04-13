@@ -30,6 +30,9 @@ class GoogleProvider(AbstractProvider):
 def get_provider(name: str) -> AbstractProvider:
     if name == "google":
         return GoogleProvider()
+    if name == "slack":
+        from app.providers.slack import SlackProvider
+        return SlackProvider()
     if name == "mcp":
         from app.providers.mcp import MCPProvider
         return MCPProvider()

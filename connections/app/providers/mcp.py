@@ -44,6 +44,9 @@ RESERVED_TOOL_NAMES: frozenset[str] = frozenset({
     "update_goal",
     "list_goals",
     "update_setting",
+    "slack_read_channels",
+    "slack_get_workspace",
+    "slack_read_threads",
 })
 
 MAX_RESPONSE_BYTES = 1_048_576
