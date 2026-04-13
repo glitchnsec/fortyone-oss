@@ -363,7 +363,7 @@ async def get_cross_persona_tool_hints(
         ]
         for pid, tool_list in other_persona_tools.items():
             name = persona_names.get(pid, pid)
-            tools_str = "; ".join(tool_list[:8])  # Cap at 8 to save tokens
+            tools_str = "; ".join(tool_list[:15])  # Cap at 15 (dedup removes duplicates, so these are all unique)
             lines.append(f"  • {name} persona: {tools_str}")
 
         return "\n".join(lines)
