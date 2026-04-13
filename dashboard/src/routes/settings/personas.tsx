@@ -548,7 +548,7 @@ function PersonasSettingsPage() {
                     </div>
                   )}
                   {/* Add / Reconnect buttons -- per D-01, one connection per provider per persona */}
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-2">
                     {(() => {
                       const existingGoogle = getPersonaConnections(persona.id).find(
                         (c) => c.provider === "google" && c.status === "connected"
@@ -578,6 +578,39 @@ function PersonasSettingsPage() {
                             <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
                           ) : (
                             <><Plus className="mr-2 h-4 w-4" />Add Google</>
+                          )}
+                        </Button>
+                      );
+                    })()}
+                    {(() => {
+                      const existingSlack = getPersonaConnections(persona.id).find(
+                        (c) => c.provider === "slack" && c.status === "connected"
+                      );
+                      return existingSlack ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-[44px] flex-1"
+                          onClick={() => initiateConnectionMutation.mutate({ provider: "slack", personaId: persona.id })}
+                          disabled={connectingPersonaId === persona.id}
+                        >
+                          {connectingPersonaId === persona.id ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Reconnecting...</>
+                          ) : (
+                            <>Reconnect Slack</>
+                          )}
+                        </Button>
+                      ) : (
+                        <Button
+                          size="sm"
+                          className="bg-blue-600 hover:bg-blue-700 min-h-[44px] flex-1"
+                          onClick={() => initiateConnectionMutation.mutate({ provider: "slack", personaId: persona.id })}
+                          disabled={connectingPersonaId === persona.id}
+                        >
+                          {connectingPersonaId === persona.id ? (
+                            <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Connecting...</>
+                          ) : (
+                            <><Plus className="mr-2 h-4 w-4" />Add Slack</>
                           )}
                         </Button>
                       );
