@@ -72,8 +72,12 @@ def _reconstruct_tool_messages(recent_messages: list[dict]) -> list[dict]:
       - assistant msg with tool_calls
       - tool result msgs for each tool_results entry
     For all other messages: simple user/assistant text.
+
+    Deduplicates tool_call IDs across messages to handle corrupted history
+    from the snowball bug (pre-fix messages stored accumulated tool_calls).
     """
     openai_msgs: list[dict] = []
+    seen_tool_ids: set[str] = set()
     for msg in recent_messages:
         if msg["direction"] == "inbound":
             openai_msgs.append({"role": "user", "content": msg.get("body", "")})
@@ -84,20 +88,35 @@ def _reconstruct_tool_messages(recent_messages: list[dict]) -> list[dict]:
             body = msg.get("body", "")
 
             if tool_calls:
-                # Assistant message with tool calls
-                assistant_msg: dict = {"role": "assistant", "tool_calls": tool_calls}
-                if body:
-                    assistant_msg["content"] = body
-                openai_msgs.append(assistant_msg)
+                # Deduplicate: only include tool_calls with IDs not yet seen
+                unique_calls = []
+                for tc in tool_calls:
+                    tc_id = tc.get("id", "")
+                    if tc_id not in seen_tool_ids:
+                        seen_tool_ids.add(tc_id)
+                        unique_calls.append(tc)
 
-                # Tool result messages
-                if tool_results:
-                    for tr in tool_results:
-                        openai_msgs.append({
-                            "role": "tool",
-                            "tool_call_id": tr["tool_call_id"],
-                            "content": tr.get("content", ""),
-                        })
+                if unique_calls:
+                    # Assistant message with tool calls
+                    assistant_msg: dict = {"role": "assistant", "tool_calls": unique_calls}
+                    if body:
+                        assistant_msg["content"] = body
+                    openai_msgs.append(assistant_msg)
+
+                    # Tool result messages (only for unique calls)
+                    unique_call_ids = {tc["id"] for tc in unique_calls}
+                    if tool_results:
+                        for tr in tool_results:
+                            if tr["tool_call_id"] in unique_call_ids:
+                                openai_msgs.append({
+                                    "role": "tool",
+                                    "tool_call_id": tr["tool_call_id"],
+                                    "content": tr.get("content", ""),
+                                })
+                else:
+                    # All tool_calls were duplicates — emit as plain text
+                    if body:
+                        openai_msgs.append({"role": "assistant", "content": body})
             else:
                 # Simple text message
                 if body:
@@ -269,7 +288,8 @@ async def manager_dispatch(payload: dict) -> dict:
 
     messages.extend(kept)
 
-    # Current user message
+    # Current user message — track where current turn begins for metadata collection
+    current_turn_start = len(messages)
     messages.append({"role": "user", "content": body})
 
     # Infinite loop prevention: scheduled_execute jobs must NOT create new reminders
@@ -532,9 +552,13 @@ async def manager_dispatch(payload: dict) -> dict:
             response_text = "\n\n".join(unique_intermediates) + "\n\n" + response_text
 
     # Collect tool metadata for message storage (D-01, D-02, D-03)
+    # IMPORTANT: Only collect from current-turn messages (after history).
+    # The `messages` array contains reconstructed history (prior tool_calls)
+    # before `current_turn_start`. Iterating the full array would re-collect
+    # prior-turn tool metadata, causing exponential growth and duplicate IDs.
     all_tool_calls = []
     all_tool_results = []
-    for msg in messages:
+    for msg in messages[current_turn_start:]:
         if msg.get("role") == "assistant" and msg.get("tool_calls"):
             all_tool_calls.extend(msg["tool_calls"])
         if msg.get("role") == "tool":
