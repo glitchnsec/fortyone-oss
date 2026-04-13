@@ -950,6 +950,9 @@ def _tool_failure_user_message(tool_name: str, persona_name: str = "", dashboard
         "read_emails": f"I can't read your emails — {persona_label} doesn't have Gmail connected. Set it up at {base}",
         "list_events": f"I can't check your calendar — {persona_label} doesn't have Google Calendar connected. Set it up at {base}",
         "create_event": f"I can't create calendar events — {persona_label} doesn't have Google Calendar connected. Set it up at {base}",
+        "slack_read_channels": f"I can't read Slack channels — {persona_label} doesn't have Slack connected. Set it up at {base}",
+        "slack_get_workspace": f"I can't access Slack workspace info — {persona_label} doesn't have Slack connected. Set it up at {base}",
+        "slack_read_threads": f"I can't read Slack threads — {persona_label} doesn't have Slack connected. Set it up at {base}",
         "create_reminder": "I wasn't able to create that reminder.",
         "list_tasks": "I wasn't able to check your tasks.",
     }
@@ -990,7 +993,10 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
         return await _call_mcp_tool(tool_name, tool_args, payload)
 
     # ── Capability pre-check (D-01): check tool_name in tools list ──
-    CONNECTION_TOOLS = frozenset({"read_emails", "send_email", "list_events", "create_event"})
+    CONNECTION_TOOLS = frozenset({
+        "read_emails", "send_email", "list_events", "create_event",
+        "slack_read_channels", "slack_get_workspace", "slack_read_threads",
+    })
     if tool_name in CONNECTION_TOOLS:
         from app.queue.client import queue_client
         r = queue_client._redis
@@ -1047,6 +1053,24 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
         elif tool_name == "create_event":
             return await _call_connections_tool(
                 "calendar", "create_event", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
+            )
+
+        elif tool_name == "slack_read_channels":
+            return await _call_connections_tool(
+                "slack", "slack_read_channels", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
+            )
+
+        elif tool_name == "slack_get_workspace":
+            return await _call_connections_tool(
+                "slack", "slack_get_workspace", user_id, tool_args,
+                persona_id=persona_id, persona_name=persona_name,
+            )
+
+        elif tool_name == "slack_read_threads":
+            return await _call_connections_tool(
+                "slack", "slack_read_threads", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 

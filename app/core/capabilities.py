@@ -47,6 +47,9 @@ _ALL_TOOLS: list[str] = [
     "list_events",
     "create_event",
     "web_search",
+    "slack_read_channels",
+    "slack_get_workspace",
+    "slack_read_threads",
 ]
 
 _ALL_TOOLS_RESPONSE: dict = {"tools": _ALL_TOOLS}

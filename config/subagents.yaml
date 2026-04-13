@@ -88,6 +88,51 @@ subagents:
         handler: connections.tools.calendar.create_event
         risk_level: medium
 
+  - name: slack_agent
+    description: "Read Slack workspace data: channels, messages, threads, and workspace info"
+    tools:
+      - name: slack_read_channels
+        description: "List Slack channels the user belongs to (when no channel_id given) OR read recent messages from a specific channel (when channel_id is provided). Returns channel list or message list."
+        parameters:
+          type: object
+          properties:
+            channel_id:
+              type: string
+              description: "Slack channel ID (e.g. C01234567). Omit to list all channels the user belongs to."
+            limit:
+              type: integer
+              description: "Number of items to return (default 20, max 200 for channels, max 100 for messages)"
+              default: 20
+          required: []
+        handler: connections.tools.slack.slack_read_channels
+        risk_level: low
+      - name: slack_get_workspace
+        description: "Get Slack workspace metadata including team name, domain, and member list"
+        parameters:
+          type: object
+          properties: {}
+          required: []
+        handler: connections.tools.slack.slack_get_workspace
+        risk_level: low
+      - name: slack_read_threads
+        description: "Read thread replies in a Slack channel. Requires the channel ID and the thread timestamp (ts) of the parent message."
+        parameters:
+          type: object
+          properties:
+            channel_id:
+              type: string
+              description: "Slack channel ID containing the thread (e.g. C01234567)"
+            thread_ts:
+              type: string
+              description: "Timestamp of the parent message (thread_ts, e.g. 1234567890.123456)"
+            limit:
+              type: integer
+              description: "Number of replies to return (default 50, max 200)"
+              default: 50
+          required: ["channel_id", "thread_ts"]
+        handler: connections.tools.slack.slack_read_threads
+        risk_level: low
+
   - name: task_agent
     description: "Manage user tasks, reminders, and scheduled notifications"
     tools:
