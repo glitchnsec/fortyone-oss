@@ -60,6 +60,13 @@ class Settings(BaseSettings):
     brave_api_key: str = ""                # For Brave Search (plan 02-07)
     dashboard_url: str = "http://localhost:8000"  # Redirect target post-OAuth
 
+    # Proactivity platform defaults (admin-configurable at runtime via /admin/proactivity/settings)
+    proactive_max_daily_messages: int = 3
+    proactive_max_per_hour: int = 10
+    proactive_max_categories_per_day: int = 3  # upper bound for random.randint(1, N)
+    proactive_quiet_hours_start: int = 22
+    proactive_quiet_hours_end: int = 7
+
     # Race timeout: wait for worker before sending ACK (UAT showed 2.4s typical)
     race_timeout_s: float = 8.0
 

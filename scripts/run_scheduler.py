@@ -131,7 +131,20 @@ async def scheduler_loop():
                         if not safe:
                             logger.warning("SCHEDULER_SKIP dead_man_switch user=%s", user_id[:8])
                             continue
-                        allowed = await check_rate_limit(r, user_id)
+                        # Read per-user max_daily_messages from proactive_settings_json
+                        user_max_daily = None
+                        for uid, tz, sj in _user_cache[0]:
+                            if uid == user_id:
+                                if sj:
+                                    try:
+                                        _us = json.loads(sj)
+                                        user_max_daily = _us.get("max_daily_messages")
+                                    except (json.JSONDecodeError, TypeError):
+                                        pass
+                                break
+                        # Fall back to platform default
+                        max_daily = user_max_daily or get_settings().proactive_max_daily_messages
+                        allowed = await check_rate_limit(r, user_id, max_per_day=max_daily)
                         if not allowed:
                             logger.info("SCHEDULER_SKIP rate_limited user=%s", user_id[:8])
                             continue

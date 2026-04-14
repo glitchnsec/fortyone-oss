@@ -415,6 +415,73 @@ async def hard_purge_user(
     return {"status": "purged"}
 
 
+# ─── Proactivity Settings ──────────────────────────────────────────────────
+
+
+class ProactivitySettingsUpdate(BaseModel):
+    """Partial update for platform-wide proactivity defaults.
+
+    Mutates the lru_cache singleton — affects this process only.
+    For cross-process persistence (scheduler), update env vars and restart.
+    """
+    max_daily_messages: Optional[int] = None      # 1-50
+    max_per_hour: Optional[int] = None            # 1-20
+    max_categories_per_day: Optional[int] = None  # 1-9
+    quiet_hours_start: Optional[int] = None       # 0-23
+    quiet_hours_end: Optional[int] = None         # 0-23
+
+
+@router.get("/proactivity/settings")
+async def get_proactivity_settings(admin: User = Depends(require_admin)):
+    """Return current platform-wide proactivity defaults."""
+    s = get_settings()
+    return {
+        "max_daily_messages": s.proactive_max_daily_messages,
+        "max_per_hour": s.proactive_max_per_hour,
+        "max_categories_per_day": s.proactive_max_categories_per_day,
+        "quiet_hours_start": s.proactive_quiet_hours_start,
+        "quiet_hours_end": s.proactive_quiet_hours_end,
+    }
+
+
+@router.put("/proactivity/settings")
+async def update_proactivity_settings(
+    body: ProactivitySettingsUpdate,
+    admin: User = Depends(require_admin),
+):
+    """Update platform-wide proactivity defaults (runtime, in-memory).
+
+    Mutates the cached Settings singleton. Changes persist until process restart.
+    For permanent changes, update the environment variables and restart services.
+    """
+    s = get_settings()
+    if body.max_daily_messages is not None:
+        if not 1 <= body.max_daily_messages <= 50:
+            raise HTTPException(400, "max_daily_messages must be 1-50")
+        s.proactive_max_daily_messages = body.max_daily_messages
+    if body.max_per_hour is not None:
+        if not 1 <= body.max_per_hour <= 20:
+            raise HTTPException(400, "max_per_hour must be 1-20")
+        s.proactive_max_per_hour = body.max_per_hour
+    if body.max_categories_per_day is not None:
+        if not 1 <= body.max_categories_per_day <= 9:
+            raise HTTPException(400, "max_categories_per_day must be 1-9")
+        s.proactive_max_categories_per_day = body.max_categories_per_day
+    if body.quiet_hours_start is not None:
+        if not 0 <= body.quiet_hours_start <= 23:
+            raise HTTPException(400, "quiet_hours_start must be 0-23")
+        s.proactive_quiet_hours_start = body.quiet_hours_start
+    if body.quiet_hours_end is not None:
+        if not 0 <= body.quiet_hours_end <= 23:
+            raise HTTPException(400, "quiet_hours_end must be 0-23")
+        s.proactive_quiet_hours_end = body.quiet_hours_end
+    logger.info(
+        "PROACTIVITY_SETTINGS_UPDATED by_admin=%s changes=%s",
+        admin.id, body.model_dump(exclude_none=True),
+    )
+    return await get_proactivity_settings(admin)
+
+
 # ─── Analytics Cache ────────────────────────────────────────────────────────
 
 _analytics_cache: dict[str, tuple[float, Any]] = {}

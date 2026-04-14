@@ -370,8 +370,11 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
     # Compute user state for weight evaluation
     user_state = await compute_user_state(store, user_id)
 
-    # Select 1-3 categories (D-06 revised per Phase 4.3 D-01)
-    target_count = random.randint(1, 3)
+    # Select 1-N categories (D-06 revised per Phase 4.3 D-01)
+    # N is configurable via platform settings (admin dashboard)
+    from app.config import get_settings
+    max_cats = get_settings().proactive_max_categories_per_day
+    target_count = random.randint(1, max(1, max_cats))
     selected = select_categories(DEFAULT_CATEGORIES, user_state, target_count=target_count)
 
     if not selected:
