@@ -94,6 +94,11 @@ function LoginPage() {
                 </span>
               )}
             </div>
+            <div className="text-right">
+              <Link to="/auth/forgot-password" className="text-sm text-blue-600">
+                Forgot password?
+              </Link>
+            </div>
             {serverError && (
               <p className="text-sm text-red-600" role="alert">
                 {serverError}
