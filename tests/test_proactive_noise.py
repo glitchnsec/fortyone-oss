@@ -128,3 +128,85 @@ async def test_delta_morning_briefing_allows_when_task_updated():
 
     result = await _has_content_delta(store, "user-123", "morning_briefing")
     assert result is True, "Should send when task updated after last send"
+
+
+@pytest.mark.asyncio
+async def test_delta_morning_briefing_allows_when_calendar_events():
+    """Calendar events cause morning briefing delta to return True even with stale tasks/goals."""
+    from app.tasks.proactive import _has_content_delta
+
+    store = AsyncMock()
+    last_send = MagicMock()
+    last_send.action_type = "morning_briefing"
+    last_send.outcome = "success"
+    last_send.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    store.get_action_log.return_value = [last_send]
+
+    # Tasks and goals haven't changed since last send
+    task = MagicMock()
+    task.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    task.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+    store.get_active_tasks.return_value = [task]
+
+    goal = MagicMock()
+    goal.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    store.get_goals.return_value = [goal]
+
+    with patch("app.tasks.proactive._has_calendar_events", new_callable=AsyncMock, return_value=True):
+        result = await _has_content_delta(store, "user-123", "morning_briefing")
+    assert result is True, "Calendar events should allow morning briefing"
+
+
+@pytest.mark.asyncio
+async def test_delta_evening_recap_allows_when_calendar_events():
+    """Calendar events cause evening recap delta to return True even with no action logs."""
+    from app.tasks.proactive import _has_content_delta
+
+    store = AsyncMock()
+    last_send = MagicMock()
+    last_send.action_type = "evening_recap"
+    last_send.outcome = "success"
+    last_send.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    store.get_action_log.return_value = [last_send]
+
+    with patch("app.tasks.proactive._has_calendar_events", new_callable=AsyncMock, return_value=True):
+        result = await _has_content_delta(store, "user-123", "evening_recap")
+    assert result is True, "Calendar events should allow evening recap"
+
+
+@pytest.mark.asyncio
+async def test_suppression_toggle_disables_delta():
+    """When proactive_content_suppression=False, _should_check_delta returns False."""
+    from app.tasks.proactive import _should_check_delta
+
+    mock_settings = MagicMock()
+    mock_settings.proactive_content_suppression = False
+    with patch("app.tasks.proactive.get_settings", return_value=mock_settings):
+        assert _should_check_delta() is False
+
+
+@pytest.mark.asyncio
+async def test_delta_morning_no_calendar_no_changes_suppressed():
+    """No calendar events AND no task/goal changes => delta is False."""
+    from app.tasks.proactive import _has_content_delta
+
+    store = AsyncMock()
+    last_send = MagicMock()
+    last_send.action_type = "morning_briefing"
+    last_send.outcome = "success"
+    last_send.created_at = datetime.now(timezone.utc) - timedelta(hours=1)
+    store.get_action_log.return_value = [last_send]
+
+    # Stale tasks and goals
+    task = MagicMock()
+    task.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    task.created_at = datetime.now(timezone.utc) - timedelta(days=1)
+    store.get_active_tasks.return_value = [task]
+
+    goal = MagicMock()
+    goal.updated_at = datetime.now(timezone.utc) - timedelta(hours=2)
+    store.get_goals.return_value = [goal]
+
+    with patch("app.tasks.proactive._has_calendar_events", new_callable=AsyncMock, return_value=False):
+        result = await _has_content_delta(store, "user-123", "morning_briefing")
+    assert result is False, "No calendar and no changes should suppress"
