@@ -1,5 +1,5 @@
 /**
- * Onboarding wizard — 4-step flow: Account created → Verify phone → Name assistant → Connect Google
+ * Onboarding wizard — 3-step flow: Account created -> Verify phone -> Name assistant
  *
  * Full-screen layout (no sidebar), centered Card max-w-[520px], Progress bar at top.
  *
@@ -8,9 +8,10 @@
  *   2. Phone OTP verification — fetches phone from /api/v1/me, sends OTP via POST /auth/send-otp,
  *      and verifies 6-digit code via POST /auth/verify-otp (D-03, AUTH-02).
  *      "Skip" option available so onboarding is not blocked in dev.
- *   3. Name your assistant — calls PATCH /api/v1/me/assistant
- *   4. Connect Google (optional) — initiates OAuth via POST /api/v1/connections/initiate
- *      Final CTA: "Start using Operator" navigates to /connections
+ *   3. Name your assistant — calls PATCH /api/v1/me/assistant, which also triggers
+ *      the one-time welcome SMS. Final CTA: "Start using Operator" navigates to /conversations.
+ *
+ * Google connection removed from onboarding — user can connect from persona settings.
  */
 import { useState, useEffect } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -27,7 +28,7 @@ export const Route = createFileRoute("/onboarding/")({
   component: OnboardingPage,
 });
 
-const TOTAL_STEPS = 4;
+const TOTAL_STEPS = 3;
 
 function OnboardingPage() {
   const navigate = useNavigate();
@@ -52,16 +53,15 @@ function OnboardingPage() {
         {/* Step cards */}
         {step === 1 && <Step1AccountCreated onNext={goNext} />}
         {step === 2 && <Step2VerifyPhone onNext={goNext} />}
-        {step === 3 && <Step3NameAssistant onNext={goNext} />}
-        {step === 4 && (
-          <Step4ConnectGoogle onDone={() => navigate({ to: "/connections" })} />
+        {step === 3 && (
+          <Step3NameAssistant onDone={() => navigate({ to: "/conversations" })} />
         )}
       </div>
     </div>
   );
 }
 
-// ─── Step 1: Account created ──────────────────────────────────────────────────
+// --- Step 1: Account created -------------------------------------------------
 
 function Step1AccountCreated({ onNext }: { onNext: () => void }) {
   return (
@@ -84,7 +84,7 @@ function Step1AccountCreated({ onNext }: { onNext: () => void }) {
   );
 }
 
-// ─── Step 2: Verify phone OTP ─────────────────────────────────────────────────
+// --- Step 2: Verify phone OTP ------------------------------------------------
 
 function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
   const [phone, setPhone] = useState<string | null>(null);
@@ -118,7 +118,7 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
           toast.success("Code sent to your phone.");
         }
       } catch {
-        // Non-fatal — user can still attempt to verify or skip
+        // Non-fatal -- user can still attempt to verify or skip
       } finally {
         if (!cancelled) setSending(false);
       }
@@ -164,7 +164,7 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
         <CardTitle className="text-xl">Verify your phone</CardTitle>
         <CardDescription>
           {sending
-            ? "Sending a 6-digit code to your phone…"
+            ? "Sending a 6-digit code to your phone..."
             : "We sent a 6-digit code to your phone number. Enter it below to verify your account."}
         </CardDescription>
       </CardHeader>
@@ -211,9 +211,9 @@ function Step2VerifyPhone({ onNext }: { onNext: () => void }) {
   );
 }
 
-// ─── Step 3: Name your assistant ──────────────────────────────────────────────
+// --- Step 3: Name your assistant ---------------------------------------------
 
-function Step3NameAssistant({ onNext }: { onNext: () => void }) {
+function Step3NameAssistant({ onDone }: { onDone: () => void }) {
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -236,7 +236,8 @@ function Step3NameAssistant({ onNext }: { onNext: () => void }) {
         setError(data.detail ?? "Failed to save. Please try again.");
         return;
       }
-      onNext();
+      toast.success("Your assistant is ready!");
+      onDone();
     } catch {
       setError("Network error. Please try again.");
     } finally {
@@ -281,65 +282,6 @@ function Step3NameAssistant({ onNext }: { onNext: () => void }) {
           disabled={loading}
         >
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Continue
-        </Button>
-      </CardFooter>
-    </Card>
-  );
-}
-
-// ─── Step 4: Connect Google (optional) ───────────────────────────────────────
-
-function Step4ConnectGoogle({ onDone }: { onDone: () => void }) {
-  const [loading, setLoading] = useState(false);
-
-  const handleConnect = async () => {
-    setLoading(true);
-    try {
-      const res = await fetchWithAuth("/api/v1/connections/initiate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ provider: "google" }),
-      });
-      if (res.ok) {
-        const data = await res.json() as { auth_url?: string };
-        if (data.auth_url) {
-          window.location.href = data.auth_url;
-          return;
-        }
-      }
-      toast.error("Connection failed. Please try again.");
-    } catch {
-      toast.error("Network error. Please try again.");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-xl">Connect Google</CardTitle>
-        <CardDescription>
-          Connect Gmail and Google Calendar so your assistant can read your email and manage your schedule.
-          You can skip this and connect later from the Connections page.
-        </CardDescription>
-      </CardHeader>
-      <CardFooter className="flex flex-col gap-2">
-        <Button
-          className="w-full bg-blue-600 hover:bg-blue-700"
-          onClick={handleConnect}
-          disabled={loading}
-        >
-          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Connect Google
-        </Button>
-        <Button
-          variant="ghost"
-          className="w-full text-neutral-500"
-          onClick={onDone}
-          disabled={loading}
-        >
           Start using Operator
         </Button>
       </CardFooter>

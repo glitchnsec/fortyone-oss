@@ -35,6 +35,22 @@ _INTERNAL_ACTION_TYPES = {
 }
 
 
+def _resolve_delivery_address(user, payload: dict) -> str:
+    """Return the correct delivery address based on the job's channel.
+
+    For Slack jobs, use the user's slack_user_id (the Slack DM target).
+    For SMS jobs, use user.phone (E.164 number).
+    Falls back to payload["phone"] if user attributes are missing.
+    """
+    channel = payload.get("channel", "sms")
+    if channel == "slack":
+        slack_id = getattr(user, "slack_user_id", None)
+        if slack_id:
+            return slack_id
+    phone = getattr(user, "phone", "")
+    return phone or payload.get("phone", "")
+
+
 async def _has_calendar_events(user_id: str, window_hours: float = 24.0) -> bool:
     """Check if user has calendar events in the given window via connections service.
 
@@ -293,7 +309,7 @@ async def handle_morning_briefing(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": briefing,
     }
@@ -380,7 +396,7 @@ async def handle_evening_recap(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": recap,
     }
@@ -455,7 +471,7 @@ async def handle_goal_checkin(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": checkin,
     }
@@ -553,7 +569,7 @@ async def handle_weekly_digest(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": digest_text,
     }
@@ -853,7 +869,7 @@ async def handle_profile_nudge(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": nudge_text,
     }
@@ -992,7 +1008,7 @@ async def handle_insight_observation(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": insight,
     }
@@ -1482,7 +1498,7 @@ async def handle_feature_discovery(payload: dict) -> dict:
     return {
         "job_id": job_id,
         "phone": getattr(user, "phone", ""),
-        "address": getattr(user, "phone", ""),
+        "address": _resolve_delivery_address(user, payload),
         "channel": payload.get("channel", "sms"),
         "response": nudge_text,
     }

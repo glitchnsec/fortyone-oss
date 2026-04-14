@@ -153,15 +153,60 @@ async def update_assistant(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(_get_db),
 ):
-    """Update the assistant's name (and optional personality notes)."""
+    """Update the assistant's name (and optional personality notes).
+
+    On the first call (welcome_sms_sent=False), sends the one-time welcome SMS.
+    This fires after onboarding step 3 (name your assistant) so the message
+    can include the assistant's name.
+    """
+    should_send_welcome = not getattr(user, "welcome_sms_sent", False) and user.phone
+
     values = {"assistant_name": body.assistant_name}
     if body.personality_notes is not None:
         values["personality_notes"] = body.personality_notes
+    # Set welcome_sms_sent flag in the same transaction to prevent duplicates
+    if should_send_welcome:
+        values["welcome_sms_sent"] = True
     await db.execute(
         update(User).where(User.id == user.id).values(**values)
     )
     await db.commit()
+
+    # Fire-and-forget the actual SMS delivery (flag already persisted above)
+    if should_send_welcome:
+        import asyncio
+        asyncio.create_task(_send_welcome_sms(str(user.id), user.phone, user.name, body.assistant_name))
+
     return {"assistant_name": body.assistant_name, "personality_notes": body.personality_notes}
+
+
+async def _send_welcome_sms(user_id: str, phone: str, user_name: str | None, assistant_name: str) -> None:
+    """Send one-time welcome SMS. Fire-and-forget (flag already persisted by caller)."""
+    try:
+        from app.channels.sms import SMSChannel
+        channel = SMSChannel()
+        greeting = f"Hey {user_name}!" if user_name else "Hey!"
+        message = (
+            f"{greeting} Your assistant {assistant_name} is ready. "
+            "Just text me here anytime -- I can set reminders, remember "
+            "things for you, and help manage your day."
+        )
+        sent = await channel.send(phone, message)
+        logger.info("WELCOME_SMS  user=%s  phone=***%s", user_id[:8], phone[-4:] if len(phone) >= 4 else phone)
+
+        # Persist welcome SMS so it appears in conversation history
+        if sent:
+            async with AsyncSessionLocal() as db:
+                store = MemoryStore(db)
+                await store.store_message(
+                    user_id=user_id,
+                    direction="outbound",
+                    body=message,
+                    state="confirm",
+                    channel="sms",
+                )
+    except Exception as exc:
+        logger.warning("Welcome SMS failed user=%s: %s", user_id[:8], exc)
 
 
 # ─── Conversations ────────────────────────────────────────────────────────────

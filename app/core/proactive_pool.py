@@ -390,7 +390,9 @@ async def plan_day(r, user_id: str, user_timezone: str, store) -> list[str]:
 
     # Determine preferred channel for proactive messages
     # Priority: explicit user preference > first available channel
-    has_sms = bool(phone)
+    # Validate phone looks like an E.164 number (starts with "+") to avoid
+    # treating Slack user IDs stored in phone field as SMS-capable addresses.
+    has_sms = bool(phone and phone.startswith("+"))
     has_slack = bool(user and user.slack_user_id)
     preferred_channel = None
     if user and user.proactive_settings_json:

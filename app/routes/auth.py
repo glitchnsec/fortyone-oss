@@ -290,7 +290,6 @@ async def verify_otp(
                 update(User).where(User.id == user.id).values(phone_verified=True)
             )
             await db.commit()
-            asyncio.create_task(_send_sms_welcome(body.phone, user.name))
             return {"verified": True}
         raise HTTPException(400, "Invalid verification code")
     try:
@@ -303,7 +302,6 @@ async def verify_otp(
             raise HTTPException(400, "Invalid or expired verification code")
         await db.execute(update(User).where(User.id == user.id).values(phone_verified=True))
         await db.commit()
-        asyncio.create_task(_send_sms_welcome(body.phone, user.name))
         return {"verified": True}
     except HTTPException:
         raise

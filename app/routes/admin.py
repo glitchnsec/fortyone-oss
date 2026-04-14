@@ -41,11 +41,16 @@ from app.config import get_settings
 from app.database import AsyncSessionLocal
 from app.memory.models import (
     ActionLog,
+    CustomAgent,
+    FeatureMilestone,
     Goal,
     Memory,
     Message,
+    PendingAction,
     Persona,
+    ProactivePreference,
     Task,
+    TaskSession,
     User,
     UserProfile,
 )
@@ -379,14 +384,20 @@ async def hard_purge_user(
     if user.deleted_at is None:
         raise HTTPException(409, "User must be soft-deleted before purge")
 
-    # Delete all related data explicitly (in case cascades aren't set for all tables)
+    # Delete all related data explicitly (in case cascades aren't set for all tables).
+    # Order matters: delete from tables with FK to personas/goals before those tables.
+    await db.execute(delete(PendingAction).where(PendingAction.user_id == user_id))
+    await db.execute(delete(ProactivePreference).where(ProactivePreference.user_id == user_id))
+    await db.execute(delete(CustomAgent).where(CustomAgent.user_id == user_id))
+    await db.execute(delete(FeatureMilestone).where(FeatureMilestone.user_id == user_id))
+    await db.execute(delete(TaskSession).where(TaskSession.user_id == user_id))
+    await db.execute(delete(UserProfile).where(UserProfile.user_id == user_id))
+    await db.execute(delete(ActionLog).where(ActionLog.user_id == user_id))
     await db.execute(delete(Memory).where(Memory.user_id == user_id))
     await db.execute(delete(Message).where(Message.user_id == user_id))
     await db.execute(delete(Task).where(Task.user_id == user_id))
     await db.execute(delete(UserSession).where(UserSession.user_id == user_id))
     await db.execute(delete(Goal).where(Goal.user_id == user_id))
-    await db.execute(delete(ActionLog).where(ActionLog.user_id == user_id))
-    await db.execute(delete(UserProfile).where(UserProfile.user_id == user_id))
     await db.execute(delete(Persona).where(Persona.user_id == user_id))
 
     # Delete the user row

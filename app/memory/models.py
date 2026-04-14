@@ -50,6 +50,7 @@ class User(Base):
     phone_verified = Column(Boolean, default=False)
     assistant_name = Column(String, nullable=True)  # Onboarding step 3 (DASH-02 / D-12)
     personality_notes = Column(Text, nullable=True)  # Free-form personality/tone notes
+    welcome_sms_sent = Column(Boolean, default=False)  # One-time guard: welcome SMS sent after onboarding step 3
     proactive_settings_json = Column(Text, nullable=True)  # JSON: max_daily_messages, quiet_hours, briefing_times, enabled
 
     # Slack identity (migration 009)
@@ -74,6 +75,7 @@ class User(Base):
     profile_entries = relationship("UserProfile", back_populates="user", cascade="all, delete-orphan")
     proactive_preferences = relationship("ProactivePreference", back_populates="user", cascade="all, delete-orphan")
     custom_agents = relationship("CustomAgent", back_populates="user", cascade="all, delete-orphan")
+    pending_actions = relationship("PendingAction", back_populates="user", cascade="all, delete-orphan")
     feature_milestones = relationship("FeatureMilestone", backref="user", cascade="all, delete-orphan")
     task_sessions = relationship("TaskSession", backref="user", cascade="all, delete-orphan")
 
@@ -235,7 +237,7 @@ class PendingAction(Base):
     expires_at = Column(DateTime(timezone=True), nullable=False)
     created_at = Column(DateTime(timezone=True), default=_utcnow)
 
-    user = relationship("User")
+    user = relationship("User", back_populates="pending_actions")
 
 
 class UserProfile(Base):
