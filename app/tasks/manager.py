@@ -1038,11 +1038,13 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
                 }
         return await _call_mcp_tool(tool_name, tool_args, payload)
 
-    # ── Capability pre-check (D-01): check tool_name in tools list ──
+    # ── Capability pre-check with auto-routing (D-01, D-02, D-04) ──
     CONNECTION_TOOLS = frozenset({
         "read_emails", "send_email", "list_events", "create_event",
         "slack_read_channels", "slack_get_workspace", "slack_read_threads",
     })
+    auto_switched = False
+    auto_switch_note = ""
     if tool_name in CONNECTION_TOOLS:
         from app.queue.client import queue_client
         r = queue_client._redis
@@ -1051,15 +1053,50 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             caps = await get_capabilities(r, user_id, cap_persona_id)
             available_tools = caps.get("tools", [])
             if tool_name not in available_tools:
-                settings = get_settings()
-                return {
-                    "error": "missing_capability",
-                    "user_message": await _tool_failure_user_message(
-                        tool_name, persona_name, settings.dashboard_url,
-                        user_id=user_id, persona_id=persona_id,
-                    ),
-                }
+                # ── Auto-route: find another persona with this tool ──
+                from app.core.capabilities import find_personas_with_tool
+                candidates = await find_personas_with_tool(
+                    user_id, tool_name, exclude_persona_id=persona_id,
+                )
 
+                if len(candidates) == 1:
+                    # Exactly one other persona has it — auto-switch
+                    auto_routed_persona_id = candidates[0]["persona_id"]
+                    auto_routed_persona_name = candidates[0]["persona_name"]
+                    logger.info(
+                        "AUTO_ROUTE tool=%s from_persona=%s to_persona=%s user=%s",
+                        tool_name, persona_name, auto_routed_persona_name,
+                        user_id[:8] if user_id else "?",
+                    )
+                    persona_id = auto_routed_persona_id
+                    persona_name = auto_routed_persona_name
+                    auto_switched = True
+                    auto_switch_note = (
+                        f"[Using your {auto_routed_persona_name} persona "
+                        f"for this action.] "
+                    )
+                elif len(candidates) > 1:
+                    # Multiple personas have it — disambiguation
+                    names = ", ".join(c["persona_name"] for c in candidates)
+                    return {
+                        "error": "persona_disambiguation",
+                        "user_message": (
+                            f"Multiple personas have this tool connected: "
+                            f"{names}. Which one should I use?"
+                        ),
+                    }
+                else:
+                    # No persona has it — original error
+                    settings = get_settings()
+                    return {
+                        "error": "missing_capability",
+                        "user_message": await _tool_failure_user_message(
+                            tool_name, persona_name, settings.dashboard_url,
+                            user_id=user_id, persona_id=persona_id,
+                        ),
+                    }
+
+    tool_result = None
     try:
         if tool_name == "web_search":
             from app.tasks.web_search import handle_web_search
@@ -1080,43 +1117,43 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
             return tool_result
 
         elif tool_name == "read_emails":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "gmail", "read_emails", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "send_email":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "gmail", "send_email", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "list_events":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "calendar", "list_events", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "create_event":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "calendar", "create_event", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "slack_read_channels":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "slack", "slack_read_channels", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "slack_get_workspace":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "slack", "slack_get_workspace", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
 
         elif tool_name == "slack_read_threads":
-            return await _call_connections_tool(
+            tool_result = await _call_connections_tool(
                 "slack", "slack_read_threads", user_id, tool_args,
                 persona_id=persona_id, persona_name=persona_name,
             )
@@ -1269,6 +1306,18 @@ async def _execute_tool(tool_name: str, tool_args_raw: str, payload: dict) -> di
         logger.error("Tool execution failed tool=%s error=%s",
                      tool_name, exc, exc_info=True)
         return {"error": f"Tool {tool_name} failed: {str(exc)[:200]}"}
+
+    # ── Post-process: prepend auto-switch note to connection tool results (D-04) ──
+    if tool_result is not None:
+        if auto_switched and auto_switch_note:
+            for key in ("content", "response", "results"):
+                if key in tool_result and isinstance(tool_result[key], str):
+                    tool_result[key] = auto_switch_note + tool_result[key]
+                    break
+            else:
+                # No string content field found — add as metadata
+                tool_result["auto_switch_note"] = auto_switch_note
+        return tool_result
 
 
 async def _call_mcp_tool(tool_name: str, tool_args: dict, payload: dict) -> dict:
