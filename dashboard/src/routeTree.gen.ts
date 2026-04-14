@@ -27,6 +27,7 @@ import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as ConnectionsCallbackRouteImport } from './routes/connections/callback'
 import { Route as AuthRegisterRouteImport } from './routes/auth/register'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AdminProactivityRouteImport } from './routes/admin/proactivity'
 import { Route as AdminHealthRouteImport } from './routes/admin/health'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
 import { Route as AdminUsersUserIdRouteImport } from './routes/admin/users/$userId'
@@ -121,6 +122,11 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminProactivityRoute = AdminProactivityRouteImport.update({
+  id: '/proactivity',
+  path: '/proactivity',
+  getParentRoute: () => AdminRouteRoute,
+} as any)
 const AdminHealthRoute = AdminHealthRouteImport.update({
   id: '/health',
   path: '/health',
@@ -146,6 +152,7 @@ export interface FileRoutesByFullPath {
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
+  '/admin/proactivity': typeof AdminProactivityRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -168,6 +175,7 @@ export interface FileRoutesByTo {
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
+  '/admin/proactivity': typeof AdminProactivityRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -192,6 +200,7 @@ export interface FileRoutesById {
   '/profile': typeof ProfileRoute
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
+  '/admin/proactivity': typeof AdminProactivityRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -217,6 +226,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/tasks'
     | '/admin/health'
+    | '/admin/proactivity'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -239,6 +249,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/tasks'
     | '/admin/health'
+    | '/admin/proactivity'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -262,6 +273,7 @@ export interface FileRouteTypes {
     | '/profile'
     | '/tasks'
     | '/admin/health'
+    | '/admin/proactivity'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -425,6 +437,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/proactivity': {
+      id: '/admin/proactivity'
+      path: '/proactivity'
+      fullPath: '/admin/proactivity'
+      preLoaderRoute: typeof AdminProactivityRouteImport
+      parentRoute: typeof AdminRouteRoute
+    }
     '/admin/health': {
       id: '/admin/health'
       path: '/health'
@@ -451,6 +470,7 @@ declare module '@tanstack/react-router' {
 
 interface AdminRouteRouteChildren {
   AdminHealthRoute: typeof AdminHealthRoute
+  AdminProactivityRoute: typeof AdminProactivityRoute
   AdminIndexRoute: typeof AdminIndexRoute
   AdminUsersUserIdRoute: typeof AdminUsersUserIdRoute
   AdminUsersIndexRoute: typeof AdminUsersIndexRoute
@@ -458,6 +478,7 @@ interface AdminRouteRouteChildren {
 
 const AdminRouteRouteChildren: AdminRouteRouteChildren = {
   AdminHealthRoute: AdminHealthRoute,
+  AdminProactivityRoute: AdminProactivityRoute,
   AdminIndexRoute: AdminIndexRoute,
   AdminUsersUserIdRoute: AdminUsersUserIdRoute,
   AdminUsersIndexRoute: AdminUsersIndexRoute,

@@ -13,6 +13,7 @@ import {
   BarChart3,
   Users,
   Activity,
+  Zap,
   LogOut,
   Menu,
   ArrowLeft,
@@ -42,6 +43,7 @@ interface NavItem {
 const ADMIN_NAV: NavItem[] = [
   { label: "Overview", to: "/admin", icon: <BarChart3 className="h-4 w-4" /> },
   { label: "Users", to: "/admin/users", icon: <Users className="h-4 w-4" /> },
+  { label: "Proactivity", to: "/admin/proactivity", icon: <Zap className="h-4 w-4" /> },
   { label: "System Health", to: "/admin/health", icon: <Activity className="h-4 w-4" /> },
 ];
 
