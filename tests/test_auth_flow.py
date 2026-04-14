@@ -6,6 +6,9 @@ These tests would have caught:
   - Session not surviving page reload (AUTH-04)
   - bcrypt 72-byte password limit
 """
+import asyncio
+from unittest.mock import AsyncMock, patch
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -397,5 +400,70 @@ async def test_patch_me_rejects_invalid_timezone(client):
 @pytest.mark.asyncio
 async def test_patch_me_requires_auth(client):
     """PATCH /api/v1/me without auth returns 401/403."""
-    patch = await client.patch("/api/v1/me", json={"name": "Hacker"})
-    assert patch.status_code in (401, 403)
+    patch_resp = await client.patch("/api/v1/me", json={"name": "Hacker"})
+    assert patch_resp.status_code in (401, 403)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Welcome SMS after OTP verification
+# ──────────────────────────────────────────────────────────────────────────────
+
+@pytest.mark.asyncio
+async def test_verify_otp_sends_welcome_sms(client):
+    """FLOW TEST: Register → verify-otp → welcome SMS sent with correct phone and message."""
+    mock_send = AsyncMock(return_value=True)
+
+    with patch("app.channels.sms.SMSChannel.send", mock_send):
+        # Register with name
+        reg = await client.post("/auth/register", json={
+            **TEST_USER,
+            "name": "KC",
+        })
+        assert reg.status_code == 201
+        token = reg.json()["access_token"]
+
+        # Verify OTP (dev mode accepts any 6-digit code)
+        otp_resp = await client.post(
+            "/auth/verify-otp",
+            json={"phone": TEST_USER["phone"], "code": "123456"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert otp_resp.status_code == 200
+        assert otp_resp.json() == {"verified": True}
+
+        # Let the fire-and-forget task execute
+        await asyncio.sleep(0.2)
+
+    # Assert SMS was sent to the correct phone with a welcome message
+    mock_send.assert_called_once()
+    call_args = mock_send.call_args
+    assert call_args[0][0] == TEST_USER["phone"], "SMS sent to wrong phone"
+    assert "assistant is ready" in call_args[0][1], "Welcome message missing key phrase"
+    assert "KC" in call_args[0][1], "Welcome message should include user name"
+
+
+@pytest.mark.asyncio
+async def test_verify_otp_welcome_sms_without_name(client):
+    """Welcome SMS works when user has no name (omitted at registration)."""
+    mock_send = AsyncMock(return_value=True)
+
+    with patch("app.channels.sms.SMSChannel.send", mock_send):
+        # Register without name
+        reg = await client.post("/auth/register", json=TEST_USER)
+        assert reg.status_code == 201
+        token = reg.json()["access_token"]
+
+        # Verify OTP
+        otp_resp = await client.post(
+            "/auth/verify-otp",
+            json={"phone": TEST_USER["phone"], "code": "654321"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert otp_resp.status_code == 200
+
+        await asyncio.sleep(0.2)
+
+    mock_send.assert_called_once()
+    call_args = mock_send.call_args
+    assert call_args[0][0] == TEST_USER["phone"]
+    assert "assistant is ready" in call_args[0][1]
