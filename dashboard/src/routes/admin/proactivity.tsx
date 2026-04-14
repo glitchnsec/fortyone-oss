@@ -36,6 +36,7 @@ interface ProactivitySettings {
   max_categories_per_day: number;
   quiet_hours_start: number;
   quiet_hours_end: number;
+  content_suppression: boolean;
 }
 
 // --- Page --------------------------------------------------------------------
@@ -58,6 +59,7 @@ function ProactivityPage() {
     max_categories_per_day: 3,
     quiet_hours_start: 22,
     quiet_hours_end: 7,
+    content_suppression: true,
   });
 
   // Sync form with fetched data
@@ -190,6 +192,35 @@ function ProactivityPage() {
               1-9 categories selected per daily plan (upper bound for random selection)
             </p>
           </div>
+        </CardContent>
+      </Card>
+
+      <Card className="mt-6">
+        <CardHeader>
+          <CardTitle className="text-base">Content Delta Suppression</CardTitle>
+          <CardDescription>
+            When enabled, proactive messages are only sent when new content is
+            detected (new tasks, goals, calendar events). Disable to send all
+            scheduled messages regardless of content changes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={form.content_suppression}
+              onChange={() =>
+                setForm((prev) => ({
+                  ...prev,
+                  content_suppression: !prev.content_suppression,
+                }))
+              }
+              className="h-4 w-4 rounded border-neutral-300 text-blue-600 focus:ring-blue-500"
+            />
+            <span className="text-sm text-neutral-700">
+              Enable suppression
+            </span>
+          </label>
         </CardContent>
       </Card>
 
