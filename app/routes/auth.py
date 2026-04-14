@@ -8,6 +8,7 @@ Endpoints:
   POST /auth/send-otp    — send SMS OTP via Twilio Verify (D-03, AUTH-02)
   POST /auth/verify-otp  — verify SMS OTP and set phone_verified=True on User (D-03)
 """
+import asyncio
 import hashlib
 import logging
 import secrets
@@ -287,6 +288,7 @@ async def verify_otp(
                 update(User).where(User.id == user.id).values(phone_verified=True)
             )
             await db.commit()
+            asyncio.create_task(_send_sms_welcome(body.phone, user.name))
             return {"verified": True}
         raise HTTPException(400, "Invalid verification code")
     try:
@@ -299,6 +301,7 @@ async def verify_otp(
             raise HTTPException(400, "Invalid or expired verification code")
         await db.execute(update(User).where(User.id == user.id).values(phone_verified=True))
         await db.commit()
+        asyncio.create_task(_send_sms_welcome(body.phone, user.name))
         return {"verified": True}
     except HTTPException:
         raise
@@ -320,6 +323,32 @@ async def _send_slack_welcome(slack_user_id: str) -> None:
         )
     except Exception as exc:
         logger.warning("Slack welcome failed slack=%s: %s", slack_user_id, exc)
+
+
+# -- SMS Welcome Helper --------------------------------------------------------
+
+async def _send_sms_welcome(phone: str, name: str | None = None) -> None:
+    """Send welcome SMS to a newly-verified user. Fire-and-forget."""
+    try:
+        from app.channels.sms import SMSChannel
+        channel = SMSChannel()
+        if name:
+            message = (
+                f"Hey {name}! Your assistant is ready. Just text me here "
+                "anytime — I can set reminders, remember things for you, "
+                "and help manage your day."
+            )
+        else:
+            message = (
+                "Hey! Your assistant is ready. Just text me here anytime "
+                "— I can set reminders, remember things for you, and help "
+                "manage your day."
+            )
+        await channel.send(phone, message)
+        logger.info("WELCOME_SMS user_phone=***%s", phone[-4:] if len(phone) >= 4 else phone)
+    except Exception as exc:
+        logger.warning("SMS welcome failed phone=***%s: %s",
+                       phone[-4:] if len(phone) >= 4 else phone, exc)
 
 
 # -- Slack Linking Code --------------------------------------------------------
