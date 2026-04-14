@@ -1,4 +1,4 @@
-"""Auth routes: register, login, refresh, logout, OTP verification.
+"""Auth routes: register, login, refresh, logout, OTP verification, password reset.
 
 Endpoints:
   POST /auth/register    — create a new account (email + phone + password)
@@ -7,6 +7,8 @@ Endpoints:
   POST /auth/logout      — delete session row, clear cookie (idempotent 204)
   POST /auth/send-otp    — send SMS OTP via Twilio Verify (D-03, AUTH-02)
   POST /auth/verify-otp  — verify SMS OTP and set phone_verified=True on User (D-03)
+  POST /auth/forgot-password/send-code — send password reset code via SMS
+  POST /auth/forgot-password/reset     — verify code and set new password
 """
 import asyncio
 import hashlib
@@ -308,6 +310,100 @@ async def verify_otp(
     except Exception as e:
         logger.error("OTP verify failed phone=%s error=%s", body.phone, e, exc_info=True)
         raise HTTPException(500, "Verification check failed")
+
+
+# ─── Password Reset via SMS (forgot-password) ────────────────────────────────
+
+class ForgotPasswordInput(BaseModel):
+    phone: str  # E.164 format e.g. "+15551234567"
+
+
+class ResetPasswordInput(BaseModel):
+    phone: str
+    code: str        # 6-digit code from Twilio Verify
+    new_password: str
+
+
+@router.post("/forgot-password/send-code")
+async def send_reset_code(body: ForgotPasswordInput, db: AsyncSession = Depends(_get_db)):
+    """Send a password reset code via SMS. Returns 200 regardless of whether
+    the phone exists — prevents user enumeration."""
+    s = get_settings()
+
+    # Check user exists with a password (SMS-only users can't reset a web password)
+    result = await db.execute(select(User).where(User.phone == body.phone))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.password_hash:
+        # Return success anyway to prevent enumeration
+        logger.info("RESET_CODE_NOOP phone=***%s (no matching user with password)",
+                     body.phone[-4:] if len(body.phone) >= 4 else body.phone)
+        return {"status": "sent"}
+
+    if not s.twilio_verify_service_sid or not s.twilio_account_sid:
+        logger.info("DEV MODE: reset code send skipped for phone=***%s",
+                     body.phone[-4:] if len(body.phone) >= 4 else body.phone)
+        return {"status": "sent", "dev_mode": True}
+
+    try:
+        from twilio.rest import Client
+        client = Client(s.twilio_account_sid, s.twilio_auth_token)
+        client.verify.v2.services(s.twilio_verify_service_sid).verifications.create(
+            to=body.phone, channel="sms"
+        )
+        logger.info("RESET_CODE_SENT phone=***%s",
+                     body.phone[-4:] if len(body.phone) >= 4 else body.phone)
+        return {"status": "sent"}
+    except Exception as e:
+        logger.error("Reset code send failed phone=***%s error=%s",
+                     body.phone[-4:] if len(body.phone) >= 4 else body.phone, e, exc_info=True)
+        raise HTTPException(500, "Failed to send reset code")
+
+
+@router.post("/forgot-password/reset")
+async def reset_password(body: ResetPasswordInput, db: AsyncSession = Depends(_get_db)):
+    """Verify reset code and update the user's password. Invalidates all sessions."""
+    # Validate password length
+    if len(body.new_password) < 8:
+        raise HTTPException(422, "Password must be at least 8 characters")
+
+    result = await db.execute(select(User).where(User.phone == body.phone))
+    user = result.scalar_one_or_none()
+
+    if not user or not user.password_hash:
+        raise HTTPException(400, "Invalid or expired code")
+
+    s = get_settings()
+    if not s.twilio_verify_service_sid or not s.twilio_account_sid:
+        # Dev mode: accept any 6-digit code
+        if len(body.code) == 6 and body.code.isdigit():
+            user.password_hash = _hash_password(body.new_password)
+            # Invalidate all existing sessions (force re-login everywhere)
+            await db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+            await db.commit()
+            logger.info("PASSWORD_RESET user=%s (dev mode)", user.id[:8])
+            return {"reset": True}
+        raise HTTPException(400, "Invalid or expired code")
+
+    try:
+        from twilio.rest import Client
+        client = Client(s.twilio_account_sid, s.twilio_auth_token)
+        check = client.verify.v2.services(s.twilio_verify_service_sid).verification_checks.create(
+            to=body.phone, code=body.code
+        )
+        if check.status != "approved":
+            raise HTTPException(400, "Invalid or expired code")
+        user.password_hash = _hash_password(body.new_password)
+        await db.execute(delete(UserSession).where(UserSession.user_id == user.id))
+        await db.commit()
+        logger.info("PASSWORD_RESET user=%s", user.id[:8])
+        return {"reset": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Password reset failed phone=***%s error=%s",
+                     body.phone[-4:] if len(body.phone) >= 4 else body.phone, e, exc_info=True)
+        raise HTTPException(500, "Password reset failed")
 
 
 # -- Slack Welcome Helper -------------------------------------------------------
