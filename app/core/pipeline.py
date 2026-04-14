@@ -202,6 +202,7 @@ class MessagePipeline:
                         "user_id": user.id,
                         "persona": confirmed_persona,
                         "persona_id": confirmed_persona_id,
+                        "persona_confidence": 1.0,  # confirmed action = high confidence
                         "confirmed_action": {
                             "type": pending.action_type,
                             "params": action_params,
@@ -295,6 +296,7 @@ class MessagePipeline:
             "user_id":  user.id,
             "persona":  persona_name,
             "persona_id": persona_id,  # UUID for connection lookup
+            "persona_confidence": persona_confidence,
         })
 
         logger.info(
