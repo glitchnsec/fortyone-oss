@@ -240,6 +240,101 @@ async def find_persona_with_tool(
         return None
 
 
+async def find_personas_with_tool(
+    user_id: str,
+    tool_name: str,
+    exclude_persona_id: str | None = None,
+) -> list[dict]:
+    """Find all personas that have a specific tool, excluding the given persona.
+
+    Returns list of {"persona_id": str, "persona_name": str} dicts.
+    Empty list if no other persona has the tool.
+    """
+    if not user_id:
+        return []
+
+    try:
+        settings = get_settings()
+        url = f"{settings.connections_service_url}/connections/{user_id}"
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(url)  # No persona filter = all connections
+            resp.raise_for_status()
+
+        data = resp.json()
+        connections = data.get("connections", [])
+
+        # Collect ALL matching persona_ids (not just the first)
+        matching_persona_ids: set[str] = set()
+        for conn in connections:
+            conn_persona_id = conn.get("persona_id")
+            if not conn_persona_id:
+                continue
+            # Skip connections on the excluded persona
+            if conn_persona_id == exclude_persona_id:
+                continue
+            if conn.get("status") != "connected":
+                continue
+
+            # Check native tools
+            conn_tools = conn.get("capabilities", {}).get("tools", [])
+            if tool_name in conn_tools:
+                matching_persona_ids.add(conn_persona_id)
+                continue
+
+            # Check MCP tools
+            if conn.get("execution_type") == "mcp":
+                for mcp_tool in conn.get("mcp_tools", []):
+                    conn_id_short = conn.get("id", "")[:8]
+                    namespaced = f"mcp_{conn_id_short}_{mcp_tool.get('name', '')}"
+                    if namespaced == tool_name or mcp_tool.get("name") == tool_name:
+                        matching_persona_ids.add(conn_persona_id)
+                        break
+
+        if not matching_persona_ids:
+            return []
+
+        # Look up persona names from the database (batch query)
+        try:
+            from app.database import AsyncSessionLocal
+            from app.memory.models import Persona
+            from sqlalchemy import select as sa_select
+
+            async with AsyncSessionLocal() as db:
+                result = await db.execute(
+                    sa_select(Persona).where(
+                        Persona.id.in_(list(matching_persona_ids)),
+                        Persona.user_id == user_id,
+                    )
+                )
+                personas = result.scalars().all()
+                return sorted(
+                    [
+                        {"persona_id": str(p.id), "persona_name": p.name}
+                        for p in personas
+                    ],
+                    key=lambda x: x["persona_name"],
+                )
+        except Exception:
+            # If DB lookup fails, return IDs without names
+            return sorted(
+                [
+                    {"persona_id": pid, "persona_name": "Unknown"}
+                    for pid in matching_persona_ids
+                ],
+                key=lambda x: x["persona_id"],
+            )
+
+    except Exception as exc:
+        logger.warning(
+            "find_personas_with_tool failed user=%s tool=%s error=%s",
+            user_id[:8] if user_id else "?",
+            tool_name,
+            exc,
+        )
+        return []
+
+
 def resolve_capability_persona(payload: dict) -> Optional[str]:
     """
     Determine whether to scope the capability query to a specific persona.
