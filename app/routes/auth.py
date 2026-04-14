@@ -339,7 +339,7 @@ async def send_reset_code(body: ForgotPasswordInput, db: AsyncSession = Depends(
         return {"status": "sent"}
 
     if not s.twilio_verify_service_sid or not s.twilio_account_sid:
-        logger.info("DEV MODE: reset code send skipped for phone=***%s",
+        logger.info("DEV MODE: reset code send skipped for phone=***%s (use code 123456)",
                      body.phone[-4:] if len(body.phone) >= 4 else body.phone)
         return {"status": "sent", "dev_mode": True}
 
