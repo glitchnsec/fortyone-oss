@@ -181,7 +181,7 @@ async def test_suppression_toggle_disables_delta():
 
     mock_settings = MagicMock()
     mock_settings.proactive_content_suppression = False
-    with patch("app.tasks.proactive.get_settings", return_value=mock_settings):
+    with patch("app.config.get_settings", return_value=mock_settings):
         assert _should_check_delta() is False
 
 

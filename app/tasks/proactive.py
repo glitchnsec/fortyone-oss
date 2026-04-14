@@ -35,6 +35,52 @@ _INTERNAL_ACTION_TYPES = {
 }
 
 
+async def _has_calendar_events(user_id: str, window_hours: float = 24.0) -> bool:
+    """Check if user has calendar events in the given window via connections service.
+
+    Returns True if at least 1 event exists. Returns False on any error
+    (no calendar connected, timeout, service down) -- graceful degradation.
+    """
+    import httpx
+    from app.config import get_settings
+    s = get_settings()
+    now = datetime.now(timezone.utc)
+
+    if window_hours > 0:
+        time_min = now.isoformat()
+        time_max = (now + timedelta(hours=window_hours)).isoformat()
+    else:
+        # Check events from start of today until now (for evening recap)
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        time_min = today_start.isoformat()
+        time_max = now.isoformat()
+
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.post(
+                f"{s.connections_service_url}/tools/calendar/list_events",
+                json={
+                    "user_id": user_id,
+                    "time_min": time_min,
+                    "time_max": time_max,
+                    "max_results": 1,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                events = data.get("result", data.get("events", []))
+                return len(events) > 0
+    except Exception as exc:
+        logger.debug("calendar_check_failed user=%s error=%s", user_id[:8], exc)
+    return False
+
+
+def _should_check_delta() -> bool:
+    """Return True if content delta suppression is enabled (handlers should check delta)."""
+    from app.config import get_settings
+    return get_settings().proactive_content_suppression
+
+
 async def _has_content_delta(store, user_id: str, category: str) -> bool:
     """
     Check if anything changed since the last send of this category (D-03, D-13).
@@ -58,13 +104,19 @@ async def _has_content_delta(store, user_id: str, category: str) -> bool:
         if any(t.updated_at > since or t.created_at > since for t in tasks):
             return True
         goals = await store.get_goals(user_id, status="active")
-        return any(g.updated_at > since for g in goals)
+        if any(g.updated_at > since for g in goals):
+            return True
+        # Check for upcoming calendar events (next 24h)
+        return await _has_calendar_events(user_id, window_hours=24.0)
 
     elif category == "evening_recap":
         logs_today = await store.get_action_log(user_id, limit=20)
         today = datetime.now(timezone.utc).date()
         today_actions = [a for a in logs_today if a.created_at.date() == today and a.action_type != "evening_recap"]
-        return len(today_actions) > 0
+        if len(today_actions) > 0:
+            return True
+        # Check for calendar events that occurred today
+        return await _has_calendar_events(user_id, window_hours=0)
 
     elif category == "goal_coaching" or category == "goal_checkin":
         goals = await store.get_goals(user_id, status="active")
@@ -138,7 +190,7 @@ async def handle_morning_briefing(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "morning_briefing"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "morning_briefing"):
             logger.info("DELTA_SUPPRESS user=%s category=morning_briefing", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -264,7 +316,7 @@ async def handle_evening_recap(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "evening_recap"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "evening_recap"):
             logger.info("DELTA_SUPPRESS user=%s category=evening_recap", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -357,7 +409,7 @@ async def handle_goal_checkin(payload: dict) -> dict:
         if not goals:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "goal_checkin"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "goal_checkin"):
             logger.info("DELTA_SUPPRESS user=%s category=goal_checkin", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -428,7 +480,7 @@ async def handle_weekly_digest(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "weekly_digest"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "weekly_digest"):
             logger.info("DELTA_SUPPRESS user=%s category=weekly_digest", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -699,7 +751,7 @@ async def handle_profile_nudge(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "profile_nudge"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "profile_nudge"):
             logger.info("DELTA_SUPPRESS user=%s category=profile_nudge", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -869,7 +921,7 @@ async def handle_insight_observation(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "insight_observation"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "insight_observation"):
             logger.info("DELTA_SUPPRESS user=%s category=insight_observation", user_id[:8])
             return _empty_result(job_id, user_id)
 
@@ -980,7 +1032,7 @@ async def handle_goal_coaching(payload: dict) -> dict:
         if not user:
             return _empty_result(job_id, user_id)
 
-        if not await _has_content_delta(store, user_id, "goal_coaching"):
+        if _should_check_delta() and not await _has_content_delta(store, user_id, "goal_coaching"):
             logger.info("DELTA_SUPPRESS user=%s category=goal_coaching", user_id[:8])
             return _empty_result(job_id, user_id)
 

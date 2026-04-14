@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     proactive_quiet_hours_start: int = 22
     proactive_quiet_hours_end: int = 7
 
+    # Content delta suppression: when True, handlers skip sending if no new content
+    # Set to False to disable suppression (all proactive messages send regardless)
+    proactive_content_suppression: bool = True
+
     # Race timeout: wait for worker before sending ACK (UAT showed 2.4s typical)
     race_timeout_s: float = 8.0
 

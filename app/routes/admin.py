@@ -429,6 +429,7 @@ class ProactivitySettingsUpdate(BaseModel):
     max_categories_per_day: Optional[int] = None  # 1-9
     quiet_hours_start: Optional[int] = None       # 0-23
     quiet_hours_end: Optional[int] = None         # 0-23
+    content_suppression: Optional[bool] = None    # True=check delta, False=always send
 
 
 @router.get("/proactivity/settings")
@@ -441,6 +442,7 @@ async def get_proactivity_settings(admin: User = Depends(require_admin)):
         "max_categories_per_day": s.proactive_max_categories_per_day,
         "quiet_hours_start": s.proactive_quiet_hours_start,
         "quiet_hours_end": s.proactive_quiet_hours_end,
+        "content_suppression": s.proactive_content_suppression,
     }
 
 
@@ -475,6 +477,8 @@ async def update_proactivity_settings(
         if not 0 <= body.quiet_hours_end <= 23:
             raise HTTPException(400, "quiet_hours_end must be 0-23")
         s.proactive_quiet_hours_end = body.quiet_hours_end
+    if body.content_suppression is not None:
+        s.proactive_content_suppression = body.content_suppression
     logger.info(
         "PROACTIVITY_SETTINGS_UPDATED by_admin=%s changes=%s",
         admin.id, body.model_dump(exclude_none=True),
