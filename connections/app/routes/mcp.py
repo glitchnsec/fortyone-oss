@@ -414,6 +414,27 @@ async def execute_mcp_tool(body: MCPExecuteInput, db: AsyncSession = Depends(_ge
             "detail": str(exc),
             "user_message": f"Something went wrong while running '{body.tool_name}'. Please try again.",
         }
+
+    # MCP protocol: tools/call result may contain isError=true indicating
+    # the tool itself failed (even though JSON-RPC succeeded). Surface this
+    # as a proper error so callers detect it via the "error" key.
+    if isinstance(tool_result, dict) and tool_result.get("isError"):
+        # Extract human-readable error from MCP content blocks
+        error_text = ""
+        for block in tool_result.get("content", []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                error_text += block.get("text", "")
+        error_text = error_text.strip() or "The tool reported an error"
+        logger.warning(
+            "MCP tool isError=true connection_id=%s tool=%s error=%s",
+            body.connection_id, body.tool_name, error_text[:200],
+        )
+        return {
+            "error": "mcp_tool_error",
+            "detail": error_text[:500],
+            "user_message": error_text[:300],
+        }
+
     return {"result": tool_result}
 
 
