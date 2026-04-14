@@ -124,7 +124,9 @@ class MessagePipeline:
         last_persona = minimal_ctx.get("last_persona")   # D-08: inherit across turns
 
         # ── FIRST MESSAGE — warm intro (fast path, no race) ───────────────────
-        is_first = await self.store.message_count(user.id) == 1
+        # Skip first greeting if welcome SMS was already sent during onboarding
+        welcome_already_sent = getattr(user, "welcome_sms_sent", False)
+        is_first = not welcome_already_sent and await self.store.message_count(user.id) == 1
         if is_first:
             ack_text = await first_greeting(
                 self.channel.name, body,
