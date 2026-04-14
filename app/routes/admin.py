@@ -700,8 +700,14 @@ async def admin_health(
     try:
         r = aioredis.from_url(settings.redis_url, decode_responses=True)
         await r.ping()
-        # Queue depth — the queue is a Redis Stream (XADD/XREADGROUP pattern)
-        queue_depth = await r.xlen(settings.queue_name)
+        # Queue depth — count PENDING messages (unacknowledged by consumer group),
+        # not XLEN which counts ALL entries ever written to the stream.
+        try:
+            pending_info = await r.xpending(settings.queue_name, "worker-group")
+            queue_depth = pending_info.get("pending", 0) if isinstance(pending_info, dict) else (pending_info[0] if pending_info else 0)
+        except Exception:
+            # Consumer group may not exist yet (worker hasn't started)
+            queue_depth = 0
         redis_status = {"status": "ok", "queue_depth": queue_depth}
         await r.aclose()
     except Exception as e:
