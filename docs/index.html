@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Operator — Your Personal Executive Assistant</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    :root {
+      --bg: #060604;
+      --bg-1: #0C0C08;
+      --bg-2: #131310;
+      --amber: #C8830C;
+      --amber-b: #E09820;
+      --amber-d: #5C3A06;
+      --text: #C8C4B4;
+      --dim: #6A6658;
+      --dimmer: #302E28;
+      --border: #1A1A12;
+      --border-a: #342208;
+      --mono: 'JetBrains Mono', monospace;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 14px;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0, 0, 0, 0.06) 2px, rgba(0, 0, 0, 0.06) 4px);
+      pointer-events: none;
+      z-index: 200;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: radial-gradient(rgba(200, 131, 12, 0.05) 1px, transparent 1px);
+      background-size: 30px 30px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    .container {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 32px;
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ── NAV ── */
+    nav {
+      border-bottom: 1px solid var(--border);
+      position: sticky;
+      top: 0;
+      background: rgba(6, 6, 4, 0.88);
+      backdrop-filter: blur(12px);
+      z-index: 100;
+    }
+
+    .nav-i {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 18px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .logo {
+      font-size: 12px;
+      font-weight: 500;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--amber);
+      text-decoration: none;
+    }
+
+    .logo span {
+      color: var(--dim);
+      font-weight: 300;
+      margin-left: 6px;
+    }
+
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+    }
+
+    .nav-links a {
+      color: var(--dim);
+      text-decoration: none;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+
+    .nav-links a:hover {
+      color: var(--text);
+    }
+
+    /* ── BUTTONS ── */
+    .btn-g {
+      border: 1px solid var(--border-a);
+      color: var(--amber);
+      padding: 9px 20px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.1em;
+      text-decoration: none;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: border-color 0.2s;
+      display: inline-block;
+      background: none;
+    }
+
+    .btn-g:hover {
+      border-color: var(--amber);
+    }
+
+    .btn-a {
+      background: var(--amber);
+      color: #060604;
+      padding: 9px 20px;
+      font-family: var(--mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.1em;
+      text-decoration: none;
+      text-transform: uppercase;
+      border: none;
+      cursor: pointer;
+      transition: background 0.2s;
+      display: inline-block;
+    }
+
+    .btn-a:hover {
+      background: var(--amber-b);
+    }
+
+    /* ── HERO ── */
+    .hero {
+      padding: 96px 0 80px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .hero-tag {
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      color: var(--amber);
+      text-transform: uppercase;
+      margin-bottom: 44px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .hero-tag::before {
+      content: '>';
+    }
+
+    .hero h1 {
+      font-size: clamp(34px, 5.5vw, 58px);
+      font-weight: 300;
+      line-height: 1.12;
+      letter-spacing: -0.025em;
+      color: var(--text);
+      margin-bottom: 24px;
+    }
+
+    .hero h1 em {
+      font-style: normal;
+      color: var(--amber);
+    }
+
+    .hero-sub {
+      font-size: 14px;
+      font-weight: 300;
+      color: var(--dim);
+      max-width: 460px;
+      line-height: 1.75;
+      margin-bottom: 52px;
+    }
+
+    .hero-cmd-label {
+      font-size: 11px;
+      color: var(--dimmer);
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+    }
+
+    .hero-cmd {
+      font-size: 17px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      margin-bottom: 52px;
+      height: 26px;
+    }
+
+    .typed {
+      color: var(--amber);
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 9px;
+      height: 18px;
+      background: var(--amber);
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+    }
+
+    @keyframes blink {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: 0
+      }
+    }
+
+    .hero-ctas {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    /* ── DEMO ── */
+    .demo {
+      padding: 80px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .sec-label {
+      font-size: 10px;
+      letter-spacing: 0.22em;
+      color: var(--dimmer);
+      text-transform: uppercase;
+      margin-bottom: 44px;
+    }
+
+    .demo-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: start;
+    }
+
+    @media(max-width:640px) {
+      .demo-grid {
+        grid-template-columns: 1fr;
+        gap: 40px
+      }
+    }
+
+    .demo-l h2 {
+      font-size: 27px;
+      font-weight: 300;
+      line-height: 1.3;
+      color: var(--text);
+      margin-bottom: 18px;
+      letter-spacing: -0.01em;
+    }
+
+    .demo-l p {
+      font-size: 13px;
+      color: var(--dim);
+      font-weight: 300;
+      line-height: 1.75;
+    }
+
+    .stat-box {
+      margin-top: 36px;
+      padding: 22px;
+      border: 1px solid var(--border);
+      background: var(--bg-1);
+    }
+
+    .stat-box .n {
+      font-size: 36px;
+      font-weight: 300;
+      color: var(--amber);
+      display: block;
+      margin-bottom: 6px;
+      letter-spacing: -0.02em;
+    }
+
+    .stat-box .l {
+      font-size: 11px;
+      color: var(--dim);
+      letter-spacing: 0.05em;
+      line-height: 1.5;
+    }
+
+    /* Phone */
+    .phone {
+      width: 100%;
+      max-width: 260px;
+      margin: 0 auto;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+    }
+
+    .ph-bar {
+      background: var(--bg-2);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ph-av {
+      width: 28px;
+      height: 28px;
+      background: var(--amber-d);
+      border: 1px solid var(--border-a);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 9px;
+      color: var(--amber);
+      font-weight: 500;
+      flex-shrink: 0;
+    }
+
+    .ph-name {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text);
+    }
+
+    .ph-sub {
+      font-size: 10px;
+      color: var(--dim);
+    }
+
+    .ph-dot {
+      margin-left: auto;
+      width: 5px;
+      height: 5px;
+      background: #2A6E2A;
+      border-radius: 50%;
+    }
+
+    .ph-msgs {
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      min-height: 280px;
+    }
+
+    .msg {
+      max-width: 90%;
+      padding: 8px 11px;
+      font-size: 11px;
+      line-height: 1.55;
+      opacity: 0;
+      transform: translateY(5px);
+      transition: opacity 0.35s ease, transform 0.35s ease;
+    }
+
+    .msg.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .msg.u {
+      align-self: flex-end;
+      background: var(--amber-d);
+      color: var(--text);
+      border: 1px solid var(--border-a);
+    }
+
+    .msg.o {
+      align-self: flex-start;
+      background: var(--bg-2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+
+    .msg.o .pfx {
+      color: var(--amber);
+      font-size: 9px;
+      letter-spacing: 0.12em;
+      display: block;
+      margin-bottom: 5px;
+    }
+
+    /* ── PRINCIPLES ── */
+    .principles {
+      padding: 80px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .principles h2 {
+      font-size: 26px;
+      font-weight: 300;
+      color: var(--text);
+      margin-bottom: 6px;
+      letter-spacing: -0.01em;
+    }
+
+    .principles .sub {
+      font-size: 12px;
+      color: var(--dim);
+      margin-bottom: 48px;
+      font-weight: 300;
+    }
+
+    .p-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+    }
+
+    .pcard {
+      background: var(--bg);
+      padding: 26px;
+    }
+
+    .pcard:hover {
+      background: var(--bg-1);
+    }
+
+    .p-num {
+      font-size: 10px;
+      color: var(--amber);
+      letter-spacing: 0.12em;
+      margin-bottom: 14px;
+      font-weight: 500;
+    }
+
+    .pcard h3 {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .pcard p {
+      font-size: 11px;
+      color: var(--dim);
+      font-weight: 300;
+      line-height: 1.65;
+    }
+
+    /* ── HOW ── */
+    .how {
+      padding: 80px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .how h2 {
+      font-size: 26px;
+      font-weight: 300;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    .how .sub {
+      font-size: 12px;
+      color: var(--dim);
+      margin-bottom: 52px;
+      font-weight: 300;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    @media(max-width:640px) {
+      .steps {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .step {
+      padding: 0 40px 0 0;
+      position: relative;
+    }
+
+    .step:not(:last-child)::after {
+      content: '→';
+      position: absolute;
+      right: 12px;
+      top: 10px;
+      color: var(--dimmer);
+      font-size: 14px;
+    }
+
+    @media(max-width:640px) {
+      .step {
+        padding: 0 0 32px;
+        border-bottom: 1px solid var(--border);
+        margin-bottom: 32px;
+      }
+
+      .step:not(:last-child)::after {
+        display: none;
+      }
+    }
+
+    .s-num {
+      font-size: 10px;
+      color: var(--amber);
+      letter-spacing: 0.12em;
+      margin-bottom: 14px;
+    }
+
+    .step h3 {
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--text);
+      margin-bottom: 8px;
+    }
+
+    .step p {
+      font-size: 11px;
+      color: var(--dim);
+      font-weight: 300;
+      line-height: 1.65;
+    }
+
+    /* ── OSS ── */
+    .oss {
+      padding: 80px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .oss-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 64px;
+      align-items: center;
+    }
+
+    @media(max-width:640px) {
+      .oss-grid {
+        grid-template-columns: 1fr
+      }
+    }
+
+    .oss h2 {
+      font-size: 28px;
+      font-weight: 300;
+      color: var(--text);
+      line-height: 1.3;
+      margin-bottom: 16px;
+    }
+
+    .oss p {
+      font-size: 13px;
+      color: var(--dim);
+      font-weight: 300;
+      line-height: 1.75;
+      margin-bottom: 32px;
+    }
+
+    .code-block {
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      padding: 22px;
+      font-size: 11px;
+      line-height: 1.9;
+    }
+
+    .code-block .c {
+      color: var(--dimmer);
+    }
+
+    .code-block .s {
+      color: var(--amber);
+    }
+
+    .code-block .k {
+      color: var(--text);
+    }
+
+    /* ── WAITLIST ── */
+    .waitlist {
+      padding: 100px 0;
+    }
+
+    .w-inner {
+      text-align: center;
+      max-width: 440px;
+      margin: 0 auto;
+    }
+
+    .w-inner .sec-label {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .waitlist h2 {
+      font-size: 28px;
+      font-weight: 300;
+      color: var(--text);
+      margin-bottom: 14px;
+    }
+
+    .waitlist p {
+      font-size: 13px;
+      color: var(--dim);
+      font-weight: 300;
+      margin-bottom: 36px;
+      line-height: 1.75;
+    }
+
+    .w-form {
+      display: flex;
+      gap: 0;
+      margin-bottom: 14px;
+    }
+
+    .w-form input {
+      flex: 1;
+      background: var(--bg-1);
+      border: 1px solid var(--border);
+      border-right: none;
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 12px;
+      padding: 12px 16px;
+      outline: none;
+    }
+
+    .w-form input::placeholder {
+      color: var(--dimmer);
+    }
+
+    .w-form input:focus {
+      border-color: var(--border-a);
+    }
+
+    .w-note {
+      font-size: 10px;
+      color: var(--dimmer);
+      letter-spacing: 0.05em;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 28px 0;
+    }
+
+    footer .fi {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 0 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .f-copy {
+      font-size: 10px;
+      color: var(--dimmer);
+      letter-spacing: 0.05em;
+    }
+
+    .f-links {
+      display: flex;
+      gap: 20px;
+    }
+
+    .f-links a {
+      font-size: 10px;
+      color: var(--dimmer);
+      text-decoration: none;
+      letter-spacing: 0.07em;
+      text-transform: uppercase;
+      transition: color 0.2s;
+    }
+
+    .f-links a:hover {
+      color: var(--amber);
+    }
+
+    /* ── TICKER ── */
+    .ticker-wrap {
+      overflow: hidden;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 0;
+      background: var(--bg-1);
+    }
+
+    .ticker {
+      display: flex;
+      gap: 0;
+      white-space: nowrap;
+      animation: tick 28s linear infinite;
+    }
+
+    .ticker-item {
+      font-size: 10px;
+      color: var(--dim);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      padding: 0 40px;
+    }
+
+    .ticker-item .sep {
+      color: var(--amber);
+      margin: 0 8px;
+    }
+
+    @keyframes tick {
+      from {
+        transform: translateX(0);
+      }
+
+      to {
+        transform: translateX(-50%);
+      }
+    }
+  </style>
+</head>
+
+<body>
+
+  <nav>
+    <div class="nav-i">
+      <a href="#" class="logo">The Operator <span>/ v0.1.0</span></a>
+      <div class="nav-links">
+        <a href="#how">How it works</a>
+        <a href="#oss">Open source</a>
+        <a href="#GITHUB_URL" target="_blank">GitHub</a>
+        <a href="#waitlist" class="btn-a" style="padding:7px 16px">Join Waitlist</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- TICKER -->
+  <div class="ticker-wrap" aria-hidden="true">
+    <div class="ticker">
+      <span class="ticker-item">SMS first <span class="sep">·</span></span>
+      <span class="ticker-item">Multi-tenant <span class="sep">·</span></span>
+      <span class="ticker-item">Zero setup for end users <span class="sep">·</span></span>
+      <span class="ticker-item">Bring your own agents <span class="sep">·</span></span>
+      <span class="ticker-item">Open source <span class="sep">·</span></span>
+      <span class="ticker-item">Proactive + reactive <span class="sep">·</span></span>
+      <span class="ticker-item">Credential isolation <span class="sep">·</span></span>
+      <span class="ticker-item">User-centered <span class="sep">·</span></span>
+      <span class="ticker-item">SMS first <span class="sep">·</span></span>
+      <span class="ticker-item">Multi-tenant <span class="sep">·</span></span>
+      <span class="ticker-item">Zero setup for end users <span class="sep">·</span></span>
+      <span class="ticker-item">Bring your own agents <span class="sep">·</span></span>
+      <span class="ticker-item">Open source <span class="sep">·</span></span>
+      <span class="ticker-item">Proactive + reactive <span class="sep">·</span></span>
+      <span class="ticker-item">Credential isolation <span class="sep">·</span></span>
+      <span class="ticker-item">User-centered <span class="sep">·</span></span>
+    </div>
+  </div>
+
+  <!-- HERO -->
+  <section class="hero">
+    <div class="container">
+      <div class="hero-tag">Executive assistant platform · Open source</div>
+      <h1>Everyone deserves<br>an EA that <em>10x's</em><br>their impact.</h1>
+      <p class="hero-sub">
+        A multi-tenant, SMS-first AI executive assistant platform.
+        Batteries included. Zero setup for end users.
+      </p>
+      <p class="hero-cmd-label">// how to get started</p>
+      <div class="hero-cmd">
+        <span class="typed" id="typed"></span><span class="cursor"></span>
+      </div>
+      <div class="hero-ctas">
+        <a href="#GITHUB_URL" class="btn-g" target="_blank">→ View on GitHub</a>
+        <a href="#waitlist" class="btn-a">Join Managed Waitlist</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- DEMO -->
+  <section class="demo" id="demo">
+    <div class="container">
+      <div class="sec-label">// live preview</div>
+      <div class="demo-grid">
+        <div class="demo-l">
+          <h2>Your EA.<br>Always on.<br>Zero setup.</h2>
+          <p>
+            A real executive assistant surfaces what matters before you ask.
+            Remembers context across months and years.
+            Works for your whole life — not just your productivity stack.
+          </p>
+          <div class="stat-box">
+            <span class="n">~10</span>
+            <span class="l">people I walked through AI assistant setup.<br>Same wall. Every. Time.<br>That wall is gone
+              now.</span>
+          </div>
+        </div>
+        <div>
+          <div class="phone">
+            <div class="ph-bar">
+              <div class="ph-av">OP</div>
+              <div>
+                <div class="ph-name">The Operator</div>
+                <div class="ph-sub">+1 (555) 000-0001</div>
+              </div>
+              <div class="ph-dot"></div>
+            </div>
+            <div class="ph-msgs" id="ph-msgs">
+              <div class="msg u" id="dm1">what do i have tomorrow?</div>
+              <div class="msg o" id="dm2">
+                <span class="pfx">OPERATOR ·</span>
+                3 things. 9am standup with eng. 1pm dentist (take exit 7 off 401). 4pm quarterly review — deck is in
+                your Drive. You haven't opened it.
+              </div>
+              <div class="msg u" id="dm3">remind me about the deck at 2pm</div>
+              <div class="msg o" id="dm4">
+                <span class="pfx">OPERATOR ·</span>
+                Done. Also — Sarah's proposal landed in your inbox 2 hours ago. You asked me to flag those.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- PRINCIPLES -->
+  <section class="principles" id="principles">
+    <div class="container">
+      <div class="sec-label">// design constraints</div>
+      <h2>Built around you.<br>Not your tools.</h2>
+      <p class="sub">Five hard requirements. No compromises.</p>
+      <div class="p-grid">
+        <div class="pcard">
+          <div class="p-num">01 ·</div>
+          <h3>SMS First</h3>
+          <p>The most universal interface on earth. No app, no account, no setup. Text a number. Your EA answers.</p>
+        </div>
+        <div class="pcard">
+          <div class="p-num">02 ·</div>
+          <h3>Zero User Friction</h3>
+          <p>Technical complexity lives with the operator — not the end user. Non-technical people just get a number to
+            text.</p>
+        </div>
+        <div class="pcard">
+          <div class="p-num">03 ·</div>
+          <h3>Extensible Core</h3>
+          <p>Bring Your Own Agents. Full MCP support. Custom integrations. The core is minimal. The surface area is
+            infinite.</p>
+        </div>
+        <div class="pcard">
+          <div class="p-num">04 ·</div>
+          <h3>Secure by Design</h3>
+          <p>Per-user credential isolation. Namespace separation at the storage layer. Rate limiting baked in from day
+            one.</p>
+        </div>
+        <div class="pcard">
+          <div class="p-num">05 ·</div>
+          <h3>User-Centered</h3>
+          <p>Proactive + reactive. Work and personal. Stays relevant across job changes, life changes. A trusted memory
+            of you.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- HOW IT WORKS -->
+  <section class="how" id="how">
+    <div class="container">
+      <div class="sec-label">// deployment model</div>
+      <h2>How it works</h2>
+      <p class="sub">For operators. For users. Different roles. One system.</p>
+      <div class="steps">
+        <div class="step">
+          <div class="s-num">STEP 01</div>
+          <h3>Operator deploys</h3>
+          <p>A technical person self-hosts The Operator. One deployment serves an entire circle. Infrastructure,
+            credentials, user isolation — all handled.</p>
+        </div>
+        <div class="step">
+          <div class="s-num">STEP 02</div>
+          <h3>Users get a number</h3>
+          <p>Non-technical users get a phone number to text. No setup, no downloads, no configuration. That's the entire
+            onboarding.</p>
+        </div>
+        <div class="step">
+          <div class="s-num">STEP 03</div>
+          <h3>EA goes to work</h3>
+          <p>Proactive and reactive. Calendar, email, memory, custom agents. Persistent context. Immediately useful,
+            gets better over time.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- OSS -->
+  <section class="oss" id="oss">
+    <div class="container">
+      <div class="sec-label">// open source</div>
+      <div class="oss-grid">
+        <div>
+          <h2>Built for tinkers,<br>hackers, and builders.</h2>
+          <p>
+            This community release is for technical folks who want to explore what's possible,
+            extend the architecture, and self-host for their circle.
+            Fork it. Break it. Build things we haven't imagined.
+          </p>
+          <div style="display:flex;gap:12px;flex-wrap:wrap;">
+            <a href="#GITHUB_URL" class="btn-g" target="_blank">→ View on GitHub</a>
+            <a href="#DOCS_URL" class="btn-g" target="_blank">→ Read the Docs</a>
+          </div>
+        </div>
+        <div class="code-block">
+          <div class="c"># self-host in minutes</div>
+          <div class="k">$ git clone <span class="s">gh:your-org/the-operator</span></div>
+          <div class="k">$ cp .env.example .env</div>
+          <div class="k">$ docker compose up -d</div>
+          <br>
+          <div class="c"># add your first user</div>
+          <div class="k">$ operator add <span class="s">+1-555-000-0001</span></div>
+          <br>
+          <div class="c"># that's it.</div>
+          <div class="k">$ <span class="s">// text the number. EA answers.</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- WAITLIST -->
+  <section class="waitlist" id="waitlist">
+    <div class="container">
+      <div class="w-inner">
+        <div class="sec-label">// managed node · coming soon</div>
+        <h2>No ops.<br>Just text.</h2>
+        <p>A managed node with proper privacy, reliability guarantees, and zero infrastructure for you. Join the
+          waitlist for early access.</p>
+        <div class="w-form">
+          <input type="email" placeholder="your@email.com" id="w-email">
+          <button class="btn-a" onclick="joinWaitlist()">Request Access</button>
+        </div>
+        <div class="w-note" id="w-note">Early access · No spam · Unsubscribe anytime</div>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="fi">
+      <div class="f-copy">The Operator · Open Source · MIT License</div>
+      <div class="f-links">
+        <a href="#GITHUB_URL" target="_blank">GitHub</a>
+        <a href="#BLOG_URL" target="_blank">Blog</a>
+        <a href="#DOCS_URL" target="_blank">Docs</a>
+        <a href="mailto:hello@operator.dev">Contact</a>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // ── Typing animation
+    const phrases = ['Text a number. That\'s it.', 'No API keys.', 'No Docker. No VPS.', 'No setup. Ever.', 'Text a number. That\'s it.'];
+    let pi = 0, ci = 0, del = false, w = 0;
+    const te = document.getElementById('typed');
+    function type() {
+      if (w > 0) { w--; setTimeout(type, 80); return; }
+      const p = phrases[pi];
+      if (!del) {
+        te.textContent = p.slice(0, ci + 1); ci++;
+        if (ci === p.length) { del = true; w = 24; }
+        setTimeout(type, 65);
+      } else {
+        te.textContent = p.slice(0, ci - 1); ci--;
+        if (ci === 0) { del = false; pi = (pi + 1) % phrases.length; w = 5; }
+        setTimeout(type, 32);
+      }
+    }
+    type();
+
+    // ── SMS animation
+    const msgs = ['dm1', 'dm2', 'dm3', 'dm4'];
+    const delays = [500, 1400, 3000, 4100];
+    let played = false;
+
+    function playMsgs() {
+      msgs.forEach(id => { const e = document.getElementById(id); if (e) e.classList.remove('show'); });
+      msgs.forEach((id, i) => setTimeout(() => { const e = document.getElementById(id); if (e) e.classList.add('show'); }, delays[i]));
+    }
+
+    // Auto-play on load
+    setTimeout(playMsgs, 600);
+
+    // Replay on scroll
+    const obs = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting && !played) { played = true; playMsgs(); }
+        if (!e.isIntersecting) { played = false; }
+      });
+    }, { threshold: 0.5 });
+    const pm = document.getElementById('ph-msgs');
+    if (pm) obs.observe(pm);
+
+    // ── Waitlist (Supabase)
+    const SB_URL = 'https://fjxkrotmvpnpuybgwybc.supabase.co';      // e.g. https://xxxx.supabase.co
+    const SB_KEY = 'sb_publishable_KISW4ewLcze9UqCWgBV_Mg_7GJhp1Bm'; // safe to expose — RLS policy protects reads
+
+    async function joinWaitlist() {
+      const inp = document.getElementById('w-email');
+      const n = document.getElementById('w-note');
+      const btn = document.querySelector('.waitlist .btn-a');
+      const v = inp.value.trim();
+
+      if (!v || !v.includes('@') || !v.includes('.')) {
+        n.style.color = '#8A2A2A';
+        n.textContent = '// invalid email address';
+        return;
+      }
+
+      // loading state
+      btn.textContent = '...';
+      btn.style.opacity = '0.6';
+      btn.style.pointerEvents = 'none';
+      n.style.color = 'var(--dimmer)';
+      n.textContent = '// connecting...';
+
+      try {
+        const res = await fetch(`${SB_URL}/rest/v1/fortyone`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': SB_KEY,
+            'Authorization': `Bearer ${SB_KEY}`,
+            'Prefer': 'return=minimal'
+          },
+          body: JSON.stringify({ email: v })
+        });
+
+        if (res.ok) {
+          n.style.color = '#2A6A2A';
+          n.textContent = '// ' + v + ' · you\'re on the list.';
+          inp.value = '';
+          btn.textContent = 'Done ✓';
+        } else if (res.status === 409) {
+          n.style.color = '#2A6A2A';
+          n.textContent = '// already on the list — we\'ll be in touch.';
+          inp.value = '';
+          btn.textContent = 'Request Access';
+          btn.style.opacity = '1';
+          btn.style.pointerEvents = 'auto';
+        } else {
+          throw new Error(res.status);
+        }
+      } catch (e) {
+        n.style.color = '#8A2A2A';
+        n.textContent = '// something went wrong — try again.';
+        btn.textContent = 'Request Access';
+        btn.style.opacity = '1';
+        btn.style.pointerEvents = 'auto';
+      }
+    }
+    document.getElementById('w-email').addEventListener('keydown', e => { if (e.key === 'Enter') joinWaitlist(); });
+  </script>
+</body>
+
+</html>
