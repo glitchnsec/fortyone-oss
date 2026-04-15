@@ -1,275 +1,176 @@
-# Operator — Personal Operating System
+# FortyOne
 
-A SaaS personal operating system disguised as an AI assistant. Users text (SMS/Slack) or use the web dashboard to interact with their always-on assistant, which handles tasks, remembers context across interactions, connects to external services, and proactively manages both work and personal life.
+A personal operating system disguised as an AI assistant.
 
-**Core Value:** Text your assistant, it just handles things — and gets better at it over time.
+FortyOne lets users interact with their own named assistant over SMS, Slack, and the web. The assistant can remember context, manage tasks and goals, use connected services, and proactively help with work and personal life. The product is multi-tenant by design: one operator can run an instance for many users while each user's data, tools, memories, and credentials remain isolated.
 
-## Architecture
+## Core Idea
 
-```
-SMS (Twilio)  /  Slack  /  Web Dashboard
-         │            │           │
-         ▼            ▼           ▼
-┌──────────────────────────────────────────┐
-│   FastAPI API Server                     │
-│   • /sms/inbound — Twilio webhook        │
-│   • /slack/events — Slack webhook         │
-│   • /api/v1/* — Dashboard REST API        │
-│   • /admin/* — Admin dashboard API        │
-│   • /auth/* — JWT auth + registration     │
-│   • Intent classification + ACK < 500ms   │
-│   • Pushes jobs → Redis Streams           │
-│   • ResponseListener (pub/sub delivery)   │
-└──────────────────────────────────────────┘
-         │                    ▲
-    Redis Streams         Redis Pub/Sub
-         │                    │
-         ▼                    │
-┌──────────────────────────────────────────┐
-│   Worker Process                         │
-│   • Manager/subagent tool-calling loop    │
-│   • Built-in tools (12) + custom agents   │
-│   • Memory context assembly               │
-│   • LLM calls via OpenRouter              │
-│   • Publishes results                     │
-└──────────────────────────────────────────┘
-         │
-    PostgreSQL (Users, Memories, Tasks, Messages, Goals, Personas, CustomAgents)
-
-┌──────────────────────────────────────────┐
-│   Connections Service (Docker)           │
-│   • OAuth flow management (Google)        │
-│   • Token encryption (Fernet)             │
-│   • Gmail + Calendar tool execution       │
-│   • Capability manifest per provider      │
-│   • Per-persona connection scoping        │
-└──────────────────────────────────────────┘
-
-┌──────────────────────────────────────────┐
-│   Scheduler Process                      │
-│   • Weighted random category pool (1-3/day)│
-│   • Per-user preferences + cooldown        │
-│   • Content delta suppression              │
-│   • Time-windowed jitter scheduling        │
-│   • Quiet hours + rate limit enforcement   │
-│   • Feature discovery + auto-archive       │
-└──────────────────────────────────────────┘
-
-┌──────────────────────────────────────────┐
-│   React Dashboard (Vite + shadcn/ui)     │
-│   • Registration + onboarding             │
-│   • Conversations (filterable by channel) │
-│   • Connections (per-persona management)  │
-│   • Personas (Work/Personal profiles)     │
-│   • Goals + Tasks                         │
-│   • Capabilities (built-in + custom)      │
-│   • Proactive settings                    │
-│   • Admin dashboard (users, analytics)    │
-│   • Served from FastAPI static mount      │
-└──────────────────────────────────────────┘
-```
+Users do not need to learn a new app to use an assistant. They text the assistant they already named, for example: "Jarvis, your FortyOne operator." FortyOne handles the infrastructure, routing, memory, tools, and proactive follow-up behind that simple interface.
 
 ## Features
 
-### Multi-Channel Messaging
-- **SMS** via Twilio (primary channel)
-- **Slack** via Bot DM (with account linking)
-- Channel-agnostic pipeline — same assistant across all channels
-- Proactive messages delivered to user's preferred channel
+- SMS-first assistant via Twilio, with Slack DM support and a web dashboard for setup and management.
+- Fast ACK plus async worker architecture using Redis Streams and Redis Pub/Sub.
+- Manager/subagent tool-calling loop with built-in tools, custom agents, and MCP-backed connections.
+- Persona-aware operation for work, personal, and shared contexts.
+- Google Gmail and Calendar integrations through the internal connections service.
+- Slack workspace connection support separate from Slack DM delivery.
+- Proactive scheduler for briefings, recaps, goal coaching, nudges, cooldowns, quiet hours, and content suppression.
+- Context engineering with tiered retrieval, conversation history, memories, profile traits, active tasks, and persona scope.
+- Multi-tenant isolation across routes, queue payloads, database queries, Redis keys, OAuth tokens, and tool execution.
+- Admin dashboard for users, analytics, health, and operational visibility.
 
-### Persona System
-- Work and Personal persona profiles
-- Per-persona connections (separate Google accounts)
-- Cross-context awareness ("busy week at work → reschedule gym")
-- Automatic persona detection per message
+## Architecture
 
-### Proactive Agent
-- Morning briefings (dynamic time window based on calendar density), evening recaps, goal coaching
-- Weighted random category pool with content delta suppression (no stale messages)
-- Per-category enable/disable, configurable time windows, 1-3 messages/day default
-- Per-user rate limiting, quiet hours, and cooldown enforcement
-- Feature discovery nudges for undiscovered capabilities (dismissible, decaying schedule)
-- Auto-archive: execute tasks archived immediately, remind tasks follow-up in next briefing
-- Preferred channel selection (SMS or Slack)
+```text
+Users: SMS, Slack DM, Web Dashboard
+          |
+          v
+FastAPI API Server
+  - Webhook ingestion
+  - JWT auth and registration
+  - Intent classification and smart ACK
+  - Dashboard/admin REST API
+  - OAuth callback proxy
+  - Redis response listener
+          |
+          | Redis Streams
+          v
+Worker Process
+  - Manager/subagent loop
+  - Tool execution
+  - LLM calls through OpenRouter
+  - Passive learning and memory updates
+          |
+          v
+PostgreSQL + pgvector
+  - Users, messages, memories, tasks, goals, personas, connections metadata
 
-### Text-Based Settings
-- Configure any simple setting via SMS using natural language
-- Covers: proactive preferences, tasks, goals, profile, assistant settings
-- Confirmation pattern: assistant echoes proposed change, applies on user approval
-- Complex settings (OAuth, connections) get a dashboard link in response
+Side services:
+  - Redis for queueing, pub/sub, idempotency, cooldowns, and proactive plans
+  - Scheduler for proactive messages
+  - Connections service for OAuth, encrypted tokens, provider tools, and MCP gateway calls
+  - React/Vite dashboard served by the API in Docker Compose
+```
 
-### Goal Recognition
-- Detects goal-like language ("I need to publish 3 posts by Friday") vs reminders
-- Creates Goal objects with coaching support, not just reminder nudges
-- Proactive goal coaching follows up with research and actionable suggestions
-
-### Connections & Tools
-- Google (Gmail + Calendar) via OAuth
-- Web search (Brave Search API)
-- 12 built-in tools across 6 subagents
-- Custom agents: webhook, prompt, and YAML/script types
-- Per-persona connection scoping
-- Dynamic capability manifest
-
-### Admin Dashboard
-- User management (view, edit profile, suspend, delete, impersonate)
-- Editable user fields: name, email, phone, timezone, assistant name, personality notes
-- Platform analytics (adoption + usage metrics)
-- System health monitoring (Redis, DB, worker)
-
-### Security
-- JWT authentication with refresh token rotation
-- Twilio signature validation
-- Slack signing secret verification
-- OAuth token encryption at rest (Fernet)
-- Role-based access control (admin/user)
-- Multi-tenant user isolation
-
----
+The connections service is intentionally internal-only. Public OAuth callbacks land on the main API at `/oauth/callback/google` and `/oauth/callback/slack`; the API forwards them to the connections service with `X-Service-Token`.
 
 ## Quick Start
 
-### Prerequisites
-- Docker + Docker Compose
-- Python 3.11+
+Prerequisites:
 
-### 1. Configure environment
+- Docker and Docker Compose
+- Python 3.11+
+- Node.js 20+ if developing the dashboard outside Docker
+
+Create environment files:
+
 ```bash
 cp .env.example .env
-# Edit .env — set at minimum:
-#   OPENROUTER_API_KEY (for LLM)
-#   TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN, TWILIO_PHONE_NUMBER (for SMS)
-#   BRAVE_SEARCH_API_KEY (for web search)
+cp connections/.env.example connections/.env
 ```
 
-### 2. Start all services
+Generate required secrets:
+
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(64))"  # JWT_SECRET
+python -c "import secrets; print(secrets.token_urlsafe(32))"  # SERVICE_AUTH_TOKEN
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"  # ENCRYPTION_KEY
+```
+
+Start the stack:
+
 ```bash
 docker compose up --build
 ```
 
-This starts: API server (port 8000), worker, scheduler, Redis, PostgreSQL, and connections service.
+Open the dashboard:
 
-### 3. Access the dashboard
-Open http://localhost:8000 and register an account.
-
-### 4. (Optional) Create an admin user
-```bash
-docker compose exec api python scripts/create_admin.py your@email.com
+```text
+http://localhost:8000
 ```
 
-### 5. (Optional) Connect Slack
-- Create a Slack app with `message.im` event subscription
-- Set Request URL to `https://<your-url>/slack/events`
-- Enable Messages Tab in App Home settings
-- Set `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` in `.env`
+For real SMS, configure Twilio, set `MOCK_SMS=false`, and expose the API through a stable HTTPS URL so Twilio can reach `/sms/inbound`.
 
----
+## Production Security Checklist
 
-## Project Structure
+Before exposing an instance to real users:
 
-```
-app/
-├── main.py              # FastAPI app + lifespan
-├── config.py            # Settings (pydantic-settings)
-├── database.py          # SQLAlchemy async engine + session
-├── crypto.py            # Fernet encryption for sensitive data
-├── middleware/
-│   └── auth.py          # JWT auth, get_current_user, require_admin
-├── routes/
-│   ├── sms.py           # Twilio webhook + SMS registration flow
-│   ├── slack.py         # Slack events + onboarding + account linking
-│   ├── auth.py          # Register (with name/timezone), login, refresh, Slack link codes
-│   ├── dashboard.py     # User API (me, conversations, connections proxy, proactive settings)
-│   ├── admin.py         # Admin API (users, analytics, health)
-│   ├── capabilities.py  # Capabilities + custom agents CRUD
-│   └── personas.py      # Persona CRUD
-├── core/
-│   ├── pipeline.py      # Message state machine + ResponseListener
-│   ├── intent.py        # Intent classification (LLM + regex fast-path)
-│   ├── persona.py       # Persona detection per message
-│   ├── ack.py           # Context-aware acknowledgment
-│   ├── greeter.py       # First-message greeting
-│   ├── identity.py      # Assistant identity preamble
-│   ├── tools.py         # Tool registry (subagents.yaml + custom agents)
-│   └── proactive_pool.py # Proactive engagement scheduling
-├── memory/
-│   ├── models.py        # SQLAlchemy models (User, Memory, Task, Message, Persona, Goal, CustomAgent, etc.)
-│   └── store.py         # Memory CRUD + tiered context assembly
-├── queue/
-│   ├── client.py        # Redis Streams producer
-│   └── worker.py        # Worker loop + job dispatch
-├── tasks/
-│   ├── manager.py       # Manager/subagent tool-calling loop
-│   ├── router.py        # Intent → handler routing
-│   ├── reminder.py      # Reminders + timezone-aware scheduling
-│   ├── scheduling.py    # Scheduling suggestions (timezone-aware)
-│   ├── recall.py        # Memory recall + general handler
-│   ├── settings_handler.py # Text-based settings (proactive, tasks, goals, profile)
-│   ├── proactive.py     # Proactive handlers (briefings, recaps, nudges, discovery)
-│   ├── web_search.py    # Brave Search integration
-│   └── _llm.py          # LLM wrapper (OpenRouter, graceful fallback)
-└── channels/
-    ├── base.py          # Abstract channel interface
-    ├── sms.py           # Twilio SMS channel
-    └── slack.py         # Slack Web API channel
+- Replace `JWT_SECRET`; never use `change-me-in-production`.
+- Set `ENCRYPTION_KEY`; OAuth tokens and sensitive values depend on it.
+- Set the same strong `SERVICE_AUTH_TOKEN` for the API, worker, scheduler, and connections service.
+- Keep the connections service internal; do not publish port `8001` to the internet.
+- Set `MOCK_SMS=false` only after Twilio credentials and webhook validation are configured.
+- Set `BASE_URL` to the exact public HTTPS origin used by Twilio and Slack webhooks.
+- Configure OAuth redirects to the API callback paths, not the internal connections service.
+- Set `MCP_ALLOWLIST` in production; an empty allowlist permits arbitrary MCP server URLs and creates SSRF risk.
+- Use a strong PostgreSQL password and do not reuse the sample `operator:operator` local database credentials.
+- Keep `ENVIRONMENT=production` unless intentionally enabling development-only debug routes.
+- Rotate any exposed OpenRouter, Twilio, Slack, Google, or Brave credentials immediately.
 
-connections/             # Dockerized connections service
-├── app/
-│   ├── main.py          # FastAPI + startup migrations
-│   ├── models.py        # Connection, OAuthToken, OAuthState
-│   ├── providers/       # Google OAuth provider + base interface
-│   ├── routes/          # OAuth flow, connections list, tool execution
-│   └── tools/           # Gmail + Calendar tool handlers
+## Production Environment Variables
 
-dashboard/               # React SPA (Vite + shadcn/ui)
-├── src/
-│   ├── routes/          # TanStack Router pages
-│   ├── components/      # UI components (layout, admin, ui)
-│   └── lib/             # Auth context, API client
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `DATABASE_URL` | Yes | PostgreSQL connection string for app data. Use pgvector for semantic memory. |
+| `REDIS_URL` | Yes | Redis queue, pub/sub, proactive plans, cooldowns, and idempotency. |
+| `JWT_SECRET` | Yes | Signs API access and refresh tokens. Must be unique per deployment. |
+| `ENCRYPTION_KEY` | Yes | Fernet key for OAuth tokens and sensitive data at rest. Do not rotate without migration. |
+| `SERVICE_AUTH_TOKEN` | Yes | Shared secret for API-to-connections internal calls. |
+| `OPENROUTER_API_KEY` | Yes | LLM provider access through OpenRouter. |
+| `TWILIO_ACCOUNT_SID` | For SMS | Twilio account identifier. |
+| `TWILIO_AUTH_TOKEN` | For SMS | Twilio API secret and webhook validation secret. |
+| `TWILIO_PHONE_NUMBER` | For SMS | Outbound assistant number. |
+| `MOCK_SMS` | Recommended | Use `true` for local logs-only SMS; use `false` for real delivery. |
+| `BASE_URL` | Production | Public HTTPS origin for webhooks and callback generation. |
+| `DASHBOARD_URL` | OAuth | Browser landing URL after OAuth connection flows. |
+| `CONNECTIONS_SERVICE_URL` | Yes | Internal URL, usually `http://connections:8001` in Docker Compose. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google | Gmail and Calendar OAuth. |
+| `SLACK_BOT_TOKEN` / `SLACK_SIGNING_SECRET` | Slack DM | Slack channel delivery and event verification. |
+| `SLACK_CLIENT_ID` / `SLACK_CLIENT_SECRET` | Slack connection | Slack workspace OAuth inside `connections/.env`. |
+| `MCP_ALLOWLIST` | Production | Comma-separated trusted MCP server URL prefixes. Empty means allow all. |
+| `ENVIRONMENT` | Recommended | Defaults to `production`; set `development` only for debug routes. |
 
-scripts/
-├── run_worker.py        # Worker process entry point
-├── run_scheduler.py     # Scheduler process entry point
-├── create_admin.py      # Promote user to admin role
+## Setup Guides
 
-config/
-└── subagents.yaml       # Built-in tool definitions (6 subagents, 12 tools)
+| Guide | Purpose |
+| --- | --- |
+| [Docker Setup](docs/setup-docker.md) | Local and production Docker Compose behavior. |
+| [Portainer Setup](docs/setup-portainer.md) | Deploying and operating through Portainer. |
+| [Webhook Setup](docs/setup-webhooks.md) | Public webhook and OAuth callback URLs. |
+| [Database Setup](docs/setup-database.md) | PostgreSQL, pgvector, migrations, and backups. |
+| [Encryption Setup](docs/setup-encryption.md) | Fernet key generation and token encryption requirements. |
+| [Twilio Setup](docs/setup-twilio.md) | SMS registration, inbound webhooks, and outbound delivery. |
+| [Slack Setup](docs/setup-slack.md) | Slack DM channel and Slack workspace connection configuration. |
+| [Google OAuth Setup](docs/setup-google-oauth.md) | Gmail and Calendar OAuth setup. |
+| [OpenRouter Setup](docs/setup-openrouter.md) | LLM API keys and model configuration. |
 
-tests/                   # pytest + pytest-asyncio
-```
+## Development
 
----
-
-## Environment Variables
-
-See `.env.example` for the full list with descriptions. Key variables:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENROUTER_API_KEY` | Yes | LLM API access via OpenRouter |
-| `DATABASE_URL` | No | PostgreSQL URL (default in docker-compose) |
-| `REDIS_URL` | No | Redis URL (default in docker-compose) |
-| `TWILIO_ACCOUNT_SID` | For SMS | Twilio account credentials |
-| `TWILIO_AUTH_TOKEN` | For SMS | Twilio auth token |
-| `TWILIO_PHONE_NUMBER` | For SMS | Your Twilio phone number |
-| `SLACK_BOT_TOKEN` | For Slack | Slack bot OAuth token |
-| `SLACK_SIGNING_SECRET` | For Slack | Slack request signing secret |
-| `BRAVE_SEARCH_API_KEY` | For search | Brave Search API key |
-| `JWT_SECRET` | Yes | Secret for JWT token signing |
-| `FERNET_KEY` | Yes | Encryption key for OAuth tokens |
-| `BASE_URL` | For SMS | Public URL for Twilio signature validation |
-
----
-
-## Running Tests
+Run backend tests:
 
 ```bash
-pip install -r requirements.txt
-python -m pytest tests/ -v
+python -m pytest tests -q
+python -m pytest connections/tests -q
 ```
 
----
+Run dashboard checks:
+
+```bash
+cd dashboard
+npm run build
+npm run lint
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution expectations, project structure, and security-sensitive review guidance.
 
 ## License
 
-Proprietary. All rights reserved.
+FortyOne is licensed under the GNU Affero General Public License v3.0 only (`AGPL-3.0-only`). See [LICENSE](LICENSE).
+
+If you modify FortyOne and run it as a network service, the AGPL requires that you provide the corresponding source code to users who interact with that service over the network.
+
+## Trademark
+
+"FortyOne" is the project name for this open source release. The AGPL license grants rights to the code; it does not grant trademark rights or imply endorsement by the project maintainers.
