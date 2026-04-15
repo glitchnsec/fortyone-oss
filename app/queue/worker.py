@@ -124,19 +124,36 @@ class Worker:
     async def _process_and_ack(self, entry_id: str, payload: dict) -> None:
         """Process one job then XACK. Semaphore caps concurrent execution.
 
-        Timeout ensures stuck jobs fail loudly and XACK instead of staying
-        pending forever (blocking the consumer group PEL).
+        On timeout or failure: publish a fallback error response so the user
+        always gets SOMETHING, then XACK to clear the PEL. Jobs that fail to
+        publish even the fallback stay pending for retry on next drain cycle.
         """
-        _JOB_TIMEOUT = 60  # seconds — generous but prevents infinite hangs
+        _JOB_TIMEOUT = 120  # seconds — allows slow LLM + multi-tool rounds
         job_id = payload.get("job_id", "unknown")
+        phone = payload.get("phone", "")
+        published = False
         async with self._semaphore:
             try:
                 await asyncio.wait_for(self._process(payload), timeout=_JOB_TIMEOUT)
+                published = True  # _process calls _publish_result internally
             except asyncio.TimeoutError:
                 logger.error(
-                    "Job TIMEOUT entry_id=%s job_id=%s — exceeded %ds, result NOT published",
+                    "Job TIMEOUT entry_id=%s job_id=%s — exceeded %ds",
                     entry_id, job_id, _JOB_TIMEOUT,
                 )
+                # Publish fallback so user gets a response
+                try:
+                    await self._publish_result(job_id, {
+                        "job_id": job_id,
+                        "phone": phone,
+                        "address": payload.get("address", phone),
+                        "channel": payload.get("channel", "sms"),
+                        "user_id": payload.get("user_id", ""),
+                        "response": "Sorry, that took too long. Could you try again?",
+                    })
+                    published = True
+                except Exception:
+                    logger.error("Fallback publish also failed job_id=%s", job_id, exc_info=True)
             except asyncio.CancelledError:
                 logger.error(
                     "Job CANCELLED entry_id=%s job_id=%s — result was NOT published",
@@ -145,12 +162,33 @@ class Worker:
                 raise
             except Exception as exc:
                 logger.error("Job processing failed entry_id=%s: %s", entry_id, exc, exc_info=True)
+                # Publish fallback error response
+                try:
+                    await self._publish_result(job_id, {
+                        "job_id": job_id,
+                        "phone": phone,
+                        "address": payload.get("address", phone),
+                        "channel": payload.get("channel", "sms"),
+                        "user_id": payload.get("user_id", ""),
+                        "response": "Sorry, I hit a snag on that one. Could you try again?",
+                    })
+                    published = True
+                except Exception:
+                    logger.error("Fallback publish also failed job_id=%s", job_id, exc_info=True)
             finally:
-                await self._redis.xack(
-                    self.settings.queue_name,
-                    CONSUMER_GROUP,
-                    entry_id,
-                )
+                # Only XACK if we successfully published (or published fallback).
+                # If publishing failed entirely, leave pending for retry on drain.
+                if published:
+                    await self._redis.xack(
+                        self.settings.queue_name,
+                        CONSUMER_GROUP,
+                        entry_id,
+                    )
+                else:
+                    logger.warning(
+                        "Job NOT ACKed entry_id=%s job_id=%s — will retry on next drain",
+                        entry_id, job_id,
+                    )
 
     async def _process(self, payload: dict) -> None:
         job_id: str = payload.get("job_id", "unknown")

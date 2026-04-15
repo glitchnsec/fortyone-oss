@@ -392,6 +392,7 @@ class ResponseListener:
         settings = get_settings()
 
         while True:
+            pubsub = None
             try:
                 pubsub = redis.pubsub()
                 await pubsub.subscribe(settings.response_channel)
@@ -425,6 +426,12 @@ class ResponseListener:
                     exc, exc_info=True,
                 )
                 await asyncio.sleep(2)
+            finally:
+                if pubsub:
+                    try:
+                        await pubsub.aclose()
+                    except Exception:
+                        pass  # Best-effort cleanup
 
     async def _deliver(self, redis, job_id: str) -> None:
         # ── DELIVERY CLAIM (race pattern) ─────────────────────────────────────
