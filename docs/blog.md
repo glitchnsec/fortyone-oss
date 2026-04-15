@@ -749,9 +749,8 @@ The assistant that increases your leverage shouldn't require you to become an in
 
 ---
 
-**GitHub:** [link]
-**Managed node waitlist:** [link]
-**Architecture docs:** In the repository
-**Multi-tenancy deep dive:** In the repository
+**GitHub:** [github.com/glitchnsec/fortyone-oss](https://github.com/glitchnsec/fortyone-oss)
 
-*Questions on architecture, the LLM orchestration pattern, or credential isolation — open an issue or find me on X/HN/LinkedIn.*
+**Managed node waitlist:** [Join the waitlist](https://glitchnsec.github.io/fortyone-oss/#waitlist)
+
+*Questions on architecture, the LLM orchestration pattern, or credential isolation — open an issue or find me on [X](https://x.com/glitchnsec)/[HN](https://news.ycombinator.com/user?id=glitchnsec)/[LinkedIn](https://www.linkedin.com/in/kelechukwu-udonsi-kc-72573559/)/[Github](https://github.com/glitchnsec).*
