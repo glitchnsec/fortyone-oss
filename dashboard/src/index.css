@@ -151,7 +151,7 @@
     min-height: 100vh;
     background:
       radial-gradient(var(--dot-color) 1px, transparent 1px),
-      linear-gradient(180deg, var(--operator-bg) 0%, #090906 50%, var(--operator-bg) 100%);
+      linear-gradient(180deg, var(--operator-bg) 0%, var(--operator-bg-1) 50%, var(--operator-bg) 100%);
     background-size: 30px 30px, auto;
   }
 
