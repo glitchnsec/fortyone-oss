@@ -297,17 +297,17 @@ FortyOne takes a different approach. The connections service is a standalone Fas
 ### Architecture: Agent and Vault Are Separate Processes
 
 ```
-┌───────────────────────┐         HTTP (internal)         ┌───────────────────────┐
+┌───────────────────────┐         HTTP (internal)         ┌────────────────────────┐
 │    Main Agent App     │ ──────────────────────────────▶ │  Connections Service   │
-│                       │                                  │  (Agent Vault)         │
+│                       │                                 │  (Agent Vault)         │
 │  • LLM calls          │   POST /tools/gmail/read_emails │                        │
 │  • Tool orchestration │   {"user_id", "persona_id"}     │  • OAuth flows         │
-│  • Memory + context   │                                  │  • Token storage       │
+│  • Memory + context   │                                 │  • Token storage       │
 │  • No raw credentials │ ◀────────────────────────────── │  • Fernet encryption   │
-│                       │   {"emails": [...]}              │  • Token refresh       │
-└───────────────────────┘                                  │  • MCP gateway         │
-                                                           │  • Credential lifecycle│
-                                                           └───────────────────────┘
+│                       │   {"emails": [...]}             │  • Token refresh       │
+└───────────────────────┘                                 │  • MCP gateway         │
+                                                          │  • Credential lifecycle│
+                                                          └────────────────────────┘
 ```
 
 The main app knows *which* tools are available (via capability discovery), but credential resolution, token refresh, and API calls to connected-tool services (Gmail, Calendar, Slack workspace tools, MCP servers) all happen inside the connections service. The main app sends a request like "read emails for user X under persona Y" and gets back structured data. It never decrypts a token, never holds a refresh secret, never makes a direct call to Google's API or a Slack workspace endpoint.
