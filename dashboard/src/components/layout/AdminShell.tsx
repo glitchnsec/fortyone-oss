@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/sheet";
 import { useAuth } from "@/lib/auth.tsx";
 import { fetchWithAuth } from "@/lib/api";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { useNavigate } from "@tanstack/react-router";
 
 interface NavItem {
@@ -142,21 +143,24 @@ export function AdminShell({ children }: { children: ReactNode }) {
           {/* Spacer for desktop where hamburger is hidden */}
           <div className="hidden md:block" />
 
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <button className="rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background">
-                <Avatar>
-                  <AvatarFallback>A</AvatarFallback>
-                </Avatar>
-              </button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
-                <LogOut className="mr-2 h-4 w-4" />
-                Log out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <div className="flex items-center gap-2">
+            <ThemeToggle />
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button className="rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background">
+                  <Avatar>
+                    <AvatarFallback>A</AvatarFallback>
+                  </Avatar>
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={handleLogout} className="text-red-600 focus:text-red-600">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  Log out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         </header>
 
         {/* Page content -- wider max-width for admin data views */}
