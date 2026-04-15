@@ -305,7 +305,7 @@ async def mcp_oauth_client_metadata():
     """Public client metadata document for MCP auth servers using metadata-based client IDs."""
     settings = get_settings()
     return {
-        "client_name": "Operator MCP Client",
+        "client_name": "FortyOne MCP Client",
         "redirect_uris": [f"{settings.dashboard_url}/connections/callback"],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],

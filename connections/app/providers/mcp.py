@@ -205,7 +205,7 @@ async def discover_oauth_metadata(server_url: str) -> dict[str, Any]:
 
 async def register_oauth_client(registration_endpoint: str, redirect_uri: str) -> dict[str, Any]:
     payload = {
-        "client_name": "Operator MCP Client",
+        "client_name": "FortyOne MCP Client",
         "redirect_uris": [redirect_uri],
         "grant_types": ["authorization_code", "refresh_token"],
         "response_types": ["code"],
@@ -395,7 +395,7 @@ async def init_session(server_url: str, auth_headers: dict | None = None) -> str
             params={
                 "protocolVersion": "2025-03-26",
                 "capabilities": {},
-                "clientInfo": {"name": "Operator", "version": "1.0.0"},
+                "clientInfo": {"name": "FortyOne", "version": "1.0.0"},
             },
             headers=auth_headers,
             return_session_id=True,

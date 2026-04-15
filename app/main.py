@@ -87,9 +87,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
 
 
 app = FastAPI(
-    title="Personal Assistant",
-    description="Hybrid always-on + async-worker personal assistant. Supports SMS and Slack.",
-    version="0.2.0",
+    title="FortyOne",
+    description="FortyOne personal operating system. Always-on AI assistant via SMS, Slack, and web dashboard.",
+    version="1.0.0",
     lifespan=lifespan,
 )
 

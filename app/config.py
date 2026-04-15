@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     llm_model_capable: str = "anthropic/claude-3.5-haiku"
     # Optional: shown on openrouter.ai dashboard for usage tracking
     openrouter_site_url: str = ""
-    openrouter_site_name: str = "Personal Assistant"
+    openrouter_site_name: str = "FortyOne"
 
     # Database
     database_url: str = "sqlite:///./assistant.db"

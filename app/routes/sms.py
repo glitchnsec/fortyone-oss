@@ -83,7 +83,7 @@ async def _process_inbound(address: str, body: str) -> None:
                 # Prefill phone (E.164 from Twilio) so the user doesn't have to retype it
                 from urllib.parse import quote
                 registration_url = f"{base}/auth/register?phone={quote(address)}"
-                reply = f"Hi! To use Operator, please create your account here: {registration_url}"
+                reply = f"Hi! To use FortyOne, please create your account here: {registration_url}"
                 logger.info(
                     "UNREGISTERED  channel=sms  from=%s  sending_registration_link",
                     address,
