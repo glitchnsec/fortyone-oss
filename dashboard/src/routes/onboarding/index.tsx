@@ -9,7 +9,7 @@
  *      and verifies 6-digit code via POST /auth/verify-otp (D-03, AUTH-02).
  *      "Skip" option available so onboarding is not blocked in dev.
  *   3. Name your assistant — calls PATCH /api/v1/me/assistant, which also triggers
- *      the one-time welcome SMS. Final CTA: "Start using Operator" navigates to /conversations.
+ *      the one-time welcome SMS. Final CTA: "Start using FortyOne" navigates to /conversations.
  *
  * Google connection removed from onboarding — user can connect from persona settings.
  */
@@ -72,7 +72,7 @@ function Step1AccountCreated({ onNext }: { onNext: () => void }) {
         </div>
         <CardTitle className="text-center text-xl">Account created</CardTitle>
         <CardDescription className="text-center">
-          Your Operator account is ready. Let's set up your assistant.
+          Your FortyOne account is ready. Let's set up your assistant.
         </CardDescription>
       </CardHeader>
       <CardFooter>
@@ -282,7 +282,7 @@ function Step3NameAssistant({ onDone }: { onDone: () => void }) {
           disabled={loading}
         >
           {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Start using Operator
+          Start using FortyOne
         </Button>
       </CardFooter>
     </Card>

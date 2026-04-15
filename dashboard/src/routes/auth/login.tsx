@@ -62,7 +62,7 @@ function LoginPage() {
     <div className="min-h-screen flex items-center justify-center bg-white px-4">
       <Card className="w-full max-w-[400px] border border-neutral-200 shadow-sm">
         <CardHeader>
-          <h1 className="text-[28px] font-semibold leading-[1.2]">Sign in to Operator</h1>
+          <h1 className="text-[28px] font-semibold leading-[1.2]">Sign in to FortyOne</h1>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">

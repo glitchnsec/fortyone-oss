@@ -1,7 +1,7 @@
 /**
  * AdminShell -- admin route wrapper with fixed 240px sidebar and top bar.
  *
- * Layout mirrors AppShell but with admin-specific nav items, "Operator Admin"
+ * Layout mirrors AppShell but with admin-specific nav items, "FortyOne Admin"
  * branding, wider content area (max-w-[1400px]), and a "Back to Dashboard" link.
  *
  * Nav items: Overview (/admin), Users (/admin/users), System Health (/admin/health)
@@ -117,7 +117,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
       <aside className="hidden md:flex w-60 flex-shrink-0 flex-col bg-neutral-50 border-r border-neutral-200">
         {/* Brand */}
         <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-          <span className="text-base font-semibold text-neutral-900">Operator Admin</span>
+          <span className="text-base font-semibold text-neutral-900">FortyOne Admin</span>
         </div>
         <AdminSidebarNav pathname={pathname} />
       </aside>
@@ -127,7 +127,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
         <SheetContent side="left" className="w-60 p-0 bg-neutral-50" showCloseButton={false}>
           <SheetTitle className="sr-only">Admin Navigation</SheetTitle>
           <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-            <span className="text-base font-semibold text-neutral-900">Operator Admin</span>
+            <span className="text-base font-semibold text-neutral-900">FortyOne Admin</span>
           </div>
           <AdminSidebarNav pathname={pathname} onNavClick={() => setMobileOpen(false)} />
         </SheetContent>

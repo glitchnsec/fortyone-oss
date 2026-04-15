@@ -119,7 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <aside className="hidden md:flex w-60 flex-shrink-0 flex-col bg-neutral-50 border-r border-neutral-200">
         {/* Logo / Brand */}
         <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-          <span className="text-base font-semibold text-neutral-900">Operator</span>
+          <span className="text-base font-semibold text-neutral-900">FortyOne</span>
         </div>
         <SidebarNav pathname={pathname} />
       </aside>
@@ -129,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         <SheetContent side="left" className="w-60 p-0 bg-neutral-50" showCloseButton={false}>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
           <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-            <span className="text-base font-semibold text-neutral-900">Operator</span>
+            <span className="text-base font-semibold text-neutral-900">FortyOne</span>
           </div>
           <SidebarNav pathname={pathname} onNavClick={() => setMobileOpen(false)} />
         </SheetContent>
