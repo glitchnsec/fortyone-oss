@@ -1,7 +1,8 @@
 """Connections service — OAuth flow and credential vending machine."""
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
+from app.auth import verify_service_token
 from app.database import engine, Base
 from app.routes.oauth import router as oauth_router
 from app.routes.connections import router as conn_router
@@ -72,7 +73,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Connections Service", lifespan=lifespan)
-app.include_router(oauth_router, tags=["OAuth"])
-app.include_router(conn_router, tags=["Connections"])
-app.include_router(tools_router, tags=["Tools"])
-app.include_router(mcp_router, tags=["MCP"])
+
+# Health endpoint — no auth required (Docker health checks, load balancers)
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+# All routers require valid X-Service-Token header
+_auth = [Depends(verify_service_token)]
+app.include_router(oauth_router, tags=["OAuth"], dependencies=_auth)
+app.include_router(conn_router, tags=["Connections"], dependencies=_auth)
+app.include_router(tools_router, tags=["Tools"], dependencies=_auth)
+app.include_router(mcp_router, tags=["MCP"], dependencies=_auth)

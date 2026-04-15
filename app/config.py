@@ -55,6 +55,7 @@ class Settings(BaseSettings):
 
     # External services
     connections_service_url: str = "http://connections:8001"
+    service_auth_token: str = ""  # Shared secret for API->connections service auth
     # For SMS OTP verification (plan 02-05)
     twilio_verify_service_sid: str = ""
     brave_api_key: str = ""                # For Brave Search (plan 02-07)
@@ -76,7 +77,7 @@ class Settings(BaseSettings):
 
     # Behaviour flags
     mock_sms: bool = True        # Print SMS to logs instead of calling Twilio
-    environment: str = "development"
+    environment: str = "production"
 
     @property
     def is_mock_sms(self) -> bool:

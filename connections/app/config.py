@@ -16,7 +16,10 @@ class Settings(BaseSettings):
     slack_redirect_uri: str = "http://localhost:8001/oauth/callback/slack"
     mcp_oauth_redirect_uri: str = "http://localhost:8000/connections/callback"
     dashboard_url: str = "http://localhost:8000"
-    mcp_allowlist: str = ""  # Comma-separated MCP server URL patterns. Empty = allow all.
+    service_auth_token: str = ""
+    # WARNING: Empty allowlist means ALL MCP server URLs are permitted (SSRF risk).
+    # Set to comma-separated URL patterns in production.
+    mcp_allowlist: str = ""
 
 
 @lru_cache
