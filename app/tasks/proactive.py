@@ -72,7 +72,8 @@ async def _has_calendar_events(user_id: str, window_hours: float = 24.0) -> bool
         time_max = now.isoformat()
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        _svc_headers = {"X-Service-Token": s.service_auth_token} if s.service_auth_token else {}
+        async with httpx.AsyncClient(timeout=5.0, headers=_svc_headers) as client:
             resp = await client.post(
                 f"{s.connections_service_url}/tools/calendar/list_events",
                 json={

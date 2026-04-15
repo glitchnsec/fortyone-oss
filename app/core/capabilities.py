@@ -97,8 +97,9 @@ async def _fetch_capabilities(
         params: dict[str, str] = {}
         if persona_id is not None:
             params["persona_id"] = persona_id
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
 
@@ -171,8 +172,9 @@ async def find_persona_with_tool(
     try:
         settings = get_settings()
         url = f"{settings.connections_service_url}/connections/{user_id}"
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url)  # No persona filter = all connections
             resp.raise_for_status()
 
@@ -256,8 +258,9 @@ async def find_personas_with_tool(
     try:
         settings = get_settings()
         url = f"{settings.connections_service_url}/connections/{user_id}"
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url)  # No persona filter = all connections
             resp.raise_for_status()
 

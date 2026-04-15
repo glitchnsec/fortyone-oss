@@ -180,7 +180,8 @@ async def get_mcp_tool_schemas(user_id: str, persona_id: str | None = None) -> l
         if persona_id is not None:
             params["persona_id"] = persona_id
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url, params=params)
             resp.raise_for_status()
 
@@ -278,7 +279,8 @@ async def get_cross_persona_tool_hints(
         settings = get_settings()
         url = f"{settings.connections_service_url}/connections/{user_id}"
 
-        async with httpx.AsyncClient(timeout=5.0) as client:
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
+        async with httpx.AsyncClient(timeout=5.0, headers=headers) as client:
             resp = await client.get(url)  # No persona filter = all connections
             resp.raise_for_status()
 

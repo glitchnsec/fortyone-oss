@@ -1352,8 +1352,9 @@ async def _call_mcp_tool(tool_name: str, tool_args: dict, payload: dict) -> dict
 
     settings = get_settings()
     try:
+        _svc_headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
         async with httpx.AsyncClient(
-            base_url=settings.connections_service_url, timeout=30.0,
+            base_url=settings.connections_service_url, timeout=30.0, headers=_svc_headers,
         ) as client:
             resp = await client.post(
                 "/tools/mcp/execute",
@@ -1429,8 +1430,9 @@ async def _call_connections_tool(
         payload["persona_id"] = persona_id
 
     try:
+        _svc_headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
         async with httpx.AsyncClient(
-            base_url=settings.connections_service_url, timeout=10.0
+            base_url=settings.connections_service_url, timeout=10.0, headers=_svc_headers,
         ) as client:
             resp = await client.post(
                 f"/tools/{service}/{action}",

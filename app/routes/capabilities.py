@@ -42,7 +42,10 @@ async def _get_db():
 async def _connections_client():
     """Yield a short-lived httpx client pointed at the connections service."""
     s = get_settings()
-    async with httpx.AsyncClient(base_url=s.connections_service_url, timeout=10.0) as client:
+    headers = {"X-Service-Token": s.service_auth_token} if s.service_auth_token else {}
+    async with httpx.AsyncClient(
+        base_url=s.connections_service_url, timeout=10.0, headers=headers,
+    ) as client:
         yield client
 
 

@@ -50,7 +50,8 @@ async def refresh_persona_tools(user_id: str, personas: list["Persona"]) -> None
     try:
         settings = get_settings()
         url = f"{settings.connections_service_url}/connections/{user_id}"
-        async with httpx.AsyncClient(timeout=3.0) as client:
+        headers = {"X-Service-Token": settings.service_auth_token} if settings.service_auth_token else {}
+        async with httpx.AsyncClient(timeout=3.0, headers=headers) as client:
             resp = await client.get(url)
             resp.raise_for_status()
 
