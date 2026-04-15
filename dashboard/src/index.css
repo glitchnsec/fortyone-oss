@@ -48,6 +48,53 @@
   --sidebar-accent-foreground: #e09820;
   --sidebar-border: #1a1a12;
   --sidebar-ring: #c8830c;
+
+  --dot-color: rgba(200, 131, 12, 0.055);
+}
+
+:root.light {
+  --operator-bg: #f5f0e8;
+  --operator-bg-1: #ede7db;
+  --operator-bg-2: #e5ddd0;
+  --operator-amber: #b07308;
+  --operator-amber-bright: #946010;
+  --operator-amber-dark: #d4a84a;
+  --operator-text: #2a2820;
+  --operator-dim: #8a8274;
+  --operator-dimmer: #c8c0b0;
+  --operator-border: #d8d0c0;
+  --operator-border-active: #c4a870;
+
+  --background: #f5f0e8;
+  --foreground: #2a2820;
+  --card: #ede7db;
+  --card-foreground: #2a2820;
+  --popover: #ede7db;
+  --popover-foreground: #2a2820;
+  --primary: #b07308;
+  --primary-foreground: #f5f0e8;
+  --secondary: #e5ddd0;
+  --secondary-foreground: #2a2820;
+  --muted: #e5ddd0;
+  --muted-foreground: #8a8274;
+  --accent: #d8c8a8;
+  --accent-foreground: #946010;
+  --destructive: #c2410c;
+  --destructive-foreground: #fff7ed;
+  --border: #d8d0c0;
+  --input: #c4a870;
+  --ring: #b07308;
+
+  --sidebar: #ede7db;
+  --sidebar-foreground: #2a2820;
+  --sidebar-primary: #b07308;
+  --sidebar-primary-foreground: #f5f0e8;
+  --sidebar-accent: #e5ddd0;
+  --sidebar-accent-foreground: #946010;
+  --sidebar-border: #d8d0c0;
+  --sidebar-ring: #b07308;
+
+  --dot-color: rgba(160, 120, 40, 0.06);
 }
 
 @theme inline {
@@ -93,6 +140,9 @@
     background: var(--background);
     color-scheme: dark;
   }
+  html.light {
+    color-scheme: light;
+  }
 
   body {
     @apply bg-background text-foreground font-sans text-sm;
@@ -100,7 +150,7 @@
     letter-spacing: -0.01em;
     min-height: 100vh;
     background:
-      radial-gradient(rgba(200, 131, 12, 0.055) 1px, transparent 1px),
+      radial-gradient(var(--dot-color) 1px, transparent 1px),
       linear-gradient(180deg, var(--operator-bg) 0%, #090906 50%, var(--operator-bg) 100%);
     background-size: 30px 30px, auto;
   }
@@ -120,6 +170,10 @@
     );
   }
 
+  .light body::before {
+    display: none;
+  }
+
   ::selection {
     background: color-mix(in srgb, var(--primary) 35%, transparent);
     color: var(--foreground);
@@ -135,7 +189,7 @@
 @layer components {
   .operator-frame {
     background:
-      radial-gradient(rgba(200, 131, 12, 0.05) 1px, transparent 1px),
+      radial-gradient(var(--dot-color) 1px, transparent 1px),
       var(--operator-bg);
     background-size: 30px 30px, auto;
   }
@@ -144,6 +198,10 @@
     border: 1px solid var(--operator-border);
     background: color-mix(in srgb, var(--operator-bg-1) 92%, transparent);
     box-shadow: inset 0 1px 0 rgba(224, 152, 32, 0.035);
+  }
+
+  .light .operator-panel {
+    box-shadow: inset 0 1px 0 rgba(180, 140, 60, 0.08);
   }
 
   .operator-brand {
@@ -214,5 +272,12 @@
   .shadow-md,
   .shadow-lg {
     box-shadow: 0 0 0 1px rgba(52, 34, 8, 0.35), 0 24px 80px rgba(0, 0, 0, 0.22) !important;
+  }
+
+  .light .shadow-sm,
+  .light .shadow,
+  .light .shadow-md,
+  .light .shadow-lg {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04) !important;
   }
 }
