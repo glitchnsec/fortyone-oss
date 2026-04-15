@@ -6,13 +6,13 @@
 
 ## The Access Gap
 
-Every ambitious person runs their life across 15 apps, 3 calendars, and a notes app they never check. They manage follow-ups in their head, context-switch 25 times an hour, and spend more time managing their tools than doing actual work.
+Most people know what they'd want an AI assistant to do. The gap isn't imagination — it's the technical surface area standing between the idea and a running system.
 
-Meanwhile, the people who move fastest often have one thing in common: a chief of staff, or an EA, who knows their world and just handles things.
+I found this out firsthand. Over these past months, I've helped set up or walked through OpenClaw with at least ten people. The conversation always started the same way — eyes lighting up at what was possible, real excitement about what this could do for their work and personal life. Then we'd get to the practical part: which VPS to use, how to configure API keys, what model provider to pick, how to explain the privacy implications of routing your email through a third-party LLM. Some needed a Google account set up from scratch. Some weren't sure what Docker was. Most didn't make it to a running system.
 
-AI promised to change that — to give everyone access to that leverage. And technically, the pieces exist. OpenClaw and similar platforms are genuinely powerful. But there's a gap between "technically capable" and "actually used." I've walked through AI assistant setup with at least ten people. Every time, we hit the same wall: API keys, Git, Docker, decisions about VPS vs Mac Mini vs containers. Most people never made it past step three.
+That's not a criticism of those people. These aren't unreasonable things to know — but they're also not things anyone should have to know just to get a useful assistant running. The requirement to understand infrastructure, manage credentials, and navigate a constellation of services is a filter. And it's the wrong filter.
 
-That's not a user problem. It's an infrastructure problem. And the people who *have* figured it out — the power users running OpenClaw or similar setups — had to earn it. They shouldn't have to.
+The people who've gotten there — power users running OpenClaw or similar setups — genuinely earned it. That knowledge is real and it has value. But it means that right now, access to a capable AI assistant is roughly correlated with willingness to spend a weekend on devops. That's a solvable problem.
 
 A CS degree shouldn't be required to turn on your AI assistant.
 
