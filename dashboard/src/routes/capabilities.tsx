@@ -63,7 +63,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Switch } from "@/components/ui/switch";
-import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Tooltip,
@@ -222,19 +221,23 @@ function isValidHttpsUrl(value: string): boolean {
 function RiskBadge({ level }: { level: string }) {
   if (level === "high") {
     return (
-      <Badge className="bg-red-50 text-red-700 border-red-200">
+      <Badge className="border-red-900/60 bg-red-950/40 text-red-300">
         High risk
       </Badge>
     );
   }
   if (level === "medium") {
     return (
-      <Badge className="bg-amber-50 text-amber-700 border-amber-200">
+      <Badge className="border-[var(--operator-border-active)] bg-[rgba(200,131,12,0.14)] text-primary">
         Medium risk
       </Badge>
     );
   }
-  return <Badge variant="secondary">Low risk</Badge>;
+  return (
+    <Badge className="border-border bg-[var(--operator-bg-2)] text-muted-foreground">
+      Low risk
+    </Badge>
+  );
 }
 
 function typeLabel(t: string): string {
@@ -250,40 +253,41 @@ function CapabilityCard({ cap }: { cap: Capability }) {
   );
 
   return (
-    <Card className="flex flex-col h-[320px]">
-      <CardHeader className="pb-2 shrink-0">
-        <div className="flex items-center justify-between">
-          <span className="text-sm font-semibold truncate">{formatAgentName(cap.name)}</span>
-          <Badge variant="secondary" className="shrink-0 ml-2">
+    <Card className="flex h-[360px] min-h-0 flex-col gap-0 overflow-hidden">
+      <CardHeader className="shrink-0 border-b border-border pb-4">
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate text-sm font-semibold text-foreground">{formatAgentName(cap.name)}</span>
+          <Badge className="ml-2 shrink-0 border-[var(--operator-border-active)] bg-[var(--operator-bg-2)] text-primary">
             {cap.tools.length} {cap.tools.length === 1 ? "tool" : "tools"}
           </Badge>
         </div>
-        <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{cap.description}</p>
+        <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{cap.description}</p>
       </CardHeader>
-      <CardContent className="flex-1 overflow-hidden flex flex-col min-h-0">
-        <ul className="space-y-1.5 overflow-y-auto flex-1 min-h-0 pr-1">
-          {cap.tools.map((tool) => (
-            <li key={tool.name} className="flex items-start gap-2 text-xs">
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-neutral-400" />
-              <span className="flex-1 min-w-0">
-                <span className="font-medium">{tool.name}</span>
-                {tool.description && (
-                  <span className="text-muted-foreground"> &mdash; {tool.description}</span>
-                )}
-              </span>
-              <RiskBadge level={tool.risk_level} />
-            </li>
-          ))}
-        </ul>
-        {visiblePersonas.length > 0 && (
-          <>
-            <Separator className="my-4" />
+      <CardContent className="flex min-h-0 flex-1 flex-col p-0">
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4 pr-3 [scrollbar-color:var(--operator-border-active)_transparent] [scrollbar-width:thin]">
+          <ul className="space-y-3">
+            {cap.tools.map((tool) => (
+              <li key={tool.name} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-2 text-xs">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary" />
+                <span className="min-w-0 leading-5">
+                  <span className="font-medium text-foreground">{tool.name}</span>
+                  {tool.description && (
+                    <span className="text-muted-foreground"> &mdash; {tool.description}</span>
+                  )}
+                </span>
+                <RiskBadge level={tool.risk_level} />
+              </li>
+            ))}
+          </ul>
+        </div>
+        <div className="shrink-0 border-t border-border px-6 py-4">
+          {visiblePersonas.length > 0 ? (
             <div className="flex flex-wrap gap-2">
               {visiblePersonas.map((p) =>
                 p.status === "connected" ? (
                   <Badge
                     key={p.persona_id}
-                    className="bg-emerald-50 text-emerald-600"
+                    className="border-emerald-900/60 bg-emerald-950/40 text-emerald-300"
                     aria-label={`${p.persona_name}: Connected`}
                   >
                     {p.persona_name}: Connected
@@ -292,7 +296,7 @@ function CapabilityCard({ cap }: { cap: Capability }) {
                   <Badge
                     key={p.persona_id}
                     variant="outline"
-                    className="text-neutral-500"
+                    className="border-border bg-transparent text-muted-foreground"
                     aria-label={`${p.persona_name}: Not connected`}
                   >
                     {p.persona_name}: Not connected
@@ -300,8 +304,10 @@ function CapabilityCard({ cap }: { cap: Capability }) {
                 ),
               )}
             </div>
-          </>
-        )}
+          ) : (
+            <span className="text-xs text-muted-foreground">No persona connection required</span>
+          )}
+        </div>
       </CardContent>
     </Card>
   );

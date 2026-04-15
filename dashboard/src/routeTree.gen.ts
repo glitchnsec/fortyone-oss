@@ -27,6 +27,7 @@ import { Route as SettingsAccountRouteImport } from './routes/settings/account'
 import { Route as ConnectionsCallbackRouteImport } from './routes/connections/callback'
 import { Route as AuthRegisterRouteImport } from './routes/auth/register'
 import { Route as AuthLoginRouteImport } from './routes/auth/login'
+import { Route as AuthForgotPasswordRouteImport } from './routes/auth/forgot-password'
 import { Route as AdminProactivityRouteImport } from './routes/admin/proactivity'
 import { Route as AdminHealthRouteImport } from './routes/admin/health'
 import { Route as AdminUsersIndexRouteImport } from './routes/admin/users/index'
@@ -122,6 +123,11 @@ const AuthLoginRoute = AuthLoginRouteImport.update({
   path: '/auth/login',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AuthForgotPasswordRoute = AuthForgotPasswordRouteImport.update({
+  id: '/auth/forgot-password',
+  path: '/auth/forgot-password',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminProactivityRoute = AdminProactivityRouteImport.update({
   id: '/proactivity',
   path: '/proactivity',
@@ -153,6 +159,7 @@ export interface FileRoutesByFullPath {
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/proactivity': typeof AdminProactivityRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -176,6 +183,7 @@ export interface FileRoutesByTo {
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/proactivity': typeof AdminProactivityRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -201,6 +209,7 @@ export interface FileRoutesById {
   '/tasks': typeof TasksRoute
   '/admin/health': typeof AdminHealthRoute
   '/admin/proactivity': typeof AdminProactivityRoute
+  '/auth/forgot-password': typeof AuthForgotPasswordRoute
   '/auth/login': typeof AuthLoginRoute
   '/auth/register': typeof AuthRegisterRoute
   '/connections/callback': typeof ConnectionsCallbackRoute
@@ -227,6 +236,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/admin/health'
     | '/admin/proactivity'
+    | '/auth/forgot-password'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -250,6 +260,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/admin/health'
     | '/admin/proactivity'
+    | '/auth/forgot-password'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -274,6 +285,7 @@ export interface FileRouteTypes {
     | '/tasks'
     | '/admin/health'
     | '/admin/proactivity'
+    | '/auth/forgot-password'
     | '/auth/login'
     | '/auth/register'
     | '/connections/callback'
@@ -297,6 +309,7 @@ export interface RootRouteChildren {
   GoalsRoute: typeof GoalsRoute
   ProfileRoute: typeof ProfileRoute
   TasksRoute: typeof TasksRoute
+  AuthForgotPasswordRoute: typeof AuthForgotPasswordRoute
   AuthLoginRoute: typeof AuthLoginRoute
   AuthRegisterRoute: typeof AuthRegisterRoute
   ConnectionsCallbackRoute: typeof ConnectionsCallbackRoute
@@ -437,6 +450,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/auth/forgot-password': {
+      id: '/auth/forgot-password'
+      path: '/auth/forgot-password'
+      fullPath: '/auth/forgot-password'
+      preLoaderRoute: typeof AuthForgotPasswordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/proactivity': {
       id: '/admin/proactivity'
       path: '/proactivity'
@@ -496,6 +516,7 @@ const rootRouteChildren: RootRouteChildren = {
   GoalsRoute: GoalsRoute,
   ProfileRoute: ProfileRoute,
   TasksRoute: TasksRoute,
+  AuthForgotPasswordRoute: AuthForgotPasswordRoute,
   AuthLoginRoute: AuthLoginRoute,
   AuthRegisterRoute: AuthRegisterRoute,
   ConnectionsCallbackRoute: ConnectionsCallbackRoute,

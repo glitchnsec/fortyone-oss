@@ -1,17 +1,5 @@
 /**
- * AppShell — authenticated route wrapper with fixed 240px sidebar and top bar.
- *
- * Layout:
- *   - Fixed left sidebar: 240px wide, neutral-50 background (hidden on mobile)
- *   - Mobile: hamburger menu opens sidebar as Sheet overlay from the left
- *   - Top bar: 56px height, white background, 1px bottom border
- *   - Main content: remaining width, white background, overflow-y auto
- *
- * Nav items (D-11):
- *   Connections /connections | Conversations /conversations |
- *   Assistant /settings/assistant | Account /settings/account
- *
- * Active state: 3px blue-600 left border + blue-600 text + neutral-100 bg
+ * AppShell — authenticated route wrapper using the FortyOne terminal theme.
  */
 import { type ReactNode, useState } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
@@ -82,10 +70,10 @@ function SidebarNav({
             to={item.to}
             onClick={onNavClick}
             className={[
-              "flex items-center gap-3 rounded-md px-3 py-2 text-sm transition-colors",
+              "flex items-center gap-3 border border-transparent px-3 py-2 text-[12px] uppercase tracking-[0.08em] transition-colors",
               isActive
-                ? "border-l-[3px] border-blue-600 bg-neutral-100 pl-[calc(0.75rem-3px)] text-blue-600"
-                : "text-neutral-700 hover:bg-neutral-100",
+                ? "border-l-[3px] border-l-primary border-[var(--operator-border-active)] bg-[var(--operator-bg-2)] pl-[calc(0.75rem-3px)] text-primary"
+                : "text-muted-foreground hover:border-[var(--operator-border-active)] hover:bg-[var(--operator-bg-2)] hover:text-foreground",
             ].join(" ")}
           >
             {item.icon}
@@ -114,22 +102,22 @@ export function AppShell({ children }: { children: ReactNode }) {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-white">
+    <div className="operator-frame flex h-screen overflow-hidden text-foreground">
       {/* Desktop sidebar — hidden on mobile */}
-      <aside className="hidden md:flex w-60 flex-shrink-0 flex-col bg-neutral-50 border-r border-neutral-200">
+      <aside className="operator-panel hidden w-60 flex-shrink-0 flex-col border-y-0 border-l-0 md:flex">
         {/* Logo / Brand */}
-        <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-          <span className="text-base font-semibold text-neutral-900">FortyOne</span>
+        <div className="flex h-14 items-center border-b border-border px-4">
+          <span className="operator-brand">FortyOne</span>
         </div>
         <SidebarNav pathname={pathname} />
       </aside>
 
       {/* Mobile sidebar — Sheet overlay */}
       <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="w-60 p-0 bg-neutral-50" showCloseButton={false}>
+        <SheetContent side="left" className="operator-panel w-60 p-0" showCloseButton={false}>
           <SheetTitle className="sr-only">Navigation</SheetTitle>
-          <div className="flex h-14 items-center px-4 border-b border-neutral-200">
-            <span className="text-base font-semibold text-neutral-900">FortyOne</span>
+          <div className="flex h-14 items-center border-b border-border px-4">
+            <span className="operator-brand">FortyOne</span>
           </div>
           <SidebarNav pathname={pathname} onNavClick={() => setMobileOpen(false)} />
         </SheetContent>
@@ -138,10 +126,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Main content column */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Top bar */}
-        <header className="flex h-14 flex-shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
+        <header className="operator-panel flex h-14 flex-shrink-0 items-center justify-between border-x-0 border-t-0 px-4 backdrop-blur-xl">
           {/* Hamburger — visible only on mobile */}
           <button
-            className="md:hidden rounded-md p-1.5 text-neutral-700 hover:bg-neutral-100 focus:outline-none focus:ring-2 focus:ring-blue-600"
+            className="border border-border p-1.5 text-muted-foreground transition-colors hover:border-[var(--operator-border-active)] hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary md:hidden"
             onClick={() => setMobileOpen(true)}
             aria-label="Open navigation"
           >
@@ -152,7 +140,7 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <button className="rounded-full focus:outline-none focus:ring-2 focus:ring-blue-600 focus:ring-offset-2">
+              <button className="rounded-full focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 focus:ring-offset-background">
                 <Avatar>
                   <AvatarFallback>U</AvatarFallback>
                 </Avatar>
@@ -168,8 +156,10 @@ export function AppShell({ children }: { children: ReactNode }) {
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-white">
-          {children}
+        <main className="flex-1 overflow-y-auto bg-transparent">
+          <div className="mx-auto max-w-[1180px] px-5 py-6 md:px-8">
+            {children}
+          </div>
         </main>
       </div>
     </div>
