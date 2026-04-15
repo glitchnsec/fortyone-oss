@@ -391,24 +391,40 @@ class ResponseListener:
         from app.config import get_settings
         settings = get_settings()
 
-        pubsub = redis.pubsub()
-        await pubsub.subscribe(settings.response_channel)
-        logger.info(
-            "ResponseListener subscribed  channel=%s  registered=%s",
-            settings.response_channel, list(self.channels),
-        )
-
-        async for message in pubsub.listen():
-            if message["type"] != "message":
-                continue
-            job_id: str = message["data"]
+        while True:
             try:
-                await self._deliver(redis, job_id)
+                pubsub = redis.pubsub()
+                await pubsub.subscribe(settings.response_channel)
+                logger.info(
+                    "ResponseListener subscribed  channel=%s  registered=%s",
+                    settings.response_channel, list(self.channels),
+                )
+
+                async for message in pubsub.listen():
+                    if message["type"] != "message":
+                        continue
+                    job_id: str = message["data"]
+                    try:
+                        await self._deliver(redis, job_id)
+                    except Exception as exc:
+                        logger.error(
+                            "ResponseListener error  job_id=%s: %s",
+                            job_id, exc, exc_info=True,
+                        )
+
+                # If listen() ends without CancelledError, the connection dropped
+                logger.warning("ResponseListener pub/sub disconnected — reconnecting in 2s")
+                await asyncio.sleep(2)
+
+            except asyncio.CancelledError:
+                logger.info("ResponseListener shutting down")
+                raise
             except Exception as exc:
                 logger.error(
-                    "ResponseListener error  job_id=%s: %s",
-                    job_id, exc, exc_info=True,
+                    "ResponseListener connection error: %s — reconnecting in 2s",
+                    exc, exc_info=True,
                 )
+                await asyncio.sleep(2)
 
     async def _deliver(self, redis, job_id: str) -> None:
         # ── DELIVERY CLAIM (race pattern) ─────────────────────────────────────

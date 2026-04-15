@@ -122,16 +122,30 @@ class Worker:
             logger.info("Drained %d pending messages from prior run", drained)
 
     async def _process_and_ack(self, entry_id: str, payload: dict) -> None:
-        """Process one job then XACK. Semaphore caps concurrent execution."""
+        """Process one job then XACK. Semaphore caps concurrent execution.
+
+        Timeout ensures stuck jobs fail loudly and XACK instead of staying
+        pending forever (blocking the consumer group PEL).
+        """
+        _JOB_TIMEOUT = 60  # seconds — generous but prevents infinite hangs
+        job_id = payload.get("job_id", "unknown")
         async with self._semaphore:
             try:
-                await self._process(payload)
+                await asyncio.wait_for(self._process(payload), timeout=_JOB_TIMEOUT)
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Job TIMEOUT entry_id=%s job_id=%s — exceeded %ds, result NOT published",
+                    entry_id, job_id, _JOB_TIMEOUT,
+                )
+            except asyncio.CancelledError:
+                logger.error(
+                    "Job CANCELLED entry_id=%s job_id=%s — result was NOT published",
+                    entry_id, job_id,
+                )
+                raise
             except Exception as exc:
                 logger.error("Job processing failed entry_id=%s: %s", entry_id, exc, exc_info=True)
             finally:
-                # XACK after processing — remove from PEL so it won't replay on restart.
-                # We ACK even on failure to avoid infinite retry loops; failed jobs are
-                # logged with exc_info=True and the user receives a fallback error response.
                 await self._redis.xack(
                     self.settings.queue_name,
                     CONSUMER_GROUP,
@@ -219,11 +233,25 @@ class Worker:
             if key not in result and payload.get(key):
                 result[key] = payload[key]
 
+        logger.info(
+            "Publishing result job_id=%s has_response=%s response_len=%d",
+            job_id, bool(result.get("response")), len(result.get("response", "")),
+        )
         await self._publish_result(job_id, result)
 
     async def _publish_result(self, job_id: str, result: dict) -> None:
-        await self._redis.setex(f"result:{job_id}", 300, json.dumps(result))
-        await self._redis.publish(self.settings.response_channel, job_id)
+        logger.info("Publishing result job_id=%s", job_id)
+        try:
+            encoded = json.dumps(result)
+            await asyncio.wait_for(
+                self._redis.setex(f"result:{job_id}", 300, encoded), timeout=5.0
+            )
+            await asyncio.wait_for(
+                self._redis.publish(self.settings.response_channel, job_id), timeout=5.0
+            )
+        except Exception:
+            logger.error("Publish result FAILED job_id=%s", job_id, exc_info=True)
+            raise
         logger.info(
             "Published result job_id=%s preview=%r",
             job_id,
