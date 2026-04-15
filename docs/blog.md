@@ -78,7 +78,7 @@ Three modes of operation:
         └──────────┬───────────────────────┘
                    ▼
         ┌──────────────────────────────────┐
-        │     SQLite (dev) / PostgreSQL    │
+        │     PostgreSQL + pgvector        │
         │  Users · Memories · Tasks        │
         │  Goals · Personas · Connections  │
         │  ProactivePreferences · Logs     │
@@ -86,14 +86,14 @@ Three modes of operation:
 
         ┌────────────────┐  ┌─────────────────┐
         │   Scheduler    │  │  Connections    │
-        │  1-3 proactive │  │  OAuth (Google) │
-        │  msgs/day      │  │  Gmail + Cal    │
-        │  Weighted pool │  │  Fernet encrypt │
-        │  Delta suppress│  │  Per-persona    │
+        │  1-3 proactive │  │  OAuth providers│
+        │  msgs/day      │  │  Gmail/Cal/Slack│
+        │  Weighted pool │  │  MCP gateway    │
+        │  Delta suppress│  │  Fernet encrypt │
         └────────────────┘  └─────────────────┘
 ```
 
-**Stack:** Python 3.11 · FastAPI · SQLAlchemy (async) · SQLite/PostgreSQL · Redis Streams · React/Vite/shadcn · OpenRouter (model-agnostic)
+**Stack:** Python 3.11 · FastAPI · SQLAlchemy (async) · PostgreSQL + pgvector · Redis Streams · React/Vite/shadcn · OpenRouter (model-agnostic)
 
 ### The Two-Process Split
 
@@ -700,20 +700,25 @@ Rule: a queued job should end in one of three visible states: delivered, failed 
 
 ## Self-Hosting Reality
 
-FortyOne is designed so that deployers handle the infrastructure complexity and end users just text a number. But "deployer-friendly" still means real configuration:
+FortyOne is designed so deployers handle the infrastructure complexity and end users just text a number. But "deployer-friendly" still means real configuration:
 
-- **Twilio** for SMS (account, phone number, webhook URL)
-- **Redis 7+** for the job queue and pub/sub
-- **PostgreSQL** for production (SQLite works for development)
-- **OpenRouter API key** for LLM calls (mock mode works without)
-- **Google OAuth credentials** if you want Gmail/Calendar tools
-- **Slack app** if you want the Slack channel
+- **Twilio** for SMS: account SID, auth token, phone number, inbound webhook, and optional Verify service for registration OTPs
+- **Redis 7+** for the durable job queue, pub/sub response delivery, idempotency, cooldowns, and proactive plans
+- **PostgreSQL + pgvector** for users, messages, memories, tasks, goals, personas, profile data, and semantic memory search
+- **OpenRouter API key** for LLM calls and embeddings
+- **Google OAuth credentials** for Gmail and Calendar tools
+- **Slack apps** for two separate roles: Slack DM delivery and Slack workspace connection tools
+- **Strong deployment secrets** for `JWT_SECRET`, `ENCRYPTION_KEY`, and `SERVICE_AUTH_TOKEN`
 
-The `docker-compose.yml` gets you running locally with six services: PostgreSQL, Redis, API, Worker, Connections, and Scheduler. Production deployments need proper secrets management, a reverse proxy, and TLS. A few hardening steps worth calling out:
+The `docker-compose.yml` gets you running locally with six services: PostgreSQL, Redis, API, Worker, Connections, and Scheduler. Production deployments still need proper secrets management, a reverse proxy, TLS, backups, and monitoring. Phase 11 added the hardening needed for a safer OSS default:
 
-- **Debug routes** (`/debug/*`) are included for development and should be disabled or auth-gated before exposing the service publicly
-- **Connections service** runs on port 8001 and should be internal-only — not exposed to the internet. Inter-service communication is HTTP over the Docker network; production deployments should add service-to-service auth (JWT or mTLS)
-- **MCP allowlist** (`MCP_ALLOWLIST`) defaults to empty, which means allow-all — any MCP server URL can be connected. For production, set this to an explicit list of trusted MCP server domains
+- **AGPL-3.0-only license** in `LICENSE`, plus `CONTRIBUTING.md` and a release-focused `README.md`
+- **Production default**: `ENVIRONMENT` now defaults to `production`, so `/debug/*` routes are not registered unless explicitly enabled with `ENVIRONMENT=development`
+- **Internal connections service**: port `8001` uses Docker `expose`, not a published host port. Browser-facing OAuth callbacks hit the main API first, then the API proxies internally to the connections service
+- **Service-to-service auth**: internal API-to-connections calls include `X-Service-Token`; all connections routes except health require the shared `SERVICE_AUTH_TOKEN`
+- **Public OAuth callback paths**: Google and Slack connection OAuth use `/oauth/callback/google` and `/oauth/callback/slack`; MCP OAuth continues to use `/connections/callback`
+- **MCP allowlist warning**: `MCP_ALLOWLIST` defaults to empty, which means allow-all. Production deployers should set explicit trusted MCP server URL prefixes to reduce SSRF risk
+- **Setup guide set**: `docs/` now includes Docker, Portainer, webhooks, database, encryption, Twilio, Slack, Google OAuth, and OpenRouter guides
 
 The "no CS degree" promise is for *end users*, not deployers. If you're reading this blog, you're probably the deployer.
 
@@ -736,7 +741,7 @@ This is the accumulation moat. And it's why user-centered design matters more th
 
 ## What's Available Now
 
-**Community OSS release (today):** For tinkerers, hackers, and technical operators who want to self-host for themselves or a small circle. The full multi-tenant architecture, SMS + Slack channels, all 16 built-in tools, proactive scheduler, persona system, custom agents, MCP support, and web dashboard. Fork it, extend it, deploy it.
+**Community OSS release (today):** For tinkerers, hackers, and technical operators who want to self-host for themselves or a small circle. The AGPL-3.0 codebase includes the full multi-tenant architecture, SMS + Slack channels, all 16 built-in tool schemas, proactive scheduler, persona system, custom agents, MCP support, setup guides, and web dashboard. Fork it, extend it, deploy it.
 
 **Managed node (planned):** A hosted deployment that would make the same system available to people who don't want to run infrastructure. This is future work — not yet available.
 
