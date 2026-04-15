@@ -47,8 +47,8 @@ FortyOne uses Google OAuth to connect users' Gmail and Calendar accounts as **co
 3. Select **Web application** as the application type
 4. Name it (e.g. "FortyOne Web")
 5. Under **Authorized redirect URIs**, add:
-   - Development: `http://localhost:8000/connections/callback`
-   - Production: `https://your-domain.com/connections/callback`
+   - Development: `http://localhost:8000/oauth/callback/google`
+   - Production: `https://your-domain.com/oauth/callback/google`
 6. Click **Create**
 7. Copy the **Client ID** and **Client Secret**
 
@@ -67,10 +67,10 @@ The connections service reads these from its own `.env` or from the shared `.env
 
 ```bash
 # In connections/.env (or inherited from docker-compose)
-GOOGLE_REDIRECT_URI=http://localhost:8001/oauth/callback/google
+GOOGLE_REDIRECT_URI=http://localhost:8000/oauth/callback/google
 ```
 
-> **Note:** The connections service `GOOGLE_REDIRECT_URI` is the internal redirect. The browser-facing redirect URI configured in Google Console should be `http://localhost:8000/connections/callback` (the API proxy route).
+> **Note:** Configure Google to redirect to the public API proxy route. The API forwards the callback to the internal connections service with `X-Service-Token`.
 
 ## Environment Variable Reference
 
@@ -78,7 +78,7 @@ GOOGLE_REDIRECT_URI=http://localhost:8001/oauth/callback/google
 |----------|-------|-------------|
 | `GOOGLE_CLIENT_ID` | `.env` + `connections/.env` | OAuth 2.0 Client ID from Google Cloud Console |
 | `GOOGLE_CLIENT_SECRET` | `.env` + `connections/.env` | OAuth 2.0 Client Secret |
-| `GOOGLE_REDIRECT_URI` | `connections/.env` | Internal redirect URI for the connections service (default: `http://localhost:8001/oauth/callback/google`) |
+| `GOOGLE_REDIRECT_URI` | `connections/.env` | Public API proxy redirect URI for Google OAuth (default: `http://localhost:8000/oauth/callback/google`) |
 
 ## Verification
 

@@ -102,8 +102,8 @@ This app lets FortyOne read a user's Slack workspace channels and threads as a *
 ### Step 3: Configure Redirect URI
 
 1. Under **OAuth & Permissions > Redirect URLs**, add:
-   - Development: `http://localhost:8000/connections/callback`
-   - Production: `https://your-domain.com/connections/callback`
+   - Development: `http://localhost:8000/oauth/callback/slack`
+   - Production: `https://your-domain.com/oauth/callback/slack`
 2. Click **Save URLs**
 
 > **Note:** The redirect goes through the main API (port 8000), which proxies to the connections service. Do NOT point it at port 8001 directly.
@@ -128,7 +128,7 @@ Add to `connections/.env` (or the shared `.env` if using docker-compose):
 ```bash
 SLACK_CLIENT_ID=your-client-id
 SLACK_CLIENT_SECRET=your-client-secret
-SLACK_REDIRECT_URI=http://localhost:8001/oauth/callback/slack
+SLACK_REDIRECT_URI=http://localhost:8000/oauth/callback/slack
 ```
 
 ### Connection OAuth Environment Variable Reference
@@ -137,7 +137,7 @@ SLACK_REDIRECT_URI=http://localhost:8001/oauth/callback/slack
 |----------|-------|-------------|
 | `SLACK_CLIENT_ID` | `connections/.env` | Client ID from the Connection OAuth app |
 | `SLACK_CLIENT_SECRET` | `connections/.env` | Client Secret from the Connection OAuth app |
-| `SLACK_REDIRECT_URI` | `connections/.env` | Internal redirect URI (default: `http://localhost:8001/oauth/callback/slack`) |
+| `SLACK_REDIRECT_URI` | `connections/.env` | Public API proxy redirect URI for Slack OAuth (default: `http://localhost:8000/oauth/callback/slack`) |
 
 ---
 

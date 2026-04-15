@@ -1,6 +1,9 @@
-"""Dashboard API routes — protected endpoints for the React SPA.
+"""Dashboard/API routes for the React SPA.
 
-Endpoints:
+Public endpoints:
+  GET  /oauth/callback/{provider} — Google/Slack OAuth callback proxy
+
+Protected endpoints:
   GET  /api/v1/me              — current user profile
   PATCH /api/v1/me/assistant   — update assistant name / personality
   DELETE /api/v1/me            — permanently delete account and all user data
@@ -9,13 +12,14 @@ Endpoints:
   POST /api/v1/connections/initiate — initiate OAuth flow (proxy)
   DELETE /api/v1/connections/{conn_id} — delete a connection (proxy)
 
-All routes require a valid Bearer JWT token (get_current_user dependency).
+Protected routes require a valid Bearer JWT token (get_current_user dependency).
 """
 import logging
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +31,7 @@ from app.memory.store import MemoryStore
 from app.middleware.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1")
+public_router = APIRouter()
 logger = logging.getLogger(__name__)
 
 
@@ -66,6 +71,47 @@ async def _connections_client():
         base_url=s.connections_service_url, timeout=10.0, headers=headers,
     ) as client:
         yield client
+
+
+@public_router.get("/oauth/callback/{provider}")
+async def proxy_oauth_callback(
+    provider: str,
+    code: str,
+    state: str,
+    client: httpx.AsyncClient = Depends(_connections_client),
+):
+    """Browser-facing OAuth callback proxy for Google/Slack connections.
+
+    OAuth providers redirect to the public API. The API forwards the callback to
+    the internal connections service with X-Service-Token, preserving the Phase
+    11 internal-only service boundary.
+    """
+    settings = get_settings()
+    try:
+        resp = await client.get(
+            f"/oauth/callback/{provider}",
+            params={"code": code, "state": state},
+            follow_redirects=False,
+        )
+    except httpx.HTTPError as exc:
+        logger.error("oauth callback proxy error provider=%s error=%s", provider, exc)
+        return RedirectResponse(f"{settings.dashboard_url}/connections?error=connections_unavailable")
+
+    if 300 <= resp.status_code < 400 and resp.headers.get("location"):
+        return RedirectResponse(resp.headers["location"])
+
+    if resp.status_code >= 400:
+        detail = "oauth_callback_failed"
+        try:
+            payload = resp.json()
+            raw_detail = payload.get("detail") if isinstance(payload, dict) else None
+            if isinstance(raw_detail, str) and raw_detail:
+                detail = raw_detail.replace(" ", "_").lower()
+        except ValueError:
+            pass
+        return RedirectResponse(f"{settings.dashboard_url}/connections?error={detail}")
+
+    return RedirectResponse(f"{settings.dashboard_url}/connections?connected={provider}")
 
 
 # ─── User / Me ────────────────────────────────────────────────────────────────

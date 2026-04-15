@@ -8,7 +8,9 @@ FortyOne receives inbound messages via webhooks from Twilio (SMS) and Slack (Eve
 |----------|--------|--------|---------|
 | `/sms/inbound` | POST | Twilio | Inbound SMS messages |
 | `/slack/events` | POST | Slack | Slack DM events |
-| `/connections/callback` | GET | Google/Slack OAuth | OAuth redirect after authorization |
+| `/oauth/callback/google` | GET | Google OAuth | OAuth redirect after authorization |
+| `/oauth/callback/slack` | GET | Slack connection OAuth | OAuth redirect after authorization |
+| `/connections/callback` | GET | MCP OAuth | OAuth redirect after authorization |
 
 ---
 
@@ -98,8 +100,8 @@ BASE_URL=https://fortyone.your-domain.com
 
 - **Twilio:** `https://fortyone.your-domain.com/sms/inbound`
 - **Slack:** `https://fortyone.your-domain.com/slack/events`
-- **Google OAuth redirect:** `https://fortyone.your-domain.com/connections/callback`
-- **Slack OAuth redirect:** `https://fortyone.your-domain.com/connections/callback`
+- **Google OAuth redirect:** `https://fortyone.your-domain.com/oauth/callback/google`
+- **Slack OAuth redirect:** `https://fortyone.your-domain.com/oauth/callback/slack`
 
 ---
 
@@ -120,8 +122,8 @@ Google and Slack OAuth redirect URIs must match what is configured in their resp
 
 | Service | Development | Production |
 |---------|-------------|------------|
-| Google OAuth | `http://localhost:8000/connections/callback` | `https://your-domain.com/connections/callback` |
-| Slack Connection OAuth | `http://localhost:8000/connections/callback` | `https://your-domain.com/connections/callback` |
+| Google OAuth | `http://localhost:8000/oauth/callback/google` | `https://your-domain.com/oauth/callback/google` |
+| Slack Connection OAuth | `http://localhost:8000/oauth/callback/slack` | `https://your-domain.com/oauth/callback/slack` |
 
 > **Note:** These callbacks go through the API server (port 8000), which proxies to the connections service. Never point OAuth callbacks directly at the connections service.
 

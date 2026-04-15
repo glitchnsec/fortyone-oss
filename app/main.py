@@ -99,6 +99,7 @@ from app.routes.admin import router as admin_router        # noqa: E402
 from app.routes.auth import router as auth_router          # noqa: E402
 from app.routes.capabilities import router as capabilities_router  # noqa: E402
 from app.routes.dashboard import router as dashboard_router  # noqa: E402
+from app.routes.dashboard import public_router as dashboard_public_router  # noqa: E402
 from app.routes.personas import router as personas_router  # noqa: E402
 from app.routes.sms import router as sms_router            # noqa: E402
 from app.routes.slack import router as slack_router        # noqa: E402
@@ -106,6 +107,7 @@ from app.routes.slack import router as slack_router        # noqa: E402
 # Auth + dashboard routers must be registered BEFORE any static/catch-all mounts
 app.include_router(auth_router, prefix="/auth", tags=["Auth"])
 app.include_router(admin_router, tags=["Admin"])
+app.include_router(dashboard_public_router, tags=["OAuth"])
 app.include_router(dashboard_router, tags=["Dashboard"])
 app.include_router(capabilities_router, tags=["Capabilities"])
 app.include_router(personas_router)
