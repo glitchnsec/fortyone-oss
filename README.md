@@ -8,6 +8,8 @@ FortyOne lets users interact with their own named assistant over SMS, Slack, and
 
 Users do not need to learn a new app to use an assistant. They text the assistant they already named, for example: "Jarvis, your FortyOne operator." FortyOne handles the infrastructure, routing, memory, tools, and proactive follow-up behind that simple interface.
 
+**Read the full story:** [Your Chief of Staff, One Text Away — Building FortyOne](https://medium.com/@glitchnsec/your-chief-of-staff-one-text-away-building-fortyone-c7b71c40de74)
+
 ## Features
 
 - SMS-first assistant via Twilio, with Slack DM support and a web dashboard for setup and management.
@@ -23,36 +25,56 @@ Users do not need to learn a new app to use an assistant. They text the assistan
 
 ## Architecture
 
-```text
-Users: SMS, Slack DM, Web Dashboard
-          |
-          v
-FastAPI API Server
-  - Webhook ingestion
-  - JWT auth and registration
-  - Intent classification and smart ACK
-  - Dashboard/admin REST API
-  - OAuth callback proxy
-  - Redis response listener
-          |
-          | Redis Streams
-          v
-Worker Process
-  - Manager/subagent loop
-  - Tool execution
-  - LLM calls through OpenRouter
-  - Passive learning and memory updates
-          |
-          v
-PostgreSQL + pgvector
-  - Users, messages, memories, tasks, goals, personas, connections metadata
-
-Side services:
-  - Redis for queueing, pub/sub, idempotency, cooldowns, and proactive plans
-  - Scheduler for proactive messages
-  - Connections service for OAuth, encrypted tokens, provider tools, and MCP gateway calls
-  - React/Vite dashboard served by the API in Docker Compose
 ```
+┌─────────────────────────────────────────────────────┐
+│   Users (SMS via Twilio · Slack DM · Web Dashboard) │
+└──────────────────────┬──────────────────────────────┘
+                       ▼
+        ┌──────────────────────────────────┐
+        │         FastAPI API Server       │
+        │                                  │
+        │  • Webhook ingestion (SMS/Slack) │
+        │  • JWT auth + registration       │
+        │  • Rule-based intent classifier  │
+        │  • Context assembly + job queue  │
+        │  • ACK race pattern              │
+        │  • REST API for dashboard/admin  │
+        │  • OAuth callback proxy          │
+        │  • ResponseListener (pub/sub)    │
+        └──────────┬───────────┬───────────┘
+                   │           ▲
+           Redis Streams   Redis Pub/Sub
+           (durable queue) (result delivery)
+                   │           │
+                   ▼           │
+        ┌──────────────────────────────────┐
+        │          Worker Process          │
+        │                                  │
+        │  • Manager / subagent pattern    │
+        │  • 16 tools across 7 subagents   │
+        │  • LLM calls via OpenRouter      │
+        │  • Tool-calling loop (max 3)     │
+        │  • Passive learning → memory     │
+        │  • Goal vs reminder recognition  │
+        └──────────┬───────────────────────┘
+                   ▼
+        ┌──────────────────────────────────┐
+        │     PostgreSQL + pgvector        │
+        │  Users · Memories · Tasks        │
+        │  Goals · Personas · Connections  │
+        │  ProactivePreferences · Logs     │
+        └──────────────────────────────────┘
+
+        ┌────────────────┐  ┌─────────────────┐
+        │   Scheduler    │  │  Connections    │
+        │  1-3 proactive │  │  OAuth providers│
+        │  msgs/day      │  │  Gmail/Cal/Slack│
+        │  Weighted pool │  │  MCP gateway    │
+        │  Delta suppress│  │  Fernet encrypt │
+        └────────────────┘  └─────────────────┘
+```
+
+**Stack:** Python 3.11 · FastAPI · SQLAlchemy (async) · PostgreSQL + pgvector · Redis Streams · React/Vite/shadcn · OpenRouter (model-agnostic)
 
 The connections service is intentionally internal-only. Public OAuth callbacks land on the main API at `/oauth/callback/google` and `/oauth/callback/slack`; the API forwards them to the connections service with `X-Service-Token`.
 
