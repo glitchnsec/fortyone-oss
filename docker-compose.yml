@@ -27,6 +27,19 @@ services:
       timeout: 3s
       retries: 5
 
+  migrate:
+    build: .
+    command: alembic upgrade head
+    volumes:
+      - ./alembic:/app/alembic
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
     build: .
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
@@ -47,8 +60,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   worker:
     build: .
@@ -66,8 +79,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   connections:
     build:
@@ -78,8 +91,12 @@ services:
     env_file:
       - .env
     environment:
+      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
       - DASHBOARD_URL=http://localhost:8000
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN:-change-me-in-production}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./connections:/app
     restart: unless-stopped
@@ -100,8 +117,8 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:

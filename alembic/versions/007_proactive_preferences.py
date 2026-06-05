@@ -45,7 +45,7 @@ def upgrade() -> None:
             sa.Column("id", sa.String(), primary_key=True),
             sa.Column("user_id", sa.String(), sa.ForeignKey("users.id"), nullable=False, index=True),
             sa.Column("category_name", sa.String(), nullable=False),
-            sa.Column("enabled", sa.Boolean(), server_default=sa.text("1")),
+            sa.Column("enabled", sa.Boolean(), server_default=sa.true()),
             sa.Column("window_start_hour", sa.Float(), nullable=True),
             sa.Column("window_end_hour", sa.Float(), nullable=True),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
