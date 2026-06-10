@@ -27,8 +27,10 @@ def _table_exists(name: str) -> bool:
 
 
 def upgrade() -> None:
-    if not _table_exists("custom_agents"):
-        op.create_table(
+    if _table_exists("custom_agents"):
+        return
+
+    op.create_table(
             "custom_agents",
             sa.Column("id", sa.String(), primary_key=True),
             sa.Column("user_id", sa.String(), sa.ForeignKey("users.id"), nullable=False, index=True),
@@ -38,7 +40,7 @@ def upgrade() -> None:
             sa.Column("config_json", sa.Text(), nullable=False),
             sa.Column("parameters_schema_json", sa.Text(), nullable=True),
             sa.Column("risk_level", sa.String(), server_default=sa.text("'low'")),
-            sa.Column("enabled", sa.Boolean(), server_default=sa.text("1")),
+            sa.Column("enabled", sa.Boolean(), server_default=sa.text("true")),
             sa.Column("created_at", sa.DateTime(timezone=True), nullable=True),
             sa.Column("updated_at", sa.DateTime(timezone=True), nullable=True),
         )

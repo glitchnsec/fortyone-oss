@@ -2,23 +2,19 @@ services:
   postgres:
     image: ankane/pgvector:latest
     environment:
-      POSTGRES_DB: assistant
-      POSTGRES_USER: operator
-      POSTGRES_PASSWORD: operator
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: ${POSTGRES_DB:-assistant}
+      POSTGRES_USER: ${POSTGRES_USER:-operator}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-operator}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U operator -d assistant"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-operator} -d ${POSTGRES_DB:-assistant}"]
       interval: 5s
       timeout: 3s
       retries: 5
 
   redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
+    image: redis:7.2-alpine
     volumes:
       - redis_data:/data
     healthcheck:
@@ -26,6 +22,18 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    restart: "no"
+    volumes:
+      - ./alembic:/app/alembic
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   api:
     build: .
@@ -41,14 +49,14 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN:-change-me-in-production}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   worker:
     build: .
@@ -60,14 +68,14 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN:-change-me-in-production}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   connections:
     build:
@@ -78,8 +86,12 @@ services:
     env_file:
       - .env
     environment:
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - DASHBOARD_URL=http://localhost:8000
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN:-change-me-in-production}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     volumes:
       - ./connections:/app
     restart: unless-stopped
@@ -94,14 +106,14 @@ services:
     env_file:
       - .env
     environment:
-      - DATABASE_URL=postgresql+asyncpg://operator:operator@postgres:5432/assistant
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN:-change-me-in-production}
+      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     restart: unless-stopped
 
 volumes:
