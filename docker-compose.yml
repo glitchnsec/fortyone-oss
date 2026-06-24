@@ -1,3 +1,28 @@
+x-app-env: &app-env
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
+  REDIS_URL: redis://redis:6379
+  SERVICE_AUTH_TOKEN: ${SERVICE_AUTH_TOKEN}
+  MOCK_SMS: ${MOCK_SMS:-false}
+  TWILIO_ACCOUNT_SID: ${TWILIO_ACCOUNT_SID}
+  TWILIO_AUTH_TOKEN: ${TWILIO_AUTH_TOKEN}
+  TWILIO_PHONE_NUMBER: ${TWILIO_PHONE_NUMBER}
+  TWILIO_VERIFY_SERVICE_SID: ${TWILIO_VERIFY_SERVICE_SID}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+  OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL}
+  OPENROUTER_SITE_NAME: ${OPENROUTER_SITE_NAME}
+  LLM_MODEL_FAST: ${LLM_MODEL_FAST}
+  LLM_MODEL_CAPABLE: ${LLM_MODEL_CAPABLE}
+  ENCRYPTION_KEY: ${ENCRYPTION_KEY}
+  JWT_SECRET: ${JWT_SECRET}
+  BASE_URL: ${BASE_URL}
+  DASHBOARD_URL: ${DASHBOARD_URL}
+  GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+  GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+  SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+  SLACK_SIGNING_SECRET: ${SLACK_SIGNING_SECRET}
+  BRAVE_API_KEY: ${BRAVE_API_KEY}
+  CONNECTIONS_SERVICE_URL: ${CONNECTIONS_SERVICE_URL:-http://connections:8001}
+
 services:
   postgres:
     image: ankane/pgvector:latest
@@ -28,7 +53,7 @@ services:
     command: alembic upgrade head
     restart: "no"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
     depends_on:
       postgres:
         condition: service_healthy
@@ -41,9 +66,7 @@ services:
     volumes:
       - sqlite_data:/app/data
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
-      - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      <<: *app-env
     depends_on:
       redis:
         condition: service_healthy
@@ -56,9 +79,7 @@ services:
     volumes:
       - sqlite_data:/app/data
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
-      - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      <<: *app-env
     depends_on:
       redis:
         condition: service_healthy
@@ -72,9 +93,7 @@ services:
     expose:
       - "8001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
-      - DASHBOARD_URL=http://localhost:8000
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      <<: *app-env
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -84,9 +103,7 @@ services:
     build: .
     command: python scripts/run_scheduler.py
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
-      - REDIS_URL=redis://redis:6379
-      - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
+      <<: *app-env
     depends_on:
       redis:
         condition: service_healthy
