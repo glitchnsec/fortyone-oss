@@ -27,8 +27,6 @@ services:
     build: .
     command: alembic upgrade head
     restart: "no"
-    volumes:
-      - ./alembic:/app/alembic
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
     depends_on:
@@ -37,15 +35,11 @@ services:
 
   api:
     build: .
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     ports:
       - "8000:8000"
     volumes:
-      - ./app:/app/app
-      - ./scripts:/app/scripts
-      - ./alembic:/app/alembic
       - sqlite_data:/app/data
-      # dashboard/dist is baked into the image — do NOT mount .:/app or it gets overridden
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
@@ -60,8 +54,6 @@ services:
     build: .
     command: python scripts/run_worker.py
     volumes:
-      - ./app:/app/app
-      - ./scripts:/app/scripts
       - sqlite_data:/app/data
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
@@ -86,17 +78,11 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
-    volumes:
-      - ./connections:/app
     restart: unless-stopped
 
   scheduler:
     build: .
     command: python scripts/run_scheduler.py
-    volumes:
-      - ./app:/app/app
-      - ./scripts:/app/scripts
-      - ./config:/app/config
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379

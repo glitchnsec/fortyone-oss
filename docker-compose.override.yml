@@ -1,0 +1,30 @@
+# Local dev overrides — auto-merged by `docker compose up` locally.
+# Portainer ignores this file (it only loads what you point its stack at).
+# Adds source bind mounts for hot-reload and --reload for uvicorn.
+
+services:
+  migrate:
+    volumes:
+      - ./alembic:/app/alembic
+
+  api:
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./alembic:/app/alembic
+
+  worker:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+
+  scheduler:
+    volumes:
+      - ./app:/app/app
+      - ./scripts:/app/scripts
+      - ./config:/app/config
+
+  connections:
+    volumes:
+      - ./connections:/app
