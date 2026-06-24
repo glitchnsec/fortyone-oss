@@ -30,7 +30,7 @@ services:
     volumes:
       - ./alembic:/app/alembic
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
     depends_on:
       postgres:
         condition: service_healthy
@@ -47,7 +47,7 @@ services:
       - sqlite_data:/app/data
       # dashboard/dist is baked into the image — do NOT mount .:/app or it gets overridden
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
@@ -64,7 +64,7 @@ services:
       - ./scripts:/app/scripts
       - sqlite_data:/app/data
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
@@ -80,7 +80,7 @@ services:
     expose:
       - "8001"
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - DASHBOARD_URL=http://localhost:8000
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
@@ -98,7 +98,7 @@ services:
       - ./scripts:/app/scripts
       - ./config:/app/config
     environment:
-      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
+      - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@${POSTGRES_HOST:-postgres}:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
       - SERVICE_AUTH_TOKEN=${SERVICE_AUTH_TOKEN}
     depends_on:
