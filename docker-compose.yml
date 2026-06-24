@@ -46,8 +46,6 @@ services:
       - ./alembic:/app/alembic
       - sqlite_data:/app/data
       # dashboard/dist is baked into the image — do NOT mount .:/app or it gets overridden
-    env_file:
-      - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
@@ -65,8 +63,6 @@ services:
       - ./app:/app/app
       - ./scripts:/app/scripts
       - sqlite_data:/app/data
-    env_file:
-      - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
@@ -83,8 +79,6 @@ services:
       dockerfile: Dockerfile
     expose:
       - "8001"
-    env_file:
-      - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - DASHBOARD_URL=http://localhost:8000
@@ -103,8 +97,6 @@ services:
       - ./app:/app/app
       - ./scripts:/app/scripts
       - ./config:/app/config
-    env_file:
-      - .env
     environment:
       - DATABASE_URL=postgresql+asyncpg://${POSTGRES_USER:-operator}:${POSTGRES_PASSWORD:-operator}@postgres:5432/${POSTGRES_DB:-assistant}
       - REDIS_URL=redis://redis:6379
